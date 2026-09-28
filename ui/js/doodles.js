@@ -128,7 +128,28 @@ export function bowl(size) {
     </g>`, { size, label: 'Обед' });
 }
 
-const DOODLES = { await: alarmClock, break: teaCup, block: checkStamp, day: finishFlag, access: padlock, lock: padlock, empty: emptyBook, idle: notebook, lunch: bowl };
+export function fingerWag(size) {
+  // Index finger on the thumb side, three curled fingers with knuckles, thumb across: an
+  // unmistakable "no-no" gesture.
+  const fist = 'M120 132 Q124 118 136 120 Q146 122 146 134 Q150 124 160 126 Q170 130 168 142 Q176 138 180 148 L178 180 Q172 212 136 214 Q100 214 90 190 L86 160 Q84 146 96 140';
+  return frame(`
+    <g class="wag">
+      ${fill('M96 140 L96 62 Q96 48 108 48 Q120 48 120 62 L120 134 Z', 'fill-p', 150)}
+      ${fill(fist + ' Z', 'fill-p', 100)}
+      ${s('M96 140 L96 62 Q96 46 108 46 Q120 46 120 62 L120 132', 0, 500)}
+      ${s(fist, 250, 800)}
+      ${s('M102 58 Q108 53 114 58', 700, 160, 'thin')}
+      ${s('M146 134 L147 154', 760, 180, 'thin')}${s('M168 142 L168 160', 820, 180, 'thin')}
+      ${s('M88 164 Q102 176 126 168 Q138 162 134 148', 880, 320, 'thin')}
+      ${s('M104 212 L102 232 L158 232 L156 212', 500, 400)}
+    </g>
+    <g class="wag-lines">
+      ${s('M76 72 Q64 58 74 40', 1000, 260, 'thin')}${s('M58 84 Q42 62 54 34', 1060, 300, 'thin')}
+      ${s('M142 72 Q154 58 144 40', 1030, 260, 'thin')}${s('M160 84 Q176 62 164 34', 1090, 300, 'thin')}
+    </g>`, { size, label: 'Не-не-не, грозящий палец' });
+}
+
+const DOODLES = { nope: fingerWag, await: alarmClock, break: teaCup, block: checkStamp, day: finishFlag, access: padlock, lock: padlock, empty: emptyBook, idle: notebook, lunch: bowl };
 
 export function doodle(kind, size = 240) {
   return (DOODLES[kind] || alarmClock)(size);

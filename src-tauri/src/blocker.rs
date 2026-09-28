@@ -91,6 +91,32 @@ pub fn with_section(content: &str, sites: &[String]) -> String {
     base + &hosts_section(sites)
 }
 
+const BROWSERS: [&str; 7] = ["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "browser.exe", "opera.exe", "vivaldi.exe"];
+const BLOCKED_PAGE_TITLES: [&str; 3] = ["blocked page", "страница заблокирована", "заблокированная страница"];
+
+pub fn match_blocked_tab(exe: &str, title: &str, sites: &[String]) -> Option<String> {
+    let exe = exe.rsplit(['\\', '/']).next().unwrap_or(exe).to_ascii_lowercase();
+    if !BROWSERS.contains(&exe.as_str()) {
+        return None;
+    }
+    // "x.com - Google Chrome", "x.com — Mozilla Firefox"
+    let mut page = title.trim().to_lowercase();
+    for sep in [" - ", " — ", " – "] {
+        if let Some((head, _)) = page.split_once(sep) {
+            page = head.trim().to_string();
+        }
+    }
+    let page = page.as_str();
+    if BLOCKED_PAGE_TITLES.contains(&page) {
+        return Some(page.to_string());
+    }
+    let host = page.strip_prefix("www.").unwrap_or(page);
+    sites.iter().find_map(|s| {
+        let site_host = s.split('/').next().unwrap_or(s);
+        (host == site_host || host.ends_with(&format!(".{site_host}"))).then(|| site_host.to_string())
+    })
+}
+
 /// Chromium URLBlocklist format: `x.com` (domain + subdomains) or `youtube.com/shorts`.
 pub fn chromium_rules(sites: &[String]) -> Vec<String> {
     sites.to_vec()
@@ -172,6 +198,14 @@ impl Blocker {
         } else {
             Some("Не удалось перезапустить Firefox — перезапусти его вручную.".into())
         }
+    }
+
+    /// If the focused browser tab shows a blocked site (its error/blocked page is titled with the
+    /// bare host, e.g. "x.com - Google Chrome"), return that host. A heuristic: browsers do not
+    /// report policy/DNS blocks to other programs.
+    pub fn blocked_tab(&self, sites: &[String]) -> Option<String> {
+        let (exe, title) = platform::foreground_window()?;
+        match_blocked_tab(&exe, &title, sites)
     }
 
     /// Kill blocked apps. Returns names of killed processes.
@@ -367,6 +401,26 @@ mod platform {
         !processes("firefox.exe").is_empty()
     }
 
+    /// (exe path, title) of the foreground window.
+    pub fn foreground_window() -> Option<(String, String)> {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 512];
+            let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+            if n <= 0 {
+                return None;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            let exe = image_path(pid)?;
+            Some((exe.display().to_string(), String::from_utf16_lossy(&buf[..n as usize])))
+        }
+    }
+
     fn image_path(pid: u32) -> Option<PathBuf> {
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Threading::{
@@ -470,6 +524,9 @@ mod platform {
     pub fn firefox_running() -> bool {
         false
     }
+    pub fn foreground_window() -> Option<(String, String)> {
+        None
+    }
     pub fn restart_firefox() -> bool {
         false
     }
@@ -490,6 +547,17 @@ mod tests {
         assert_eq!(strip_section(&with), base);
         // idempotent
         assert_eq!(with_section(&with, &sites), with);
+    }
+
+    #[test]
+    fn blocked_tab_detection() {
+        let sites = vec!["x.com".to_string(), "youtube.com/shorts".to_string()];
+        let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        assert_eq!(match_blocked_tab(chrome, "x.com - Google Chrome", &sites).as_deref(), Some("x.com"));
+        assert_eq!(match_blocked_tab(chrome, "www.youtube.com - Google Chrome", &sites).as_deref(), Some("youtube.com"));
+        assert_eq!(match_blocked_tab(chrome, "Лекция по матану - YouTube - Google Chrome", &sites), None);
+        assert_eq!(match_blocked_tab(r"C:\x\Code.exe", "x.com - Visual Studio Code", &sites), None);
+        assert!(match_blocked_tab(r"C:\ff\firefox.exe", "Страница заблокирована — Mozilla Firefox", &sites).is_some());
     }
 
     #[test]

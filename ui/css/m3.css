@@ -308,6 +308,9 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
 @keyframes pop-in { 0% { transform: scale(.4) rotate(-20deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
 
 /* ---- doodle state animations ---- */
+.wagging .wag { transform-box: view-box; transform-origin: 132px 226px; animation: wag 1.1s var(--ease) 500ms 2; }
+@keyframes wag { 0%, 100% { transform: none; } 15% { transform: rotate(-16deg); } 35% { transform: rotate(14deg); } 55% { transform: rotate(-12deg); } 75% { transform: rotate(8deg); } 90% { transform: rotate(-3deg); } }
+.wagging .wag-lines { animation: waves 1.1s linear 500ms 2; transform-box: view-box; transform-origin: 108px 60px; }
 /* Alarm clock ringing: short hammer bursts synchronised with the sound. */
 .ringing .shake { transform-box: view-box; transform-origin: 120px 140px; animation: shake 1.05s linear 1.3s 3; }
 @keyframes shake {

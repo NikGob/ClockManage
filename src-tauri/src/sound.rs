@@ -14,6 +14,8 @@ pub enum Sound {
     Done,
     /// Warning (access ends soon, pause reminder): single ping.
     Ping,
+    /// Tried to open something blocked: two short low "uh-uh" tones.
+    Nope,
 }
 
 impl Sound {
@@ -23,6 +25,7 @@ impl Sound {
             "alarm" => Sound::Alarm,
             "done" => Sound::Done,
             "ping" => Sound::Ping,
+            "nope" => Sound::Nope,
             _ => return None,
         })
     }
@@ -63,6 +66,12 @@ fn render(sound: Sound) -> Vec<f32> {
             for (i, f) in [523.25, 659.25, 783.99, 1046.5].iter().enumerate() {
                 bell(&mut b, i as f32 * 0.14, *f, 1.6, 0.45);
             }
+            b
+        }
+        Sound::Nope => {
+            let mut b = vec![0.0; (RATE as f32 * 0.8) as usize];
+            bell(&mut b, 0.0, 392.0, 0.3, 0.6);
+            bell(&mut b, 0.2, 311.1, 0.45, 0.6);
             b
         }
         Sound::Ping => {
@@ -115,17 +124,19 @@ fn cached(sound: Sound) -> &'static [u8] {
     static ALARM: OnceLock<Vec<u8>> = OnceLock::new();
     static DONE: OnceLock<Vec<u8>> = OnceLock::new();
     static PING: OnceLock<Vec<u8>> = OnceLock::new();
+    static NOPE: OnceLock<Vec<u8>> = OnceLock::new();
     let cell = match sound {
         Sound::BreakStart => &BREAK,
         Sound::Alarm => &ALARM,
         Sound::Done => &DONE,
         Sound::Ping => &PING,
+        Sound::Nope => &NOPE,
     };
     cell.get_or_init(|| wav(&render(sound)))
 }
 
 pub fn warm_up() {
-    for s in [Sound::BreakStart, Sound::Alarm, Sound::Done, Sound::Ping] {
+    for s in [Sound::BreakStart, Sound::Alarm, Sound::Done, Sound::Ping, Sound::Nope] {
         let _ = cached(s);
     }
 }

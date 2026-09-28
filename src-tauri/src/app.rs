@@ -168,6 +168,15 @@ impl Shared {
         }
     }
 
+    /// Playful "no-no-no" finger wag over the screen when something blocked is opened.
+    pub fn nope(&self, text: &str) {
+        self.play(Sound::Nope);
+        self.show_overlay(json!({
+            "kind": "nope", "passive": true, "auto_hide_ms": 2600,
+            "title": "Не-не-не", "text": text,
+        }));
+    }
+
     pub fn update_tray(&self, v: &View) {
         let tray = self.tray.lock().unwrap();
         let Some(items) = tray.as_ref() else { return };
@@ -366,6 +375,9 @@ fn ticker(shared: Arc<Shared>) {
     let mut last_verify: Ts = 0;
     let mut last_kill: Ts = 0;
     let mut last_tray: Ts = 0;
+    let mut last_nope: Ts = 0;
+    let mut last_tab_check: Ts = 0;
+    let mut last_tab_hit: Option<(String, Ts)> = None;
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
@@ -420,6 +432,11 @@ fn ticker(shared: Arc<Shared>) {
             last_kill = now;
             let killed = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).kill_apps(&apps);
             if !killed.is_empty() {
+                let names: Vec<String> = killed.iter().map(|k| k.trim_end_matches(".exe").trim_end_matches(".EXE").to_string()).collect();
+                if now - last_nope > 3_000 {
+                    last_nope = now;
+                    shared.nope(&format!("{} — после учёбы", names.join(", ")));
+                }
                 let mut g = shared.lock();
                 g.day.log(now, "app_killed", format!("Закрыто: {}", killed.join(", ")));
                 if killed_note {
@@ -427,6 +444,21 @@ fn ticker(shared: Arc<Shared>) {
                     drop(g);
                     shared.notify("Сейчас учёба", &format!("{} закрыт. Блокировка до конца блоков дня.", killed.join(", ")));
                 }
+            }
+        }
+
+        // Foreground browser tab showing a blocked site -> wag a finger (once per site per 20 s).
+        if blocked && now - last_tab_check >= 800 {
+            last_tab_check = now;
+            let hit = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).blocked_tab(&sites);
+            match hit {
+                Some(site) if last_tab_hit.as_ref().map(|(s, t)| s != &site || now - t > 20_000).unwrap_or(true) => {
+                    last_tab_hit = Some((site.clone(), now));
+                    last_nope = now;
+                    shared.lock().day.log(now, "site_attempt", format!("Попытка открыть {site}"));
+                    shared.nope(&format!("{site} — после учёбы"));
+                }
+                _ => {}
             }
         }
 
@@ -805,6 +837,7 @@ pub fn test_sound(kind: String) {
 pub fn preview_overlay(s: S, kind: String) {
     let p = match kind.as_str() {
         "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": "Перерыв", "text": "Математика: часть 1 из 2 готова. Перерыв 10 мин.", "preview": true}),
+        "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 2600, "title": "Не-не-не", "text": "Telegram — после учёбы", "preview": true}),
         "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.", "preview": true}),
         _ => json!({"kind": "await", "passive": false, "title": "Перерыв окончен", "text": "Математика · часть 2 из 2", "action": "Начать часть 2", "preview": true}),
     };

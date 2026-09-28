@@ -56,6 +56,21 @@ html, body { background: transparent !important; overflow: hidden; }
 .card.passive .sub { font: 400 16px/24px var(--font); align-self: start; }
 .card.passive .preview { grid-column: 2; }
 
+/* "No-no-no": a floating bubble in the middle of the screen, click-through. */
+.card.bubble {
+  padding: 24px 40px 28px; border-radius: 48px; gap: 4px;
+  background: color-mix(in srgb, var(--md-sys-color-surface-container-high) 94%, transparent);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .18), 0 2px 6px rgb(0 0 0 / .2);
+  transform: scale(.4) rotate(-8deg);
+}
+.card.bubble.in { animation: bubble-in 560ms var(--spring-fast) forwards; }
+.card.bubble.out { animation: bubble-out 260ms var(--ease-emph-accel) forwards; }
+@keyframes bubble-in { from { opacity: 0; transform: scale(.4) rotate(-8deg); } to { opacity: 1; transform: none; } }
+@keyframes bubble-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.7) translateY(20px); } }
+.card.bubble h1 { font: 400 45px/52px var(--font-display); }
+.card.bubble .sub { font: 400 18px/24px var(--font); }
+.card.bubble .preview { margin-top: 8px; }
+
 @media (prefers-reduced-motion: reduce) {
   .card { opacity: 1; transform: none; }
   .locking .shackle { transform: none; }

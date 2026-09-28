@@ -12,7 +12,7 @@ let lastView = null;
 
 installRipples();
 
-const ART_CLASS = { await: 'ringing', break: 'steaming', access: 'locking' };
+const ART_CLASS = { await: 'ringing', break: 'steaming', access: 'locking', nope: 'wagging' };
 
 function render(p) {
   current = p;
@@ -20,7 +20,8 @@ function render(p) {
   stopBoil();
   const passive = !!p.passive;
   scrim.className = `scrim ${passive ? 'soft' : 'full'}`;
-  stage.classList.toggle('top', passive);
+  const center = p.kind === 'nope';
+  stage.classList.toggle('top', passive && !center);
   requestAnimationFrame(() => scrim.classList.add('show'));
 
   const actions = [];
@@ -32,8 +33,8 @@ function render(p) {
   }
 
   stage.innerHTML = `
-    <section class="card ${passive ? 'passive' : ''}" role="${passive ? 'status' : 'alertdialog'}" aria-labelledby="ov-title">
-      <div class="art ${ART_CLASS[p.kind] || ''}">${doodle(p.kind, passive ? 112 : 260)}</div>
+    <section class="card ${center ? 'bubble' : passive ? 'passive' : ''}" role="${passive ? 'status' : 'alertdialog'}" aria-labelledby="ov-title">
+      <div class="art ${ART_CLASS[p.kind] || ''}">${doodle(p.kind, center ? 200 : passive ? 112 : 260)}</div>
       <h1 id="ov-title">${esc(p.title)}</h1>
       ${p.text ? `<p class="sub">${esc(p.text)}</p>` : ''}
       ${p.kind === 'await' ? '<p class="waiting tnum" id="waiting"></p>' : ''}

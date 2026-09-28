@@ -75,6 +75,7 @@ export function mountSettings(root, ctx) {
               <button class="btn outlined interactive" data-ov="await">${icon('alarm')}Звонок</button>
               <button class="btn outlined interactive" data-ov="break">${icon('coffee')}Перерыв</button>
               <button class="btn outlined interactive" data-ov="block">${icon('check')}Блок закрыт</button>
+              <button class="btn outlined interactive" data-ov="nope">${icon('lock')}Не-не-не</button>
             </div>
           </div>
         </div>

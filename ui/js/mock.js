@@ -118,6 +118,7 @@ export function overlayDemo(kind) {
     break: { kind: 'break', passive: true, auto_hide_ms: 600000, title: 'Перерыв', text: 'Математика: часть 1 из 2 готова. Перерыв 10 мин.' },
     block: { kind: 'block', passive: false, title: '«Математика» закрыт', text: '1 ч 30 мин работы · пауз: 1 (6 мин)', note: 'Надиктуй агенту строку: часы, что было скучно, куда отвлекался.' },
     day: { kind: 'day', passive: false, title: 'День закрыт', text: '5 ч 30 мин учёбы. Блокировка снята.', note: 'Надиктуй агенту строку: часы, что было скучно, куда отвлекался.' },
+    nope: { kind: 'nope', passive: true, auto_hide_ms: 600000, title: 'Не-не-не', text: 'Telegram — после учёбы' },
     access: { kind: 'access', passive: true, auto_hide_ms: 600000, title: 'Доступ закрыт', text: 'Блокировка снова включена' },
   }[kind];
   return { ...d, demo: true };
