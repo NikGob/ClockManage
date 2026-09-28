@@ -80,7 +80,7 @@ pub fn try_quit(app: &AppHandle, shared: &Arc<Shared>) {
         show_main(app);
         return;
     }
-    shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).sync(None, true);
+    shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).sync(None, true, false);
     shared.mcp.stop();
     app.exit(0);
 }

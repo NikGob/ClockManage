@@ -369,7 +369,7 @@ fn ticker(shared: Arc<Shared>) {
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
-        let (events, snap, emit, blocked, sites, apps, killed_note) = {
+        let (events, snap, emit, blocked, sites, apps, killed_note, restart_ff) = {
             let mut g = shared.lock();
             let g = &mut *g;
             if clock::local_date(now, g.cfg.tz_offset_min) != g.day.date {
@@ -389,7 +389,7 @@ fn ticker(shared: Arc<Shared>) {
             let snap = shared.snapshot_locked(g, now);
             let killed_note = now - g.last_kill_note > 20_000;
             let blocked = snap.view.lock.blocked;
-            (events, snap, emit, blocked, g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), killed_note)
+            (events, snap, emit, blocked, g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), killed_note, g.cfg.restart_firefox)
         };
 
         if !events.is_empty() {
@@ -398,11 +398,15 @@ fn ticker(shared: Arc<Shared>) {
 
         // Enforcement: apply on change, verify/repair every 30 s.
         if last_blocked != Some(blocked) || now - last_verify > 30_000 {
-            shared
+            let note = shared
                 .blocker
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .sync(blocked.then_some(sites.as_slice()), last_blocked.is_none());
+                .sync(blocked.then_some(sites.as_slice()), last_blocked.is_none(), restart_ff);
+            if let Some(n) = note {
+                shared.lock().day.log(now, "firefox", n.clone());
+                shared.notify("Firefox", &n);
+            }
             last_verify = now;
             if last_blocked.is_some() && last_blocked != Some(blocked) {
                 let mut g = shared.lock();
@@ -525,10 +529,7 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
     cfg.normalize();
     let shared = s.inner().clone();
     let (autostart_changed, mcp_changed, saved) = shared.mutate(|g, now| {
-        let ctx = EditContext {
-            locked: g.day.plan_lock(now, &g.cfg),
-            after_day_end: clock::minute_of_day(now, g.cfg.tz_offset_min) >= g.cfg.day_end_min,
-        };
+        let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
@@ -840,4 +841,9 @@ pub fn show_main(app: AppHandle, route: Option<String>) {
 #[tauri::command]
 pub fn toggle_mini(app: AppHandle) {
     crate::windows::toggle_mini(&app);
+}
+
+#[tauri::command]
+pub fn style_titlebar(window: tauri::WebviewWindow, bg: String, fg: String, dark: bool) {
+    system::style_titlebar(&window, &bg, &fg, dark);
 }

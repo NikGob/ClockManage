@@ -43,7 +43,7 @@ function render(p) {
     </section>`;
   const card = stage.firstElementChild;
   requestAnimationFrame(() => card.classList.add('in'));
-  stopBoil = play(stage, { boilMs: p.kind === 'await' ? 4600 : 2800 });
+  stopBoil = play(stage);
   updateWaiting();
   const primary = stage.querySelector('[data-act="start"]') || stage.querySelector('[data-act="hide"]');
   if (primary && !passive) setTimeout(() => primary.focus({ preventScroll: true }), 350);

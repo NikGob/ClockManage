@@ -299,6 +299,14 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
 @keyframes draw { to { stroke-dashoffset: 0; } }
 @keyframes pop { from { opacity: 0; transform: scale(.3) rotate(-12deg); } to { opacity: 1; transform: none; } }
 
+/* ---- micro-interactions ---- */
+.icon.morph path { transition: d 420ms var(--ease-emph-decel); }
+.btn .lbl { display: inline-block; }
+.btn.enter { animation: btn-in 460ms var(--spring) both; }
+@keyframes btn-in { from { opacity: 0; transform: scale(.7); } }
+.pop-in { animation: pop-in 520ms var(--spring-fast); }
+@keyframes pop-in { 0% { transform: scale(.4) rotate(-20deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
+
 /* ---- doodle state animations ---- */
 /* Alarm clock ringing: short hammer bursts synchronised with the sound. */
 .ringing .shake { transform-box: view-box; transform-origin: 120px 140px; animation: shake 1.05s linear 1.3s 3; }
@@ -318,7 +326,9 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
 .ringing .waves { animation: waves 1.05s linear 1.3s 3; transform-box: view-box; transform-origin: 120px 132px; }
 @keyframes waves { 0%, 70%, 100% { opacity: 1; transform: scale(1); } 20% { opacity: .5; transform: scale(1.08); } 40% { opacity: 1; transform: scale(1.14); } }
 
-.steaming .steam { animation: steam 2.4s var(--ease) 1.4s 2; transform-box: view-box; }
+.steaming .steam { animation: steam 2.8s var(--ease) 1.4s infinite; transform-box: view-box; }
+.writing .pencil { transform-box: view-box; transform-origin: 150px 165px; animation: scribble 2.4s var(--ease) 1.8s infinite; }
+@keyframes scribble { 0%, 100% { transform: none; } 20% { transform: translate(-6px, 3px) rotate(-4deg); } 40% { transform: translate(4px, -2px) rotate(3deg); } 60% { transform: translate(-3px, 2px) rotate(-2deg); } 80% { transform: translate(2px, 0) rotate(1deg); } }
 @keyframes steam { 0% { transform: none; opacity: 1; } 60% { transform: translateY(-10px); opacity: .25; } 100% { transform: none; opacity: 1; } }
 
 .locking .shackle { transform: translateY(-22px); animation: shackle 520ms var(--spring-fast) 900ms forwards; }

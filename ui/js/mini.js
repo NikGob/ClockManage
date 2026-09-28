@@ -1,6 +1,6 @@
 import { call, on, mmss, startDrag, installRipples } from './api.js';
 import { applyTheme } from './theme.js';
-import { icon } from './icons.js';
+import { icon, morphIcon } from './icons.js';
 
 const el = (id) => document.getElementById(id);
 const root = el('mini');
@@ -71,7 +71,7 @@ function render(s) {
   el('label').title = label;
   b.hidden = !btn;
   if (btn) {
-    b.innerHTML = icon(btn[0]);
+    if (!morphIcon(b, btn[0])) b.innerHTML = icon(btn[0]);
     b.setAttribute('aria-label', btn[1]);
     b.title = btn[1];
   }

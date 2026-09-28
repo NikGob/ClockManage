@@ -110,6 +110,7 @@ fn main() {
             app::hide_overlay,
             app::show_main,
             app::toggle_mini,
+            app::style_titlebar,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

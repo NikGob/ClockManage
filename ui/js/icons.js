@@ -35,7 +35,25 @@ const P = {
   shield: 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z',
 };
 
+// Play and pause share one path structure so the shape can morph between them (CSS `d`).
+export const MORPH = {
+  play: 'M8 5 L13.5 8.5 L13.5 15.5 L8 19 Z M13.5 8.5 L19 12 L19 12 L13.5 15.5 Z',
+  pause: 'M6 5 L10 5 L10 19 L6 19 Z M14 5 L18 5 L18 19 L14 19 Z',
+};
+
+/** Morph a play/pause icon inside `root` in place. Returns false if there is none to morph. */
+export function morphIcon(root, name) {
+  const path = root?.querySelector('svg.morph path');
+  if (!path || !MORPH[name]) return false;
+  path.style.d = `path("${MORPH[name]}")`;
+  path.closest('svg').dataset.name = name;
+  return true;
+}
+
 export function icon(name, cls = '') {
+  if (MORPH[name]) {
+    return `<svg class="icon morph ${cls}" data-name="${name}" viewBox="0 0 24 24" aria-hidden="true"><path style='d:path("${MORPH[name]}")'/></svg>`;
+  }
   const d = P[name] || P.info;
   return `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 }

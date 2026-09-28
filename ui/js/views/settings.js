@@ -131,6 +131,23 @@ export function mountSettings(root, ctx) {
     return !!saved;
   }
 
+  // Theme changes spread as a circle from the pressed control (View Transitions API).
+  function reveal(btn, appearance) {
+    const apply = () => applyTheme(appearance);
+    const r = btn.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+      const t = document.startViewTransition(apply);
+      t.ready.then(() => document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+        { duration: 650, easing: 'cubic-bezier(.2, 0, 0, 1)', pseudoElement: '::view-transition-new(root)' },
+      )).catch(() => {});
+    } else apply();
+    save((c) => { c.appearance = appearance; });
+  }
+
   const setPath = (obj, path, val) => {
     const ks = path.split('.');
     let o = obj;
@@ -156,10 +173,10 @@ export function mountSettings(root, ctx) {
     const t = e.target.closest('button');
     if (!t) return;
     if (t.dataset.day !== undefined) save((c) => { c.study_days[Number(t.dataset.day)] = !c.study_days[Number(t.dataset.day)]; });
-    else if (t.dataset.seed) save((c) => { c.appearance.seed = t.dataset.seed; });
+    else if (t.dataset.seed) reveal(t, { ...cfg.appearance, seed: t.dataset.seed });
     else if (t.closest('[data-seg]')) {
       const name = t.closest('[data-seg]').dataset.seg;
-      save((c) => { c.appearance[name] = t.dataset.v; });
+      if (['mode', 'variant'].includes(name)) reveal(t, { ...cfg.appearance, [name]: t.dataset.v });
     } else if (t.dataset.sound) call('test_sound', { kind: t.dataset.sound });
     else if (t.dataset.ov) call('preview_overlay', { kind: t.dataset.ov });
     else if (t.dataset.copy) {

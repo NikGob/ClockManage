@@ -1,5 +1,5 @@
 import { call, mmss, dur, esc } from '../api.js';
-import { icon } from '../icons.js';
+import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack } from '../ui.js';
@@ -44,6 +44,7 @@ export function mountToday(root, ctx) {
   let accessSig = '';
   let prevBig = '';
   let last = null;
+  let prevDone = [];
 
   $('edit-plan').addEventListener('click', () => ctx.navigate('plan'));
   ctx.setActions(`<button class="btn tonal interactive" data-top="mini">${icon('pip')}Мини-таймер</button>`);
@@ -75,7 +76,7 @@ export function mountToday(root, ctx) {
     art.hidden = false;
     $('center').hidden = true;
     art.innerHTML = doodle(kind, 220);
-    art.classList.toggle('ringing', kind === 'await');
+    art.className = `art ${{ await: 'ringing', lunch: 'steaming', idle: 'writing' }[kind] || ''}`;
     play(art);
   }
 
@@ -103,7 +104,12 @@ export function mountToday(root, ctx) {
     const el = $('lockline');
     el.className = `lockline ${cls}`;
     const html = `${icon(ic)}<span class="grow">${esc(text)} <span class="when tnum">${esc(when)}</span></span>${btn}`;
-    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+    if (el.dataset.html !== html) {
+      const had = !!el.dataset.html;
+      el.innerHTML = html;
+      el.dataset.html = html;
+      if (had) el.querySelector('.icon')?.classList.add('pop-in');
+    }
   }
 
   function controls(v) {
@@ -145,7 +151,34 @@ export function mountToday(root, ctx) {
     if (sig === ctrlSig) return;
     ctrlSig = sig;
     const el = $('controls');
-    el.innerHTML = items.map((i) => `<button class="btn ${i.cls} interactive" data-act="${i.act}">${icon(i.ic)}${esc(i.label)}</button>`).join('');
+    // Keyed update: pause/resume is one control whose icon morphs; new buttons spring in.
+    const keyOf = (act) => (act === 'pause' || act === 'resume' ? 'toggle' : act);
+    const old = new Map([...el.querySelectorAll('[data-key]')].map((b) => [b.dataset.key, b]));
+    const next = items.map((i) => {
+      const key = keyOf(i.act);
+      let b = old.get(key);
+      old.delete(key);
+      const fresh = !b;
+      if (fresh) {
+        b = document.createElement('button');
+        b.dataset.key = key;
+        b.innerHTML = `${icon(i.ic)}<span class="lbl"></span>`;
+        b.classList.add('enter');
+      } else if (!morphIcon(b, i.ic)) {
+        b.querySelector('svg')?.remove();
+        b.insertAdjacentHTML('afterbegin', icon(i.ic));
+      }
+      b.className = `btn ${i.cls} interactive${fresh ? ' enter' : ''}`;
+      b.dataset.act = i.act;
+      const lbl = b.querySelector('.lbl');
+      if (lbl.textContent !== i.label) {
+        if (!fresh) lbl.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.05,.7,.1,1)' });
+        lbl.textContent = i.label;
+      }
+      return b;
+    });
+    old.forEach((b) => b.remove());
+    next.forEach((b) => el.appendChild(b));
   }
 
   function startLabel(p) {
@@ -170,7 +203,7 @@ export function mountToday(root, ctx) {
           <div class="hstack"><button class="btn tonal interactive" data-act="extend">${icon('add')}Продлить на ${meta.pause_access_min} мин</button></div>`;
       } else {
         html = `<div class="row1">${icon('pause')}<div class="grow"><div class="title-m">Пауза ${dur(p.paused_ms)}</div>
-          <div class="body-m muted">Заблокированное остаётся закрытым. Доступ на паузе включается в настройках блокировки после ${v.day_end}.</div></div></div>`;
+          <div class="body-m muted">Заблокированное остаётся закрытым. Доступ на паузе включается в настройках блокировки — вне учебного дня.</div></div></div>`;
       }
     }
     // Only rebuild when the structure changes; the countdown text updates in place.
@@ -205,7 +238,14 @@ export function mountToday(root, ctx) {
         <span class="st">${st}</span><span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${meta}</span>
         <div class="linear" style="--v:${Math.min(1, b.work_ms / (b.minutes * 60000))}"></div></li>`;
     }).join('');
-    if (ol.dataset.html !== html) { ol.innerHTML = html; ol.dataset.html = html; }
+    if (ol.dataset.html !== html) {
+      ol.innerHTML = html;
+      ol.dataset.html = html;
+      v.blocks.forEach((b, i) => {
+        if (b.done && prevDone[i] === false) ol.children[i]?.classList.add('just-done');
+      });
+    }
+    prevDone = v.blocks.map((b) => b.done);
   }
 
   function update(s) {
@@ -233,9 +273,8 @@ export function mountToday(root, ctx) {
         sub = `${p.subtitle} · ждём ${mmss(p.waiting_ms)}`;
         break;
       case 'lunch':
-        big = mmss(p.elapsed_ms);
-        state = 'обед без таймера';
-        frac = 0;
+        art = 'lunch';
+        sub = `Обед без таймера · уже ${mmss(p.elapsed_ms)}`;
         break;
       case 'done':
         art = 'day';
@@ -246,13 +285,18 @@ export function mountToday(root, ctx) {
         small = true;
         state = v.mode === 'single' ? '' : 'в плане';
         title = v.started ? p.title : (v.study_day ? 'Готов начать?' : 'Выходной');
-        sub = v.started ? '' : (v.blocks.length ? v.blocks.map((b) => b.name).join(' · ') : 'Добавь блоки в план');
+        sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} · ${v.blocks.map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
+        if (!v.started && v.mode !== 'single') art = 'idle';
     }
     setArt(art);
     ring.set(frac, running);
     setBig(big, small);
     $('dstate').textContent = state;
-    $('ptitle').textContent = title;
+    const t = $('ptitle');
+    if (t.textContent !== title) {
+      if (t.textContent) t.animate([{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration: 400, easing: 'cubic-bezier(.05,.7,.1,1)' });
+      t.textContent = title;
+    }
     $('psub').textContent = sub;
     controls(v);
     access(v, s.meta);

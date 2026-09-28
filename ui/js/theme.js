@@ -15,6 +15,12 @@ const ROLES = [
   'inverseSurface', 'inverseOnSurface', 'outline', 'outlineVariant', 'scrim', 'shadow',
 ];
 
+const SURFACES = new Set([
+  'surface', 'surfaceDim', 'surfaceBright', 'surfaceVariant', 'surfaceContainerLowest', 'surfaceContainerLow',
+  'surfaceContainer', 'surfaceContainerHigh', 'surfaceContainerHighest',
+]);
+const LIGHT_SHIFT = 3.5;
+
 const VARIANTS = { fidelity: SchemeFidelity, tonal_spot: SchemeTonalSpot, vibrant: SchemeVibrant };
 
 const kebab = (s) => s.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase());
@@ -25,7 +31,15 @@ export function schemeVars(seed, dark, variant = 'fidelity') {
   const Scheme = VARIANTS[variant] || SchemeFidelity;
   const s = new Scheme(Hct.fromInt(argb), dark, 0);
   const out = {};
-  for (const r of ROLES) out[`--md-sys-color-${kebab(r)}`] = hexFromArgb(C[r].getArgb(s));
+  for (const r of ROLES) {
+    let c = C[r].getArgb(s);
+    // Light theme is a touch deeper than stock M3 so surfaces are not paper-white.
+    if (!dark && SURFACES.has(r)) {
+      const h = Hct.fromInt(c);
+      c = Hct.from(s.neutralPalette.hue, Math.max(h.chroma, 2.5), h.tone - LIGHT_SHIFT).toInt();
+    }
+    out[`--md-sys-color-${kebab(r)}`] = hexFromArgb(c);
+  }
   return out;
 }
 
@@ -55,4 +69,24 @@ export function applyTheme({ seed = '#2E7D32', mode = 'system', variant = 'fidel
   }
   el.textContent = css;
   document.documentElement.dataset.mode = mode;
+  syncTitlebar();
 }
+
+export function isDark() {
+  const mode = document.documentElement.dataset.mode || 'system';
+  return mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/** Let the native title bar blend with the window background (Windows 11). */
+export function syncTitlebar() {
+  const T = window.__TAURI__;
+  if (!T) return;
+  requestAnimationFrame(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const bg = cs.getPropertyValue('--titlebar-bg').trim() || cs.getPropertyValue('--md-sys-color-surface').trim();
+    const fg = cs.getPropertyValue('--md-sys-color-on-surface').trim();
+    T.core.invoke('style_titlebar', { bg, fg, dark: isDark() }).catch(() => {});
+  });
+}
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTitlebar);

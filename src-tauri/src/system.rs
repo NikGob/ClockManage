@@ -82,3 +82,39 @@ pub fn reveal(path: &Path) {
         }
     }
 }
+
+fn parse_hex(c: &str) -> Option<u32> {
+    let h = c.trim().trim_start_matches('#');
+    (h.len() == 6).then(|| u32::from_str_radix(h, 16).ok()).flatten()
+}
+
+/// Paint the native title bar (Windows 11) in the app's surface colour so it blends in,
+/// keeping native caption buttons, snap layouts and resizing. Ignored on older Windows.
+#[cfg(windows)]
+pub fn style_titlebar(window: &tauri::WebviewWindow, bg: &str, fg: &str, dark: bool) {
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_CAPTION_COLOR: u32 = 35;
+    const DWMWA_TEXT_COLOR: u32 = 36;
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
+    // COLORREF is 0x00BBGGRR.
+    let bgr = |rgb: u32| ((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff);
+    let set = |attr: u32, v: u32| unsafe {
+        DwmSetWindowAttribute(hwnd, attr, &v as *const u32 as *const _, 4);
+    };
+    set(DWMWA_USE_IMMERSIVE_DARK_MODE, dark as u32);
+    if let Some(c) = parse_hex(bg) {
+        set(DWMWA_CAPTION_COLOR, bgr(c));
+        set(DWMWA_BORDER_COLOR, bgr(c));
+    }
+    if let Some(c) = parse_hex(fg) {
+        set(DWMWA_TEXT_COLOR, bgr(c));
+    }
+}
+
+#[cfg(not(windows))]
+pub fn style_titlebar(_window: &tauri::WebviewWindow, _bg: &str, _fg: &str, _dark: bool) {
+    let _ = parse_hex;
+}

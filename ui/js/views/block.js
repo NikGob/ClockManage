@@ -1,5 +1,6 @@
 import { call, esc, mmss } from '../api.js';
 import { icon } from '../icons.js';
+import { doodle, play } from '../doodles.js';
 import { run, snack } from '../ui.js';
 import { emergencyDialog } from './dialogs.js';
 
@@ -10,7 +11,7 @@ export function mountBlock(root, ctx) {
 
   root.innerHTML = `
     <div class="readable">
-      <section class="lock-hero" id="hero" aria-live="polite"></section>
+      <section class="lock-hero" id="hero"><div class="lockart" id="lockart"></div><div id="hero-text" aria-live="polite"></div></section>
 
       <section class="section">
         <h2>Сайты</h2>
@@ -20,6 +21,7 @@ export function mountBlock(root, ctx) {
             <div class="field"><label for="site-in">Добавить сайт</label><input id="site-in" placeholder="reddit.com или youtube.com/shorts" autocomplete="off"></div>
             <button class="btn tonal interactive" id="site-add">${icon('add')}Добавить</button>
           </div>
+          <div class="toggle-line"><label for="ff" class="body-l">Перезапускать Firefox, чтобы Shorts блокировался сразу<span class="d body-m muted" style="display:block">Firefox читает правила только при старте. Вкладки восстановятся сами.</span></label><input type="checkbox" class="switch" role="switch" id="ff"></div>
           <p class="note-text">Домен блокируется целиком через hosts и политики браузеров. Путь вроде <b>youtube.com/shorts</b> блокирует только этот раздел — обычный YouTube остаётся доступен.</p>
         </div>
       </section>
@@ -66,7 +68,7 @@ export function mountBlock(root, ctx) {
         <h2>Что нужно знать</h2>
         <ul class="limits body-m">
           <li>Программа работает с правами администратора: закрыть её во время учёбы нельзя, а hosts и политики браузеров остаются в силе, даже если процесс убить. Каждые 5 минут планировщик поднимает её обратно.</li>
-          <li>Chrome, Edge, Brave и Яндекс подхватывают блок-лист сразу. Firefox — после перезапуска браузера.</li>
+          <li>Chrome, Edge, Brave и Яндекс подхватывают блок-лист сразу. Firefox — после перезапуска, поэтому программа сама перезапускает его при включении блокировки (если переключатель выше включён).</li>
           <li>Shorts, открытый кликом внутри YouTube, браузер может показать без перезагрузки страницы — политика сработает на следующем переходе или обновлении.</li>
         </ul>
       </section>
@@ -88,9 +90,10 @@ export function mountBlock(root, ctx) {
     pa.checked = cfg.pause_access;
     pa.disabled = !last.view.can.edit_pause_access;
     $('pa-d').textContent = last.view.can.edit_pause_access
-      ? 'Сейчас после ' + last.view.day_end + ' — можно поменять.'
-      : `Менять можно только после ${last.view.day_end}. Сейчас: ${cfg.pause_access ? 'включено' : 'выключено'}.`;
+      ? `Меняется до начала учебного дня или после ${last.view.day_end}. Во время учёбы — заблокировано.`
+      : `Во время учёбы не меняется. Сейчас: ${cfg.pause_access ? 'включено' : 'выключено'}.`;
     $('pa-min').value = cfg.pause_access_min;
+    $('ff').checked = cfg.restart_firefox;
     $('pa-min').disabled = locked;
     $('em-min').textContent = cfg.emergency_min;
   }
@@ -113,10 +116,17 @@ export function mountBlock(root, ctx) {
     }
     if (!last.meta.admin) p += ' Внимание: программа запущена без прав администратора — сайты не блокируются.';
     if (last.meta.blocker_error) p += ` Ошибка: ${last.meta.blocker_error}`;
-    const html = `<div class="big-icon">${icon(ic)}</div><div><h2>${esc(h)}</h2><p class="body-l">${esc(p)}</p>${v.emergency_count ? `<p class="body-m">Аварийных доступов сегодня: ${v.emergency_count}</p>` : ''}</div>`;
+    const html = `<h2>${esc(h)}</h2><p class="body-l">${esc(p)}</p>${v.emergency_count ? `<p class="body-m">Аварийных доступов сегодня: ${v.emergency_count}</p>` : ''}`;
     const hero = $('hero');
     hero.className = `lock-hero ${cls}`;
-    if (hero.dataset.html !== html) { hero.innerHTML = html; hero.dataset.html = html; }
+    const art = $('lockart');
+    if (!art.firstElementChild) { art.innerHTML = doodle('lock', 64); play(art); }
+    const txt = $('hero-text');
+    if (txt.dataset.html !== html) {
+      if (txt.dataset.html) txt.animate([{ opacity: 0, transform: 'translateX(-8px)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.05,.7,.1,1)' });
+      txt.innerHTML = html;
+      txt.dataset.html = html;
+    }
     $('em').disabled = !v.can.emergency;
     $('em-d').textContent = v.can.emergency
       ? 'Нужно вручную переписать длинную фразу. Каждый раз пишется в лог.'
@@ -153,6 +163,7 @@ export function mountBlock(root, ctx) {
     const name = cfg.blocklist[kind][i];
     save((c) => c.blocklist[kind].splice(i, 1), `Убрано: ${name}`);
   });
+  $('ff').addEventListener('change', (e) => save((c) => { c.restart_firefox = e.target.checked; }));
   $('pa').addEventListener('change', (e) => save((c) => { c.pause_access = e.target.checked; }));
   $('pa-min').addEventListener('change', (e) => save((c) => { c.pause_access_min = Math.round(Number(e.target.value) || 10); }));
   $('em').addEventListener('click', async () => {

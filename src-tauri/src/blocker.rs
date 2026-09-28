@@ -19,6 +19,9 @@ pub struct Applied {
     pub sites: Vec<String>,
     /// registry key -> values we appended to its list
     pub policies: Vec<(String, Vec<String>)>,
+    /// Path rules the running Firefox already knows (it reads policies only at start).
+    #[serde(default)]
+    pub firefox_paths: Vec<String>,
 }
 
 pub struct Blocker {
@@ -124,7 +127,7 @@ impl Blocker {
 
     /// Make the system match `want` (Some = block these sites, None = no blocking).
     /// Cheap to call repeatedly: it re-checks and repairs the hosts section.
-    pub fn sync(&mut self, want: Option<&[String]>, force: bool) {
+    pub fn sync(&mut self, want: Option<&[String]>, force: bool, restart_firefox: bool) -> Option<String> {
         let result = match want {
             Some(sites) => {
                 if force || !self.applied.active || self.applied.sites != sites {
@@ -142,7 +145,33 @@ impl Blocker {
             }
         };
         self.last_error = result.err();
+        let note = self.sync_firefox(want, restart_firefox);
         self.persist();
+        note
+    }
+
+    /// Firefox reads enterprise policies only at start-up, so a running Firefox would still
+    /// show path-blocked pages (YouTube Shorts). Domains are covered by hosts immediately.
+    /// When the path rules change, restart Firefox; it restores its tabs after the restart.
+    fn sync_firefox(&mut self, want: Option<&[String]>, restart: bool) -> Option<String> {
+        let paths: Vec<String> = want.unwrap_or(&[]).iter().filter(|s| s.contains('/')).cloned().collect();
+        let running = platform::firefox_running();
+        if !running {
+            self.applied.firefox_paths = paths;
+            return None;
+        }
+        if want.is_none() || paths.is_empty() || paths.iter().all(|p| self.applied.firefox_paths.contains(p)) {
+            return None;
+        }
+        if !restart {
+            return Some("Firefox перезапусти вручную — иначе Shorts в нём не заблокирован.".into());
+        }
+        if platform::restart_firefox() {
+            self.applied.firefox_paths = paths;
+            Some("Firefox перезапущен, чтобы заблокировать Shorts. Вкладки восстановятся.".into())
+        } else {
+            Some("Не удалось перезапустить Firefox — перезапусти его вручную.".into())
+        }
     }
 
     /// Kill blocked apps. Returns names of killed processes.
@@ -308,6 +337,70 @@ mod platform {
         Ok(())
     }
 
+    fn processes(name: &str) -> Vec<u32> {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        };
+        let mut out = vec![];
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE {
+                return out;
+            }
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut ok = Process32FirstW(snap, &mut entry) != 0;
+            while ok {
+                let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case(name) {
+                    out.push(entry.th32ProcessID);
+                }
+                ok = Process32NextW(snap, &mut entry) != 0;
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+
+    pub fn firefox_running() -> bool {
+        !processes("firefox.exe").is_empty()
+    }
+
+    fn image_path(pid: u32) -> Option<PathBuf> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(h);
+            ok.then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+        }
+    }
+
+    /// Kill Firefox and start it again un-elevated (through explorer), so it re-reads policies.
+    /// Firefox treats the kill as a crash and restores the session automatically.
+    pub fn restart_firefox() -> bool {
+        let pids = processes("firefox.exe");
+        let Some(path) = pids.iter().find_map(|&p| image_path(p)) else { return false };
+        kill_apps(&["firefox.exe".to_string()]);
+        for _ in 0..40 {
+            if !firefox_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        std::process::Command::new("explorer.exe").arg(&path).spawn().is_ok()
+    }
+
     pub fn kill_apps(apps: &[String]) -> Vec<String> {
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -373,6 +466,12 @@ mod platform {
     }
     pub fn kill_apps(_: &[String]) -> Vec<String> {
         vec![]
+    }
+    pub fn firefox_running() -> bool {
+        false
+    }
+    pub fn restart_firefox() -> bool {
+        false
     }
 }
 

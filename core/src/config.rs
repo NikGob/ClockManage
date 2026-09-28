@@ -113,6 +113,8 @@ pub struct Config {
     pub reminder_sec: u32,
     pub sound: bool,
     pub overlay: bool,
+    /// Restart a running Firefox when path rules (Shorts) start to apply.
+    pub restart_firefox: bool,
     pub autostart: bool,
     pub mcp_enabled: bool,
     pub mcp_port: u16,
@@ -139,6 +141,7 @@ impl Default for Config {
             reminder_sec: 60,
             sound: true,
             overlay: true,
+            restart_firefox: true,
             autostart: true,
             mcp_enabled: true,
             mcp_port: 0,
@@ -150,10 +153,9 @@ impl Default for Config {
 /// Which parts of the config are protected while the lock is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditContext {
-    /// Blocking of the study day is currently in force (day started, plan not done, before day end).
+    /// Blocking is currently in force (study day started and not finished, or a blocking
+    /// single timer runs). Outside of it everything may be changed.
     pub locked: bool,
-    /// Local time is after day end — the only window where `pause_access` may change.
-    pub after_day_end: bool,
 }
 
 impl Config {
@@ -188,14 +190,14 @@ impl Config {
 
     /// Validate a config change against the lock rules. Returns a human readable refusal.
     pub fn check_update(&self, new: &Config, ctx: EditContext) -> Result<(), String> {
-        if new.pause_access != self.pause_access && !ctx.after_day_end {
-            return Err(format!(
-                "Доступ на паузе можно менять только после {}.",
-                fmt_hm(self.day_end_min)
-            ));
-        }
         if !ctx.locked {
             return Ok(());
+        }
+        if new.pause_access != self.pause_access {
+            return Err(format!(
+                "Доступ на паузе меняется до начала учебного дня или после {}.",
+                fmt_hm(self.day_end_min)
+            ));
         }
         let lower = |v: &[String]| v.iter().map(|s| s.to_ascii_lowercase()).collect::<Vec<_>>();
         let new_sites = lower(&new.blocklist.sites);
@@ -280,7 +282,7 @@ mod tests {
     #[test]
     fn locked_blocklist_only_grows() {
         let cfg = Config::default();
-        let ctx = EditContext { locked: true, after_day_end: false };
+        let ctx = EditContext { locked: true };
         let mut n = cfg.clone();
         n.blocklist.sites.push("reddit.com".into());
         assert!(cfg.check_update(&n, ctx).is_ok());
@@ -289,11 +291,11 @@ mod tests {
     }
 
     #[test]
-    fn pause_access_only_after_day_end() {
+    fn pause_access_only_outside_lock() {
         let cfg = Config::default();
         let mut n = cfg.clone();
         n.pause_access = true;
-        assert!(cfg.check_update(&n, EditContext { locked: false, after_day_end: false }).is_err());
-        assert!(cfg.check_update(&n, EditContext { locked: false, after_day_end: true }).is_ok());
+        assert!(cfg.check_update(&n, EditContext { locked: true }).is_err());
+        assert!(cfg.check_update(&n, EditContext { locked: false }).is_ok());
     }
 }

@@ -12,7 +12,7 @@ const cfg = {
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
   pause_access: q.get('pa') === '1', pause_access_min: 10,
   emergency_phrase: 'Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе',
-  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
+  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: 'fidelity' },
 };
 

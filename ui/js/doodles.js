@@ -1,17 +1,10 @@
 // Hand-drawn illustrations: ink strokes drawn on with stroke-dashoffset, flat colour fills
-// slightly out of register, and a "boiling line" wobble (SVG turbulence, reseeded a few
-// times per second). Each doodle carries state: ringing alarm, break, block/day done, lock.
-
-let uid = 0;
+// slightly out of register, and a "boiling line": every path has three jittered vector
+// variants that swap ~8 times a second, like hand-drawn animation shot "on twos".
+// Pure vector geometry, so edges stay anti-aliased (no raster displacement filters).
 
 function frame(inner, { size = 240, label = '' } = {}) {
-  const id = `rough${++uid}`;
-  return `<svg class="doodle" viewBox="0 0 240 240" width="${size}" height="${size}" role="img" aria-label="${label}">
-  <defs><filter id="${id}" x="-10%" y="-10%" width="120%" height="120%">
-    <feTurbulence type="fractalNoise" baseFrequency="0.032" numOctaves="2" seed="1" result="n"/>
-    <feDisplacementMap in="SourceGraphic" in2="n" scale="3.4" xChannelSelector="R" yChannelSelector="G"/>
-  </filter></defs>
-  <g filter="url(#${id})">${inner}</g></svg>`;
+  return `<svg class="doodle" viewBox="0 0 240 240" width="${size}" height="${size}" role="img" aria-label="${label}">${inner}</svg>`;
 }
 
 // stroke helper: draw-on path with delay (ms) and duration
@@ -108,7 +101,34 @@ export function emptyBook(size) {
     ${s('M140 136 Q156 130 170 134', 1100, 250, 'thin')}`, { size, label: 'Пустой журнал' });
 }
 
-const DOODLES = { await: alarmClock, break: teaCup, block: checkStamp, day: finishFlag, access: padlock, empty: emptyBook };
+export function notebook(size) {
+  return frame(`
+    ${fill('M48 64 Q84 52 118 70 V182 Q84 166 48 178 Z', 'fill-s', 200)}
+    ${s('M44 62 Q82 48 120 68 Q158 48 196 62 L196 178 Q158 164 120 184 Q82 164 44 178 Z', 0, 900)}
+    ${s('M120 68 L120 184', 500, 300)}
+    ${s('M136 92 Q150 84 164 92 Q176 98 184 90', 800, 400, 'thin')}
+    ${s('M136 114 Q152 106 168 112', 1000, 300, 'thin')}
+    ${s('M60 94 Q80 86 102 92', 700, 300, 'thin')}${s('M60 114 Q76 108 96 112', 850, 300, 'thin')}
+    <g class="pencil">
+      ${fill('M150 150 L200 100 L214 114 L164 164 Z', 'fill-p', 1100)}
+      ${s('M146 170 L150 150 L200 100 L214 114 L164 164 Z', 1000, 600)}
+      ${s('M146 170 L156 158', 1300, 200, 'thin')}${s('M192 108 L206 122', 1400, 200, 'thin')}
+    </g>`, { size, label: 'Тетрадь и карандаш' });
+}
+
+export function bowl(size) {
+  return frame(`
+    ${fill('M56 124 Q60 188 120 190 Q180 188 184 124 Z', 'fill-p', 200)}
+    ${s('M50 122 L190 122 Q186 190 120 192 Q54 190 50 122 Z', 0, 800)}
+    ${s('M92 196 L148 196', 500, 250)}
+    ${s('M146 116 L196 40', 700, 350)}${s('M160 118 L206 50', 780, 350)}
+    <g class="steam">
+      ${s('M88 108 Q80 94 90 82 Q100 70 92 56', 900, 500, 'thin')}
+      ${s('M112 106 Q104 90 114 78 Q124 66 116 52', 1000, 500, 'thin')}
+    </g>`, { size, label: 'Обед' });
+}
+
+const DOODLES = { await: alarmClock, break: teaCup, block: checkStamp, day: finishFlag, access: padlock, lock: padlock, empty: emptyBook, idle: notebook, lunch: bowl };
 
 export function doodle(kind, size = 240) {
   return (DOODLES[kind] || alarmClock)(size);
@@ -116,22 +136,54 @@ export function doodle(kind, size = 240) {
 
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** Start the draw-on and "boil" of every doodle inside `root`; returns a stop function. */
-export function play(root, { boilMs = 2600 } = {}) {
+// Deterministic hash noise in [-1, 1].
+function noise(a, b, c) {
+  let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return ((h >>> 0) / 4294967295) * 2 - 1;
+}
+
+const JITTER = 1.7;
+const VARIANTS = 3;
+let pathSeed = 0;
+
+function variants(d, seed) {
+  const out = [];
+  for (let v = 0; v < VARIANTS; v++) {
+    let i = 0;
+    out.push(d.replace(/-?\d+(?:\.\d+)?/g, (n) => (Number(n) + noise(seed, i++, v + 1) * JITTER).toFixed(1)));
+  }
+  return out;
+}
+
+const live = new Set();
+let frameNo = 0;
+let timer = 0;
+
+function boilTick() {
+  if (document.hidden) return;
+  frameNo = (frameNo + 1) % VARIANTS;
+  for (const svg of live) {
+    if (!svg.isConnected) { live.delete(svg); continue; }
+    for (const p of svg._boil) p.el.setAttribute('d', p.v[frameNo]);
+  }
+  if (!live.size) { clearInterval(timer); timer = 0; }
+}
+
+/** Draw every doodle inside `root` on and keep its lines gently "boiling" while it is on screen. */
+export function play(root) {
   const svgs = [...root.querySelectorAll('svg.doodle')];
-  svgs.forEach((svg) => {
+  for (const svg of svgs) {
     svg.classList.remove('play');
     void svg.getBoundingClientRect();
     svg.classList.add('play');
-  });
-  if (reduced()) return () => {};
-  const turbs = svgs.map((svg) => svg.querySelector('feTurbulence')).filter(Boolean);
-  let seed = 1;
-  const t = setInterval(() => {
-    seed = (seed % 4) + 1;
-    turbs.forEach((f) => f.setAttribute('seed', String(seed)));
-  }, 130);
-  const stop = () => clearInterval(t);
-  if (boilMs > 0) setTimeout(stop, boilMs);
-  return stop;
+    if (!svg._boil) {
+      svg._boil = [...svg.querySelectorAll('path')].map((el) => ({ el, v: variants(el.getAttribute('d'), ++pathSeed) }));
+      svg._boil.forEach((p) => p.el.setAttribute('d', p.v[0]));
+    }
+    if (!reduced()) live.add(svg);
+  }
+  if (live.size && !timer) timer = setInterval(boilTick, 125);
+  return () => svgs.forEach((svg) => live.delete(svg));
 }

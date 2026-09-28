@@ -227,7 +227,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         emergency: lock.base && !access_open,
         extend_access: cfg.pause_access && paused && lock.base,
         end_access: access_open,
-        edit_pause_access: clock::minute_of_day(now, cfg.tz_offset_min) >= cfg.day_end_min,
+        edit_pause_access: !lock.base,
     };
 
     View {
