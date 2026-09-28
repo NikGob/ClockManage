@@ -308,6 +308,31 @@ fn start_label(name: &str, part: u32, parts: u32) -> String {
     }
 }
 
+/// "DiscordPTB.exe" -> "Discord", "steam.exe" -> "Steam". One app may run several processes.
+pub fn app_display_name(exe: &str) -> String {
+    let base = exe.rsplit(['\\', '/']).next().unwrap_or(exe);
+    let stem = base.strip_suffix(".exe").or_else(|| base.strip_suffix(".EXE")).unwrap_or(base);
+    let lower = stem.to_lowercase();
+    let known = [
+        ("telegram", "Telegram"),
+        ("ayugram", "AyuGram"),
+        ("discord", "Discord"),
+        ("steam", "Steam"),
+        ("twitch", "Twitch"),
+        ("spotify", "Spotify"),
+        ("epicgameslauncher", "Epic Games"),
+        ("riotclient", "Riot"),
+    ];
+    if let Some((_, name)) = known.iter().find(|(k, _)| lower.starts_with(k)) {
+        return name.to_string();
+    }
+    let mut c = stem.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().chain(c).collect(),
+        None => stem.to_string(),
+    }
+}
+
 pub fn fmt_dur(ms: i64) -> String {
     let m = (ms.max(0) + 30_000) / MIN;
     match (m / 60, m % 60) {
@@ -378,6 +403,9 @@ fn ticker(shared: Arc<Shared>) {
     let mut last_nope: Ts = 0;
     let mut last_tab_check: Ts = 0;
     let mut last_tab_hit: Option<(String, Ts)> = None;
+    let mut last_beat: Ts = 0;
+    let mut last_beat_blocked = false;
+    let mut last_attempts: Ts = 0;
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
@@ -419,6 +447,11 @@ fn ticker(shared: Arc<Shared>) {
                 shared.lock().day.log(now, "firefox", n.clone());
                 shared.notify("Firefox", &n);
             }
+            shared
+                .blocker
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .sync_launch_guard(blocked.then_some(apps.as_slice()), last_blocked == Some(blocked));
             last_verify = now;
             if last_blocked.is_some() && last_blocked != Some(blocked) {
                 let mut g = shared.lock();
@@ -432,7 +465,13 @@ fn ticker(shared: Arc<Shared>) {
             last_kill = now;
             let killed = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).kill_apps(&apps);
             if !killed.is_empty() {
-                let names: Vec<String> = killed.iter().map(|k| k.trim_end_matches(".exe").trim_end_matches(".EXE").to_string()).collect();
+                let mut names: Vec<String> = vec![];
+                for k in &killed {
+                    let n = app_display_name(k);
+                    if !names.contains(&n) {
+                        names.push(n);
+                    }
+                }
                 if now - last_nope > 3_000 {
                     last_nope = now;
                     shared.nope(&format!("{} — после учёбы", names.join(", ")));
@@ -443,6 +482,40 @@ fn ticker(shared: Arc<Shared>) {
                     g.last_kill_note = now;
                     drop(g);
                     shared.notify("Сейчас учёба", &format!("{} закрыт. Блокировка до конца блоков дня.", killed.join(", ")));
+                }
+            }
+        }
+
+        // Launch guard: heartbeat tells it the lock is live; it reports stopped launches back.
+        if now - last_beat >= 4_000 || last_beat_blocked != blocked {
+            last_beat = now;
+            last_beat_blocked = blocked;
+            let beat = shared.store.dir.join("guard.beat");
+            if blocked {
+                let _ = std::fs::write(&beat, now.to_string());
+            } else {
+                let _ = std::fs::remove_file(&beat);
+            }
+        }
+        if now - last_attempts >= 400 {
+            last_attempts = now;
+            let dir = shared.store.dir.join("attempts");
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                let mut names: Vec<String> = vec![];
+                for e in rd.flatten() {
+                    let exe = std::fs::read_to_string(e.path()).unwrap_or_default();
+                    let _ = std::fs::remove_file(e.path());
+                    let n = app_display_name(exe.trim());
+                    if !n.is_empty() && !names.contains(&n) {
+                        names.push(n);
+                    }
+                }
+                if !names.is_empty() {
+                    shared.lock().day.log(now, "app_blocked", format!("Не дал запустить: {}", names.join(", ")));
+                    if now - last_nope > 1_500 {
+                        last_nope = now;
+                        shared.nope(&format!("{} — после учёбы", names.join(", ")));
+                    }
                 }
             }
         }

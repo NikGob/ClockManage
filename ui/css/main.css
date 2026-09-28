@@ -96,7 +96,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .hero[data-kind="await"] .lockline.open, .hero[data-kind="break"] .lockline.open { color: inherit; }
 
 .dial { position: relative; width: min(340px, 72vw); aspect-ratio: 1; display: grid; place-items: center; margin-top: 4px; }
-.dial svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.dial > svg#ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .dial .track { fill: none; stroke: color-mix(in srgb, currentColor 12%, transparent); stroke-width: 7; stroke-linecap: round; }
 .dial .wave { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 7; stroke-linecap: round; transition: stroke var(--dur-m2) linear; }
 .hero[data-kind="break"] .dial .wave, .hero[data-kind="lunch_break"] .dial .wave { stroke: var(--md-sys-color-tertiary); }
@@ -108,7 +108,9 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 @keyframes digit { from { transform: translateY(-35%); opacity: 0; filter: blur(2px); } }
 .dial .state { font: 600 12px/16px var(--font); letter-spacing: .8px; text-transform: uppercase; opacity: .8; min-height: 16px; }
 .hero[data-paused="true"] .dial .big { opacity: .55; }
-.dial .art { width: 240px; height: 240px; display: grid; place-items: center; }
+/* Fixed box so the doodle never changes size while it draws in. */
+.dial .art { width: 240px; height: 240px; display: grid; place-items: center; contain: layout size; }
+.dial .art svg { width: 240px; height: 240px; display: block; }
 .dial:has(.art:not([hidden])) svg#ring { opacity: 0; }
 .hero { --hero-bg: var(--md-sys-color-surface-container); }
 .hero[data-kind="await"] { --hero-bg: var(--md-sys-color-primary-container); }
@@ -260,6 +262,10 @@ table.t tr:last-child td { border-bottom: 0; }
 .hold .fillbar { position: absolute; inset: 0; background: var(--md-sys-color-on-primary); opacity: .22; transform-origin: left; transform: scaleX(0); z-index: -1; }
 .inline-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .toggle-line { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+.ff-line { display: flex; gap: 8px; align-items: center; padding-top: 4px; border-top: 1px solid var(--md-sys-color-outline-variant); padding-top: 12px; }
+.ff-line .grow { flex: 1; min-width: 0; }
+.ff-line .icon-btn.spin .icon { animation: spin 900ms var(--ease) infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---- motion details ---- */
 .nav .dest[aria-current="page"] .pill .icon { animation: nav-icon 520ms var(--spring-fast); }

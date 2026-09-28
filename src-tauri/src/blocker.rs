@@ -28,6 +28,9 @@ pub struct Applied {
     /// `ff_rules_at` value for which a restart was already attempted (no restart loops).
     #[serde(default)]
     pub ff_handled_at: i64,
+    /// Executables redirected to the launch guard via Image File Execution Options.
+    #[serde(default)]
+    pub ifeo: Vec<String>,
 }
 
 pub struct Blocker {
@@ -222,6 +225,43 @@ impl Blocker {
     pub fn blocked_tab(&self, sites: &[String]) -> Option<String> {
         let (exe, title) = platform::foreground_window()?;
         match_blocked_tab(&exe, &title, sites)
+    }
+
+    /// Redirect launches of blocked apps to the guard (`cm-guard.exe` next to our exe) while
+    /// `apps` is Some; remove every redirect we made when None. The guard stops the launch
+    /// before the app starts, so Windows shows no "cannot access" error as it does when a
+    /// freshly started process is killed. `verify` re-checks entries someone may have removed.
+    pub fn sync_launch_guard(&mut self, apps: Option<&[String]>, verify: bool) {
+        let guard = std::env::current_exe().ok().map(|p| p.with_file_name("cm-guard.exe")).filter(|p| p.exists());
+        let want: Vec<String> = match (apps, &guard) {
+            (Some(a), Some(_)) => a.iter().map(|s| s.to_ascii_lowercase()).collect(),
+            _ => vec![],
+        };
+        let mut changed = false;
+        let current = std::mem::take(&mut self.applied.ifeo);
+        for exe in current {
+            if want.contains(&exe) && (!verify || guard.as_ref().is_some_and(|g| platform::ifeo_present(&exe, g))) {
+                self.applied.ifeo.push(exe);
+            } else {
+                if let Some(g) = &guard {
+                    platform::ifeo_clear(&exe, g);
+                } else {
+                    platform::ifeo_clear_any_guard(&exe);
+                }
+                changed = true;
+            }
+        }
+        if let Some(g) = &guard {
+            for exe in &want {
+                if !self.applied.ifeo.contains(exe) && platform::ifeo_set(exe, g) {
+                    self.applied.ifeo.push(exe.clone());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.persist();
+        }
     }
 
     /// Kill blocked apps. Returns names of killed processes.
@@ -434,6 +474,58 @@ mod platform {
     }
 
     /// (exe path, title) of the foreground window.
+    const IFEO: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+
+    fn guard_value(guard: &std::path::Path) -> String {
+        format!("\"{}\"", guard.display())
+    }
+
+    /// Both registry views, so 32-bit apps are covered as well.
+    fn ifeo_views() -> [u32; 2] {
+        [KEY_WOW64_64KEY, KEY_WOW64_32KEY]
+    }
+
+    pub fn ifeo_set(exe: &str, guard: &std::path::Path) -> bool {
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let ours = guard_value(guard);
+        let mut ok = false;
+        for view in ifeo_views() {
+            let Ok((key, _)) = hklm.create_subkey_with_flags(format!(r"{IFEO}\{exe}"), KEY_READ | KEY_WRITE | view) else {
+                continue;
+            };
+            match key.get_value::<String, _>("Debugger") {
+                // Somebody else's debugger (a real one): leave it alone.
+                Ok(v) if v != ours && !v.to_ascii_lowercase().contains("cm-guard.exe") => continue,
+                _ => {}
+            }
+            ok |= key.set_value("Debugger", &ours).is_ok();
+        }
+        ok
+    }
+
+    pub fn ifeo_present(exe: &str, guard: &std::path::Path) -> bool {
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        hklm.open_subkey_with_flags(format!(r"{IFEO}\{exe}"), KEY_READ | KEY_WOW64_64KEY)
+            .and_then(|k| k.get_value::<String, _>("Debugger"))
+            .is_ok_and(|v| v == guard_value(guard))
+    }
+
+    pub fn ifeo_clear(exe: &str, _guard: &std::path::Path) {
+        ifeo_clear_any_guard(exe);
+    }
+
+    /// Remove a Debugger value only if it points at our guard.
+    pub fn ifeo_clear_any_guard(exe: &str) {
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        for view in ifeo_views() {
+            if let Ok(key) = hklm.open_subkey_with_flags(format!(r"{IFEO}\{exe}"), KEY_READ | KEY_WRITE | view) {
+                if key.get_value::<String, _>("Debugger").is_ok_and(|v| v.to_ascii_lowercase().contains("cm-guard.exe")) {
+                    let _ = key.delete_value("Debugger");
+                }
+            }
+        }
+    }
+
     pub fn foreground_window() -> Option<(String, String)> {
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
         unsafe {
@@ -602,6 +694,14 @@ mod platform {
     pub fn foreground_window() -> Option<(String, String)> {
         None
     }
+    pub fn ifeo_set(_: &str, _: &std::path::Path) -> bool {
+        false
+    }
+    pub fn ifeo_present(_: &str, _: &std::path::Path) -> bool {
+        false
+    }
+    pub fn ifeo_clear(_: &str, _: &std::path::Path) {}
+    pub fn ifeo_clear_any_guard(_: &str) {}
     pub fn restart_firefox() -> Result<(), String> {
         Err("только Windows".into())
     }

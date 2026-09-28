@@ -1,0 +1,18 @@
+[package]
+name = "cm-guard"
+version = "0.1.3"
+edition = "2021"
+description = "ClockManage launch guard: stands in for blocked apps during study time"
+
+[[bin]]
+name = "cm-guard"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Environment",
+  "Win32_System_Threading",
+  "Win32_System_Diagnostics_Debug",
+] }

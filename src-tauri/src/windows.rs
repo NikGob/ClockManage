@@ -80,7 +80,12 @@ pub fn try_quit(app: &AppHandle, shared: &Arc<Shared>) {
         show_main(app);
         return;
     }
-    shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).sync(None, true, false);
+    {
+        let mut b = shared.blocker.lock().unwrap_or_else(|e| e.into_inner());
+        b.sync(None, true, false);
+        b.sync_launch_guard(None, false);
+    }
+    let _ = std::fs::remove_file(shared.store.dir.join("guard.beat"));
     shared.mcp.stop();
     app.exit(0);
 }

@@ -20,9 +20,12 @@ export function mountBlock(root, ctx) {
             <div class="field"><label for="site-in">Добавить сайт</label><input id="site-in" placeholder="reddit.com или youtube.com/shorts" autocomplete="off"></div>
             <button class="btn tonal interactive" id="site-add">${icon('add')}Добавить</button>
           </div>
-          <div class="toggle-line"><label for="ff" class="body-l">Перезапускать Firefox, чтобы Shorts блокировался сразу<span class="d body-m muted" style="display:block">Firefox читает правила только при старте. Вкладки восстановятся сами.</span></label><input type="checkbox" class="switch" role="switch" id="ff"></div>
-          <div><button class="btn outlined interactive" id="ff-now">${icon('refresh')}Перезапустить Firefox сейчас</button></div>
-          <p class="note-text">Домен блокируется целиком через hosts и политики браузеров. Путь вроде <b>youtube.com/shorts</b> блокирует только этот раздел — обычный YouTube остаётся доступен.</p>
+          <p class="note-text">Путь вроде <b>youtube.com/shorts</b> закрывает только раздел — остальной YouTube доступен.</p>
+          <div class="ff-line">
+            <label for="ff" class="body-l grow">Перезапускать Firefox при блокировке</label>
+            <button class="icon-btn interactive" id="ff-now" aria-label="Перезапустить Firefox сейчас" title="Перезапустить Firefox сейчас">${icon('refresh')}</button>
+            <input type="checkbox" class="switch" role="switch" id="ff">
+          </div>
         </div>
       </section>
 
@@ -77,7 +80,7 @@ export function mountBlock(root, ctx) {
   const $ = (id) => root.querySelector('#' + id);
 
   function chips(list, kind, removable) {
-    return list.map((s, i) => `<span class="chip input">${esc(s)}${removable ? `<button class="x interactive" data-rm="${kind}" data-i="${i}" aria-label="Убрать ${esc(s)}">${icon('close')}</button>` : ''}</span>`).join('')
+    return list.map((s, i) => `<span class="chip input${removable ? ' removable' : ''}">${esc(s)}${removable ? `<button class="x interactive" data-rm="${kind}" data-i="${i}" aria-label="Убрать ${esc(s)}">${icon('close')}</button>` : ''}</span>`).join('')
       || '<span class="body-m muted">Пусто</span>';
   }
 
@@ -178,7 +181,11 @@ export function mountBlock(root, ctx) {
     save((c) => c.blocklist[kind].splice(i, 1), `Убрано: ${name}`);
   });
   $('ff-now').addEventListener('click', async (e) => {
-    const ok = await run(() => call('restart_firefox').then(() => true), e.currentTarget);
+    const b = e.currentTarget;
+    if (b.classList.contains('spin')) return;
+    b.classList.add('spin');
+    const ok = await run(() => call('restart_firefox').then(() => true));
+    b.classList.remove('spin');
     if (ok) snack('Firefox перезапущен — вкладки восстановятся');
   });
   $('ff').addEventListener('change', (e) => save((c) => { c.restart_firefox = e.target.checked; }));

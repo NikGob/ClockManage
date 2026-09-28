@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "src-tauri"]
+members = ["core", "guard", "src-tauri"]
 
 [profile.release]
 opt-level = "s"

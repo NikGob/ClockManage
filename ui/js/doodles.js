@@ -157,10 +157,58 @@ export function fingerWag(size) {
     </g>`, { size, label: 'Не-не-не, грозящий палец' });
 }
 
-const DOODLES = { nope: fingerWag, await: alarmClock, break: teaCup, block: checkStamp, day: finishFlag, access: padlock, lock: padlock, empty: emptyBook, idle: notebook, lunch: bowl };
+// Circles are drawn with quadratic curves (no arcs): jittering arc flags would break paths.
+const blob = (cx, cy, r) =>
+  `M${cx - r} ${cy} Q${cx - r} ${cy - r} ${cx} ${cy - r} Q${cx + r} ${cy - r} ${cx + r} ${cy} Q${cx + r} ${cy + r} ${cx} ${cy + r} Q${cx - r} ${cy + r} ${cx - r} ${cy} Z`;
 
+export function stretch(size) {
+  return frame(`
+    ${fill('M106 108 Q120 100 134 108 L131 164 L109 164 Z', 'fill-p', 300)}
+    ${s(blob(120, 76, 20), 0, 500)}
+    ${s('M120 96 L120 164', 300, 300)}
+    <g class="arms">
+      ${s('M120 112 Q104 86 92 56', 500, 350)}${s('M120 112 Q136 86 148 56', 560, 350)}
+      ${s('M92 56 L86 48 M92 56 L96 46', 820, 200, 'thin')}${s('M148 56 L154 48 M148 56 L144 46', 860, 200, 'thin')}
+    </g>
+    ${s('M120 164 L102 214', 650, 300)}${s('M120 164 L138 214', 700, 300)}
+    ${s('M76 218 Q120 226 164 218', 900, 300, 'thin')}
+    <g class="reach-lines">${s('M70 72 Q60 58 70 44', 1100, 250, 'thin')}${s('M170 72 Q180 58 170 44', 1150, 250, 'thin')}</g>
+  `, { size, label: 'Потянись' });
+}
+
+export function waterGlass(size) {
+  return frame(`
+    ${fill('M92 112 Q106 104 120 112 Q134 120 148 112 L141 198 Q140 204 134 204 L106 204 Q100 204 99 198 Z', 'fill-p', 300)}
+    ${s('M84 58 L96 200 Q98 210 108 210 L132 210 Q142 210 144 200 L156 58', 0, 800)}
+    ${s('M84 58 Q120 66 156 58', 200, 300, 'thin')}
+    ${s('M92 112 Q106 104 120 112 Q134 120 148 112', 600, 400, 'thin')}
+    ${s('M138 36 L126 160', 800, 300)}${s('M138 36 L166 26', 950, 200)}
+    <g class="bubbles">${s(blob(112, 170, 5), 1100, 200, 'thin')}${s(blob(128, 148, 4), 1200, 200, 'thin')}${s(blob(116, 132, 3), 1300, 200, 'thin')}</g>
+  `, { size, label: 'Стакан воды' });
+}
+
+export function trophy(size) {
+  return frame(`
+    ${fill('M88 56 L152 56 L148 104 Q144 132 120 136 Q96 132 92 104 Z', 'fill-p', 300)}
+    ${fill('M92 176 L148 176 L148 198 L92 198 Z', 'fill-s', 500)}
+    ${s('M86 54 L154 54 L150 104 Q146 134 120 138 Q94 134 90 104 Z', 0, 800)}
+    ${s('M88 66 Q62 66 66 88 Q70 104 92 104', 400, 400)}${s('M152 66 Q178 66 174 88 Q170 104 148 104', 450, 400)}
+    ${s('M112 138 L110 164 L130 164 L128 138', 700, 300)}
+    ${s('M104 164 L136 164 L140 176 L100 176 Z', 800, 300)}
+    ${s('M92 176 L148 176 L148 198 L92 198 Z', 900, 400)}
+    ${fill('M120 76 Q122 88 132 90 Q122 92 120 104 Q118 92 108 90 Q118 88 120 76 Z', 'fill-t', 1200)}
+    ${burst(1300)}`, { size, label: 'Кубок' });
+}
+
+const DOODLES = {
+  nope: [fingerWag], await: [alarmClock], break: [teaCup, stretch, waterGlass], block: [checkStamp, trophy],
+  day: [finishFlag, trophy], access: [padlock], lock: [padlock], empty: [emptyBook], idle: [notebook], lunch: [bowl],
+};
+
+/** Hand-drawn scene for a moment; moments with several scenes pick one at random. */
 export function doodle(kind, size = 240) {
-  return (DOODLES[kind] || alarmClock)(size);
+  const set = DOODLES[kind] || DOODLES.await;
+  return set[Math.floor(Math.random() * set.length)](size);
 }
 
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;

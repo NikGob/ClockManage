@@ -56,27 +56,62 @@ export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/** Material ripple from the pointer position on any `.interactive` element. */
+function spawnRipple(el, x, y) {
+  const r = el.getBoundingClientRect();
+  const size = Math.hypot(Math.max(x, r.width - x), Math.max(y, r.height - y)) * 2;
+  const dot = document.createElement('span');
+  dot.className = 'ripple';
+  dot.style.cssText = `width:${size}px;height:${size}px;left:${x - size / 2}px;top:${y - size / 2}px`;
+  el.appendChild(dot);
+  const born = performance.now();
+  let released = false;
+  let grown = false;
+  const fade = () => {
+    if (!released || !grown || dot.classList.contains('out')) return;
+    dot.classList.add('out');
+    setTimeout(() => dot.remove(), 380);
+  };
+  dot.addEventListener('animationend', () => { grown = true; fade(); });
+  return () => {
+    released = true;
+    // Always show at least a short ripple even for a quick tap.
+    setTimeout(fade, Math.max(0, 120 - (performance.now() - born)));
+  };
+}
+
+function hop(el) {
+  if (!el.classList.contains('btn')) return;
+  el.classList.remove('released');
+  void el.offsetWidth;
+  el.classList.add('released');
+  setTimeout(() => el.classList.remove('released'), 450);
+}
+
+/** Material ripple (pointer + keyboard) and the release "hop" on any `.interactive` element. */
 export function installRipples(root = document) {
   root.addEventListener('pointerdown', (e) => {
     const el = e.target.closest('.interactive');
-    if (!el || el.disabled) return;
+    if (!el || el.disabled || e.button > 0) return;
     const r = el.getBoundingClientRect();
-    const size = Math.hypot(r.width, r.height) * 2;
-    const dot = document.createElement('span');
-    dot.className = 'ripple';
-    dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
-    el.appendChild(dot);
-    dot.addEventListener('animationend', () => dot.remove());
-    // Icon "hop" on release, like M3 Expressive buttons.
-    if (el.classList.contains('btn')) {
-      const up = () => {
-        el.classList.remove('released');
-        void el.offsetWidth;
-        el.classList.add('released');
-        setTimeout(() => el.classList.remove('released'), 450);
-      };
-      el.addEventListener('pointerup', up, { once: true });
-    }
+    const release = spawnRipple(el, e.clientX - r.left, e.clientY - r.top);
+    const up = () => {
+      release();
+      hop(el);
+      el.removeEventListener('pointerleave', cancel);
+    };
+    const cancel = () => {
+      release();
+      el.removeEventListener('pointerup', up);
+    };
+    el.addEventListener('pointerup', up, { once: true });
+    el.addEventListener('pointerleave', cancel, { once: true });
+  });
+  root.addEventListener('keydown', (e) => {
+    if ((e.key !== 'Enter' && e.key !== ' ') || e.repeat) return;
+    const el = e.target.closest?.('.interactive');
+    if (!el || el.disabled || el !== e.target) return;
+    const r = el.getBoundingClientRect();
+    const release = spawnRipple(el, r.width / 2, r.height / 2);
+    el.addEventListener('keyup', () => { release(); hop(el); }, { once: true });
   });
 }

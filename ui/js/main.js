@@ -16,7 +16,7 @@ const ROUTES = [
 ];
 
 const nav = document.getElementById('nav');
-const view = document.getElementById('view');
+let view = document.getElementById('view');
 const title = document.getElementById('screen-title');
 const actions = document.getElementById('top-actions');
 const banner = document.getElementById('banner');
@@ -34,7 +34,7 @@ installRipples();
 
 nav.innerHTML = ROUTES.map((r) => `
   <button class="dest" data-route="${r.id}" aria-label="${r.label}">
-    <span class="pill">${icon(r.icon)}<span class="badge" hidden></span></span><span>${r.label}</span>
+    <span class="pill interactive">${icon(r.icon)}<span class="badge" hidden></span></span><span>${r.label}</span>
   </button>`).join('')
 ;
 
@@ -64,10 +64,12 @@ function go(id) {
   title.textContent = r.title;
   actions.innerHTML = '';
   ctx.onAction = null;
-  view.classList.remove('enter');
-  void view.offsetWidth;
+  // A fresh container per screen: listeners of the previous screen go away with it
+  // (reusing one element stacked a click handler per visit — one click opened N dialogs).
+  const fresh = view.cloneNode(false);
+  view.replaceWith(fresh);
+  view = fresh;
   view.classList.add('enter');
-  view.scrollTop = 0;
   screen = r.mount(view, ctx);
   screen.show?.();
   if (snapshot) screen.update(snapshot);
