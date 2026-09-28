@@ -807,8 +807,10 @@ impl DayState {
                 break;
             }
         }
+        // After the day ends nobody should be woken up by a forgotten plan timer.
+        let quiet = self.mode == Mode::Plan && self.after_day_end(now, cfg);
         if let Phase::Await { since, reminded_at, next } = self.phase {
-            if now - reminded_at >= cfg.reminder_sec as i64 * 1000 {
+            if !quiet && now - reminded_at >= cfg.reminder_sec as i64 * 1000 {
                 self.phase = Phase::Await { since, reminded_at: now, next };
                 let (next_name, next_part, next_parts) = self.part_info(next);
                 ev.push(Event::AwaitReminder { waiting_ms: now - since, next_name, next_part, next_parts });
@@ -826,7 +828,7 @@ impl DayState {
                     ev.push(Event::PauseAccessExpired);
                 }
             }
-            if now - p.reminded_at >= PAUSE_REMINDER_MS {
+            if !quiet && now - p.reminded_at >= PAUSE_REMINDER_MS {
                 p.reminded_at = now;
                 ev.push(Event::PauseReminder { paused_ms: now - p.since });
             }
@@ -1073,6 +1075,18 @@ mod tests {
         assert!(d.lock_state(ten_pm - 1, &c).blocked);
         assert!(!d.lock_state(ten_pm, &c).blocked);
         assert!(d.tick(ten_pm, &c).contains(&Event::DayEndReached));
+    }
+
+    #[test]
+    fn no_reminders_after_day_end() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.tick(start() + 55 * MIN, &c);
+        assert!(matches!(d.phase, Phase::Await { .. }));
+        let late = t("2026-09-28T19:30:00Z");
+        let ev = d.tick(late, &c);
+        assert!(!ev.iter().any(|e| matches!(e, Event::AwaitReminder { .. })));
     }
 
     #[test]
