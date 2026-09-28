@@ -21,6 +21,7 @@ export function mountBlock(root, ctx) {
             <button class="btn tonal interactive" id="site-add">${icon('add')}Добавить</button>
           </div>
           <div class="toggle-line"><label for="ff" class="body-l">Перезапускать Firefox, чтобы Shorts блокировался сразу<span class="d body-m muted" style="display:block">Firefox читает правила только при старте. Вкладки восстановятся сами.</span></label><input type="checkbox" class="switch" role="switch" id="ff"></div>
+          <div><button class="btn outlined interactive" id="ff-now">${icon('refresh')}Перезапустить Firefox сейчас</button></div>
           <p class="note-text">Домен блокируется целиком через hosts и политики браузеров. Путь вроде <b>youtube.com/shorts</b> блокирует только этот раздел — обычный YouTube остаётся доступен.</p>
         </div>
       </section>
@@ -175,6 +176,10 @@ export function mountBlock(root, ctx) {
     const i = Number(b.dataset.i);
     const name = cfg.blocklist[kind][i];
     save((c) => c.blocklist[kind].splice(i, 1), `Убрано: ${name}`);
+  });
+  $('ff-now').addEventListener('click', async (e) => {
+    const ok = await run(() => call('restart_firefox').then(() => true), e.currentTarget);
+    if (ok) snack('Firefox перезапущен — вкладки восстановятся');
   });
   $('ff').addEventListener('change', (e) => save((c) => { c.restart_firefox = e.target.checked; }));
   $('pa').addEventListener('change', (e) => save((c) => { c.pause_access = e.target.checked; }));

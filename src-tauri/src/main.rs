@@ -111,6 +111,7 @@ fn main() {
             app::show_main,
             app::toggle_mini,
             app::style_titlebar,
+            app::restart_firefox,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

@@ -19,9 +19,15 @@ pub struct Applied {
     pub sites: Vec<String>,
     /// registry key -> values we appended to its list
     pub policies: Vec<(String, Vec<String>)>,
-    /// Path rules the running Firefox already knows (it reads policies only at start).
+    /// Firefox rules currently written and when they changed (unix ms). Firefox reads
+    /// policies only at start-up, so any Firefox process older than this lacks them.
     #[serde(default)]
-    pub firefox_paths: Vec<String>,
+    pub ff_rules: Vec<String>,
+    #[serde(default)]
+    pub ff_rules_at: i64,
+    /// `ff_rules_at` value for which a restart was already attempted (no restart loops).
+    #[serde(default)]
+    pub ff_handled_at: i64,
 }
 
 pub struct Blocker {
@@ -34,6 +40,10 @@ pub const HOSTS_BEGIN: &str = "# >>> ClockManage study lock (auto-generated, rem
 pub const HOSTS_END: &str = "# <<< ClockManage";
 
 /// Host names that go to the hosts file for one block-list entry.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 pub fn hosts_names(site: &str) -> Vec<String> {
     if site.contains('/') {
         // Path rule: domain must stay reachable (normal YouTube is allowed).
@@ -159,7 +169,7 @@ impl Blocker {
                 if force || !self.applied.active || self.applied.sites != sites {
                     platform::apply(&mut self.applied, sites)
                 } else {
-                    platform::verify(&self.applied)
+                    platform::verify(&mut self.applied)
                 }
             }
             None => {
@@ -176,28 +186,34 @@ impl Blocker {
         note
     }
 
-    /// Firefox reads enterprise policies only at start-up, so a running Firefox would still
-    /// show path-blocked pages (YouTube Shorts). Domains are covered by hosts immediately.
-    /// When the path rules change, restart Firefox; it restores its tabs after the restart.
+    /// Firefox reads enterprise policies only at start-up, and keeps already open connections
+    /// alive, so a Firefox that was started before the current rules were written still opens
+    /// blocked pages. Detect that by process start time and restart it (tabs are restored).
     fn sync_firefox(&mut self, want: Option<&[String]>, restart: bool) -> Option<String> {
-        let paths: Vec<String> = want.unwrap_or(&[]).iter().filter(|s| s.contains('/')).cloned().collect();
-        let running = platform::firefox_running();
-        if !running {
-            self.applied.firefox_paths = paths;
+        want?;
+        if self.applied.ff_rules.is_empty() || self.applied.ff_handled_at == self.applied.ff_rules_at {
             return None;
         }
-        if want.is_none() || paths.is_empty() || paths.iter().all(|p| self.applied.firefox_paths.contains(p)) {
+        let started = platform::firefox_started_at()?;
+        if started >= self.applied.ff_rules_at {
             return None;
         }
+        self.applied.ff_handled_at = self.applied.ff_rules_at;
         if !restart {
-            return Some("Firefox перезапусти вручную — иначе Shorts в нём не заблокирован.".into());
+            return Some("Firefox запущен до блокировки и её не видит — перезапусти его.".into());
         }
-        if platform::restart_firefox() {
-            self.applied.firefox_paths = paths;
-            Some("Firefox перезапущен, чтобы заблокировать Shorts. Вкладки восстановятся.".into())
-        } else {
-            Some("Не удалось перезапустить Firefox — перезапусти его вручную.".into())
-        }
+        Some(match platform::restart_firefox() {
+            Ok(()) => "Firefox перезапущен, чтобы блокировка в нём заработала. Вкладки восстановятся.".into(),
+            Err(e) => format!("Не удалось перезапустить Firefox ({e}) — перезапусти его вручную."),
+        })
+    }
+
+    /// Manual "restart Firefox now".
+    pub fn restart_firefox_now(&mut self) -> Result<(), String> {
+        platform::restart_firefox()?;
+        self.applied.ff_handled_at = self.applied.ff_rules_at;
+        self.persist();
+        Ok(())
     }
 
     /// If the focused browser tab shows a blocked site (its error/blocked page is titled with the
@@ -311,7 +327,10 @@ mod platform {
 
     pub fn apply(a: &mut Applied, sites: &[String]) -> Result<(), String> {
         // Start from a clean state so removed entries disappear.
+        let (ff_rules, ff_at) = (std::mem::take(&mut a.ff_rules), a.ff_rules_at);
         let _ = clear(a);
+        a.ff_rules = ff_rules;
+        a.ff_rules_at = ff_at;
         let content = std::fs::read_to_string(hosts_path()).unwrap_or_default();
         write_hosts(&with_section(&content, sites))?;
         let mut errors = vec![];
@@ -322,8 +341,15 @@ mod platform {
                 Err(e) => errors.push(format!("{key}: {e}")),
             }
         }
-        match add_policy(FIREFOX_KEY, &firefox_rules(sites)) {
-            Ok(added) => a.policies.push((FIREFOX_KEY.to_string(), added)),
+        let ff = firefox_rules(sites);
+        match add_policy(FIREFOX_KEY, &ff) {
+            Ok(added) => {
+                a.policies.push((FIREFOX_KEY.to_string(), added));
+                if a.ff_rules != ff {
+                    a.ff_rules = ff;
+                    a.ff_rules_at = now_ms();
+                }
+            }
             Err(e) => errors.push(format!("Firefox: {e}")),
         }
         a.active = true;
@@ -336,7 +362,7 @@ mod platform {
         }
     }
 
-    pub fn verify(a: &Applied) -> Result<(), String> {
+    pub fn verify(a: &mut Applied) -> Result<(), String> {
         let content = std::fs::read_to_string(hosts_path()).unwrap_or_default();
         let expected = hosts_section(&a.sites);
         let mut repaired = false;
@@ -344,11 +370,16 @@ mod platform {
             write_hosts(&with_section(&content, &a.sites))?;
             repaired = true;
         }
+        let mut ff_repaired = false;
         for (key, ours) in &a.policies {
             if !policy_present(key, ours) {
                 let _ = add_policy(key, ours);
                 repaired = true;
+                ff_repaired |= key == FIREFOX_KEY;
             }
+        }
+        if ff_repaired {
+            a.ff_rules_at = now_ms();
         }
         if repaired {
             flush_dns();
@@ -367,6 +398,7 @@ mod platform {
         }
         a.active = false;
         a.sites.clear();
+        a.ff_rules.clear();
         flush_dns();
         Ok(())
     }
@@ -439,20 +471,63 @@ mod platform {
         }
     }
 
+    /// Start time (unix ms) of the oldest running firefox.exe.
+    pub fn firefox_started_at() -> Option<i64> {
+        use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+        use windows_sys::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        let mut oldest: Option<i64> = None;
+        for pid in processes("firefox.exe") {
+            unsafe {
+                let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if h.is_null() {
+                    continue;
+                }
+                let z = || FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+                let (mut c, mut e, mut k, mut u) = (z(), z(), z(), z());
+                if GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u) != 0 {
+                    let ft = ((c.dwHighDateTime as i64) << 32) | c.dwLowDateTime as i64;
+                    let ms = (ft - 116_444_736_000_000_000) / 10_000;
+                    oldest = Some(oldest.map_or(ms, |o| o.min(ms)));
+                }
+                CloseHandle(h);
+            }
+        }
+        oldest
+    }
+
     /// Kill Firefox and start it again un-elevated (through explorer), so it re-reads policies.
     /// Firefox treats the kill as a crash and restores the session automatically.
-    pub fn restart_firefox() -> bool {
+    pub fn restart_firefox() -> Result<(), String> {
         let pids = processes("firefox.exe");
-        let Some(path) = pids.iter().find_map(|&p| image_path(p)) else { return false };
-        kill_apps(&["firefox.exe".to_string()]);
-        for _ in 0..40 {
-            if !firefox_running() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        if pids.is_empty() {
+            return Err("Firefox не запущен".into());
         }
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        std::process::Command::new("explorer.exe").arg(&path).spawn().is_ok()
+        let path = pids.iter().find_map(|&p| image_path(p)).ok_or("не найден путь к firefox.exe")?;
+        let wait = |running: bool, ms: u64| {
+            for _ in 0..ms / 100 {
+                if firefox_running() == running {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            firefox_running() == running
+        };
+        kill_apps(&["firefox.exe".to_string()]);
+        if !wait(false, 5_000) {
+            kill_apps(&["firefox.exe".to_string()]);
+            if !wait(false, 3_000) {
+                return Err("Firefox не закрылся".into());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        // explorer.exe starts it with the user's normal (non-admin) rights.
+        let _ = std::process::Command::new("explorer.exe").arg(&path).spawn();
+        if wait(true, 6_000) {
+            return Ok(());
+        }
+        // Fallback: start directly (inherits admin rights, but Firefox is back with the rules).
+        std::process::Command::new(&path).spawn().map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn kill_apps(apps: &[String]) -> Vec<String> {
@@ -506,7 +581,7 @@ mod platform {
         a.sites = sites.to_vec();
         Ok(())
     }
-    pub fn verify(_: &Applied) -> Result<(), String> {
+    pub fn verify(_: &mut Applied) -> Result<(), String> {
         Ok(())
     }
     pub fn clear(a: &mut Applied) -> Result<(), String> {
@@ -527,8 +602,11 @@ mod platform {
     pub fn foreground_window() -> Option<(String, String)> {
         None
     }
-    pub fn restart_firefox() -> bool {
-        false
+    pub fn restart_firefox() -> Result<(), String> {
+        Err("только Windows".into())
+    }
+    pub fn firefox_started_at() -> Option<i64> {
+        None
     }
 }
 

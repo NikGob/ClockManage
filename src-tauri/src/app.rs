@@ -880,3 +880,20 @@ pub fn toggle_mini(app: AppHandle) {
 pub fn style_titlebar(window: tauri::WebviewWindow, bg: String, fg: String, dark: bool) {
     system::style_titlebar(&window, &bg, &fg, dark);
 }
+
+#[tauri::command]
+pub async fn restart_firefox(s: State<'_, Arc<Shared>>) -> Result<(), String> {
+    let shared = s.inner().clone();
+    // Restarting waits for Firefox to close and come back: keep it off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let r = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).restart_firefox_now();
+        let text = match &r {
+            Ok(()) => "Firefox перезапущен вручную".to_string(),
+            Err(e) => format!("Перезапуск Firefox не удался: {e}"),
+        };
+        shared.lock().day.log(clock::now_ts(), "firefox", text);
+        r
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
