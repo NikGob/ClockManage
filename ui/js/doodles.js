@@ -1,0 +1,137 @@
+// Hand-drawn illustrations: ink strokes drawn on with stroke-dashoffset, flat colour fills
+// slightly out of register, and a "boiling line" wobble (SVG turbulence, reseeded a few
+// times per second). Each doodle carries state: ringing alarm, break, block/day done, lock.
+
+let uid = 0;
+
+function frame(inner, { size = 240, label = '' } = {}) {
+  const id = `rough${++uid}`;
+  return `<svg class="doodle" viewBox="0 0 240 240" width="${size}" height="${size}" role="img" aria-label="${label}">
+  <defs><filter id="${id}" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.032" numOctaves="2" seed="1" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="3.4" xChannelSelector="R" yChannelSelector="G"/>
+  </filter></defs>
+  <g filter="url(#${id})">${inner}</g></svg>`;
+}
+
+// stroke helper: draw-on path with delay (ms) and duration
+const s = (d, delay = 0, dur = 600, cls = '') =>
+  `<path class="ink draw ${cls}" pathLength="1" d="${d}" style="--delay:${delay}ms;--d:${dur}ms"/>`;
+const fill = (d, cls, delay = 0) =>
+  `<path class="${cls} pop" d="${d}" style="--delay:${delay}ms"/>`;
+
+export function alarmClock(size) {
+  return frame(`
+  <g class="shake">
+    ${fill('M60 64 C46 78 46 98 62 108 L98 72 C88 58 72 54 60 64 Z', 'fill-p', 80)}
+    ${fill('M180 64 C194 78 194 98 178 108 L142 72 C152 58 168 54 180 64 Z', 'fill-p', 120)}
+    ${s('M58 62 C44 76 44 98 60 108 L96 72 C86 58 70 54 58 62 Z', 0, 500)}
+    ${s('M182 62 C196 76 196 98 180 108 L144 72 C154 58 170 54 182 62 Z', 60, 500)}
+    <g class="hammer">${s('M120 46 L120 30', 380, 200)}${s('M113 24 C113 18 127 18 127 24 C127 31 113 31 113 24 Z', 420, 260)}</g>
+    ${fill('M122 62 C164 60 196 94 194 134 C196 176 162 206 120 204 C78 206 46 174 48 132 C46 92 80 60 122 62 Z', 'fill-bg', 200)}
+    ${s('M120 60 C162 58 194 92 192 132 C194 174 160 204 118 202 C76 204 44 172 46 130 C44 90 78 58 124 60', 120, 900)}
+    ${s('M120 78 L120 88', 700, 150, 'thin')}${s('M176 132 L166 132', 740, 150, 'thin')}
+    ${s('M120 186 L120 176', 780, 150, 'thin')}${s('M64 132 L74 132', 820, 150, 'thin')}
+    ${s('M120 134 L120 98', 900, 260)}${s('M120 134 L144 148', 960, 240)}
+    ${s('M76 190 L60 212', 600, 220)}${s('M164 190 L180 212', 640, 220)}
+  </g>
+  <g class="waves">
+    ${s('M30 116 Q20 132 30 148', 1100, 260, 'thin')}${s('M14 104 Q0 132 14 160', 1180, 300, 'thin')}
+    ${s('M210 116 Q220 132 210 148', 1140, 260, 'thin')}${s('M226 104 Q240 132 226 160', 1220, 300, 'thin')}
+  </g>`, { size, label: 'Будильник звенит' });
+}
+
+export function teaCup(size) {
+  return frame(`
+    ${fill('M74 110 L80 160 Q82 170 98 170 L142 170 Q158 170 160 160 L166 110 Z', 'fill-p', 200)}
+    ${s('M52 180 Q120 200 188 180', 0, 420)}
+    ${s('M70 104 L78 160 Q80 172 96 172 L144 172 Q160 172 162 160 L170 104', 120, 700)}
+    ${s('M70 104 Q120 116 170 104 Q120 94 70 104 Z', 300, 500, 'thin')}
+    ${s('M168 118 Q198 114 194 138 Q190 158 160 152', 520, 420)}
+    <g class="steam">
+      ${s('M100 88 Q92 74 102 62 Q112 50 104 36', 800, 500, 'thin')}
+      ${s('M122 86 Q114 70 124 58 Q134 46 126 32', 900, 500, 'thin')}
+      ${s('M144 88 Q136 74 146 62 Q156 50 148 38', 1000, 500, 'thin')}
+    </g>`, { size, label: 'Чашка чая' });
+}
+
+function burst(delay) {
+  let out = '';
+  const n = 10;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + 0.2;
+    const r1 = 96 + (i % 2) * 6;
+    const r2 = r1 + 16 + (i % 3) * 4;
+    const x1 = 120 + Math.cos(a) * r1, y1 = 120 + Math.sin(a) * r1;
+    const x2 = 120 + Math.cos(a) * r2, y2 = 120 + Math.sin(a) * r2;
+    out += s(`M${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)}`, delay + i * 40, 220, 'thin');
+  }
+  const sparkle = (x, y, r, cls, d) =>
+    fill(`M${x} ${y - r} Q${x + r * 0.18} ${y - r * 0.18} ${x + r} ${y} Q${x + r * 0.18} ${y + r * 0.18} ${x} ${y + r} Q${x - r * 0.18} ${y + r * 0.18} ${x - r} ${y} Q${x - r * 0.18} ${y - r * 0.18} ${x} ${y - r} Z`, cls, d);
+  out += sparkle(28, 46, 12, 'fill-t', delay + 120) + sparkle(212, 62, 9, 'fill-p', delay + 200)
+    + sparkle(204, 206, 13, 'fill-t', delay + 280) + sparkle(32, 196, 8, 'fill-p', delay + 360);
+  return out;
+}
+
+export function checkStamp(size) {
+  return frame(`
+    ${fill('M124 44 C168 42 200 76 198 122 C200 166 166 198 122 196 C78 198 44 164 46 120 C44 78 78 44 124 44 Z', 'fill-p', 60)}
+    ${s('M120 40 C166 38 200 74 200 120 C202 166 164 200 120 200 C74 202 40 166 40 120 C38 76 76 40 126 42', 0, 800)}
+    <path class="ink draw" style="stroke-width:11;--delay:650ms;--d:420ms" pathLength="1" d="M80 122 L108 150 L162 88"/>
+    ${burst(900)}`, { size, label: 'Готово' });
+}
+
+export function finishFlag(size) {
+  return frame(`
+    ${fill('M82 48 Q112 34 136 50 Q160 66 186 52 V114 Q160 128 136 112 Q112 96 82 110 Z', 'fill-p', 300)}
+    ${s('M78 210 L78 36', 0, 500)}
+    ${s('M78 44 Q110 30 134 46 Q158 62 186 48 L186 112 Q158 126 134 110 Q110 94 78 108', 200, 800)}
+    ${s('M56 212 Q80 204 104 212', 500, 300, 'thin')}
+    ${burst(1000)}`, { size, label: 'День закрыт' });
+}
+
+export function padlock(size) {
+  return frame(`
+    ${fill('M74 116 H166 Q174 116 174 124 V188 Q174 196 166 196 H74 Q66 196 66 188 V124 Q66 116 74 116 Z', 'fill-p', 200)}
+    <g class="shackle">${s('M92 112 V84 Q92 54 120 54 Q148 54 148 84 V112', 0, 600)}</g>
+    ${s('M72 112 H168 Q176 112 176 120 V188 Q176 196 168 196 H72 Q64 196 64 188 V120 Q64 112 72 112 Z', 200, 800)}
+    ${s('M114 146 C114 138 126 138 126 146 C126 154 114 154 114 146 Z', 800, 300, 'thin')}
+    ${s('M120 154 L120 170', 950, 200)}`, { size, label: 'Замок' });
+}
+
+export function emptyBook(size) {
+  return frame(`
+    ${fill('M44 72 Q82 58 118 78 V186 Q82 166 44 180 Z', 'fill-s', 200)}
+    ${s('M40 70 Q80 54 120 76 Q160 54 200 70 L200 182 Q160 166 120 188 Q80 166 40 182 Z', 0, 1000)}
+    ${s('M120 76 L120 188', 600, 400)}
+    ${s('M140 96 Q160 88 180 94', 900, 250, 'thin')}${s('M140 116 Q160 108 180 114', 1000, 250, 'thin')}
+    ${s('M140 136 Q156 130 170 134', 1100, 250, 'thin')}`, { size, label: 'Пустой журнал' });
+}
+
+const DOODLES = { await: alarmClock, break: teaCup, block: checkStamp, day: finishFlag, access: padlock, empty: emptyBook };
+
+export function doodle(kind, size = 240) {
+  return (DOODLES[kind] || alarmClock)(size);
+}
+
+const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Start the draw-on and "boil" of every doodle inside `root`; returns a stop function. */
+export function play(root, { boilMs = 2600 } = {}) {
+  const svgs = [...root.querySelectorAll('svg.doodle')];
+  svgs.forEach((svg) => {
+    svg.classList.remove('play');
+    void svg.getBoundingClientRect();
+    svg.classList.add('play');
+  });
+  if (reduced()) return () => {};
+  const turbs = svgs.map((svg) => svg.querySelector('feTurbulence')).filter(Boolean);
+  let seed = 1;
+  const t = setInterval(() => {
+    seed = (seed % 4) + 1;
+    turbs.forEach((f) => f.setAttribute('seed', String(seed)));
+  }, 130);
+  const stop = () => clearInterval(t);
+  if (boilMs > 0) setTimeout(stop, boilMs);
+  return stop;
+}

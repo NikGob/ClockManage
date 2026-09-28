@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClockManage — мини-таймер</title>
+  <link rel="stylesheet" href="css/scheme-default.css">
+  <link rel="stylesheet" href="css/m3.css">
+  <link rel="stylesheet" href="css/mini.css">
+</head>
+<body>
+  <div id="mini" class="mini" data-kind="idle">
+    <div class="ring-wrap">
+      <svg class="ring" viewBox="0 0 64 64" aria-hidden="true">
+        <circle class="track" cx="32" cy="32" r="28"/>
+        <circle class="bar" id="bar" cx="32" cy="32" r="28" pathLength="100"/>
+      </svg>
+      <button id="primary" class="icon-btn filled interactive main-btn" aria-label="Пауза"></button>
+    </div>
+    <div class="info">
+      <div id="time" class="time tnum">--:--</div>
+      <div id="label" class="label ellipsis">ClockManage</div>
+    </div>
+    <div class="tools">
+      <button id="open" class="icon-btn sm interactive" aria-label="Открыть приложение" title="Открыть приложение"></button>
+      <button id="close" class="icon-btn sm interactive" aria-label="Скрыть мини-таймер" title="Скрыть"></button>
+    </div>
+  </div>
+  <script type="module" src="js/mini.js"></script>
+</body>
+</html>

@@ -1,0 +1,843 @@
+//! Shared state, the ticker loop, reactions to timer events and Tauri commands.
+
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
+
+use clockmanage_core::clock::{self, Ts, MIN};
+use clockmanage_core::config::{EditContext, SchemeVariant, ThemeMode};
+use clockmanage_core::day::{Event, PlanBlock, SingleCfg};
+use clockmanage_core::stats::{self, DayStats};
+use clockmanage_core::view::{self, View};
+use clockmanage_core::{mcp::McpHost, Config, DayState};
+use serde::Serialize;
+use serde_json::{json, Value};
+use tauri::menu::MenuItem;
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, Wry};
+use tauri_plugin_notification::NotificationExt;
+
+use crate::blocker::Blocker;
+use crate::mcp_server::{McpServer, McpStatus};
+use crate::sound::{self, Sound};
+use crate::store::Store;
+use crate::system;
+
+pub struct Captcha {
+    id: u64,
+    answers: Vec<i64>,
+    created: Ts,
+}
+
+pub const CAPTCHA_WAIT_MS: i64 = 15_000;
+
+pub struct Inner {
+    pub cfg: Config,
+    pub day: DayState,
+    pub captcha: Option<Captcha>,
+    pub force_emit: bool,
+    pub last_emit_sec: i64,
+    pub last_save: Ts,
+    pub last_kill_note: Ts,
+}
+
+pub struct TrayItems {
+    pub action: MenuItem<Wry>,
+    pub quit: MenuItem<Wry>,
+}
+
+pub struct Shared {
+    pub inner: Mutex<Inner>,
+    pub store: Store,
+    pub blocker: Mutex<Blocker>,
+    pub mcp: McpServer,
+    pub app: AppHandle,
+    pub admin: bool,
+    pub overlay: Mutex<Option<Value>>,
+    pub tray: Mutex<Option<TrayItems>>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Meta {
+    pub admin: bool,
+    pub version: &'static str,
+    pub mcp: McpStatus,
+    pub blocker_error: Option<String>,
+    pub blocking_applied: bool,
+    pub sound: bool,
+    pub overlay: bool,
+    pub pause_access: bool,
+    pub pause_access_min: u32,
+    pub emergency_min: u32,
+    pub lunch_min: u32,
+    pub seed: String,
+    pub theme_mode: ThemeMode,
+    pub variant: SchemeVariant,
+    pub data_dir: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Snapshot {
+    pub view: View,
+    pub meta: Meta,
+}
+
+impl Shared {
+    pub fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn snapshot_locked(&self, g: &Inner, now: Ts) -> Snapshot {
+        let blocker = self.blocker.lock().unwrap_or_else(|e| e.into_inner());
+        Snapshot {
+            view: view::build(&g.day, &g.cfg, now),
+            meta: Meta {
+                admin: self.admin,
+                version: env!("CARGO_PKG_VERSION"),
+                mcp: self.mcp.status.lock().unwrap().clone(),
+                blocker_error: blocker.last_error.clone(),
+                blocking_applied: blocker.applied.active,
+                sound: g.cfg.sound,
+                overlay: g.cfg.overlay,
+                pause_access: g.cfg.pause_access,
+                pause_access_min: g.cfg.pause_access_min,
+                emergency_min: g.cfg.emergency_min,
+                lunch_min: g.day.timing.lunch_min,
+                seed: g.cfg.appearance.seed.clone(),
+                theme_mode: g.cfg.appearance.mode,
+                variant: g.cfg.appearance.variant,
+                data_dir: self.store.dir.display().to_string(),
+            },
+        }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        let g = self.lock();
+        self.snapshot_locked(&g, clock::now_ts())
+    }
+
+    fn save_day(&self, g: &mut Inner, now: Ts) {
+        g.day.saved_at = now;
+        g.last_save = now;
+        self.store.save_day(&g.day);
+    }
+
+    /// Run a state change, persist and broadcast it.
+    pub fn mutate<T>(&self, f: impl FnOnce(&mut Inner, Ts) -> Result<T, String>) -> Result<T, String> {
+        let now = clock::now_ts();
+        let (res, snap) = {
+            let mut g = self.lock();
+            let res = f(&mut g, now);
+            if res.is_ok() {
+                self.save_day(&mut g, now);
+            }
+            (res, self.snapshot_locked(&g, now))
+        };
+        let _ = self.app.emit("state", &snap);
+        self.update_tray(&snap.view);
+        res
+    }
+
+    fn notify(&self, title: &str, body: &str) {
+        let _ = self.app.notification().builder().title(title).body(body).show();
+    }
+
+    fn play(&self, s: Sound) {
+        if self.lock().cfg.sound {
+            sound::play(s);
+        }
+    }
+
+    pub fn show_overlay(&self, payload: Value) {
+        if !self.lock().cfg.overlay {
+            return;
+        }
+        let passive = payload.get("passive").and_then(Value::as_bool).unwrap_or(false);
+        *self.overlay.lock().unwrap() = Some(payload.clone());
+        let Some(w) = self.app.get_webview_window("overlay") else { return };
+        if let Ok(Some(m)) = w.current_monitor().or_else(|_| w.primary_monitor()) {
+            let _ = w.set_position(PhysicalPosition::new(m.position().x, m.position().y));
+            let _ = w.set_size(PhysicalSize::new(m.size().width, m.size().height));
+        }
+        // Passive notices never steal focus or clicks from whatever the user is doing.
+        let _ = w.set_focusable(!passive);
+        let _ = w.set_ignore_cursor_events(passive);
+        let _ = w.set_always_on_top(true);
+        let _ = self.app.emit_to("overlay", "overlay", &payload);
+        let _ = w.show();
+        if !passive {
+            let _ = w.set_focus();
+        }
+    }
+
+    pub fn update_tray(&self, v: &View) {
+        let tray = self.tray.lock().unwrap();
+        let Some(items) = tray.as_ref() else { return };
+        let (label, enabled) = if v.can.resume {
+            ("Продолжить", true)
+        } else if v.can.pause {
+            ("Пауза", true)
+        } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
+            ("Начать следующую часть", true)
+        } else if v.can.start_day {
+            ("Начать день", true)
+        } else {
+            ("Пауза", false)
+        };
+        let _ = items.action.set_text(label);
+        let _ = items.action.set_enabled(enabled);
+        let _ = items.quit.set_enabled(!v.lock.base);
+        let _ = items.quit.set_text(if v.lock.base { "Выход недоступен во время учёбы" } else { "Выход" });
+        drop(tray);
+        if let Some(t) = self.app.tray_by_id("main") {
+            let _ = t.set_tooltip(Some(tray_tooltip(v)));
+        }
+    }
+
+    fn react(&self, events: &[Event], snap: &Snapshot) {
+        let v = &snap.view;
+        for e in events {
+            match e {
+                Event::WorkEnded { block_done: false, block_name, part, parts } => {
+                    self.play(Sound::BreakStart);
+                    let brk = if v.phase.kind == "break" { v.phase.dur_ms / MIN } else { 0 };
+                    let body = if *parts > 0 {
+                        format!("{block_name}: часть {part} из {parts} готова. Перерыв {brk} мин.")
+                    } else {
+                        format!("Круг {part} готов. Перерыв {brk} мин.")
+                    };
+                    self.notify("Перерыв", &body);
+                    self.show_overlay(json!({
+                        "kind": "break", "passive": true, "auto_hide_ms": 5200,
+                        "title": "Перерыв", "text": body,
+                    }));
+                }
+                Event::WorkEnded { block_done: true, .. } => {}
+                Event::BlockCompleted { block_name, work_ms, pauses, pause_ms } => {
+                    self.play(Sound::Done);
+                    let facts = format!(
+                        "{} работы · пауз: {}{}",
+                        fmt_dur(*work_ms),
+                        pauses,
+                        if *pauses > 0 { format!(" ({})", fmt_dur(*pause_ms)) } else { String::new() }
+                    );
+                    self.notify(
+                        &format!("Блок «{block_name}» закрыт"),
+                        "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
+                    );
+                    self.show_overlay(json!({
+                        "kind": "block", "passive": false,
+                        "title": format!("«{block_name}» закрыт"),
+                        "text": facts,
+                        "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
+                    }));
+                }
+                Event::DayCompleted { work_ms } => {
+                    self.notify("День закрыт", &format!("{} учёбы. Блокировка снята.", fmt_dur(*work_ms)));
+                    self.show_overlay(json!({
+                        "kind": "day", "passive": false,
+                        "title": "День закрыт",
+                        "text": format!("{} учёбы. Блокировка снята.", fmt_dur(*work_ms)),
+                        "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
+                    }));
+                }
+                Event::BreakEnded { next_name, next_part, next_parts, lunch } => {
+                    self.play(Sound::Alarm);
+                    let action = start_label(next_name, *next_part, *next_parts);
+                    self.notify(if *lunch { "Обед окончен" } else { "Перерыв окончен" }, &format!("Жми «{action}». Блокировка не снята."));
+                    self.show_overlay(json!({
+                        "kind": "await", "passive": false,
+                        "title": if *lunch { "Обед окончен" } else { "Перерыв окончен" },
+                        "text": if *next_parts > 0 { format!("{next_name} · часть {next_part} из {next_parts}") } else { format!("Круг {next_part}") },
+                        "action": action,
+                    }));
+                }
+                Event::AwaitReminder { waiting_ms, next_name, next_part, next_parts } => {
+                    self.play(Sound::Alarm);
+                    let action = start_label(next_name, *next_part, *next_parts);
+                    self.show_overlay(json!({
+                        "kind": "await", "passive": false,
+                        "title": format!("Ждём уже {}", fmt_dur(*waiting_ms)),
+                        "text": if *next_parts > 0 { format!("{next_name} · часть {next_part} из {next_parts}") } else { format!("Круг {next_part}") },
+                        "action": action,
+                    }));
+                }
+                Event::PauseReminder { paused_ms } => {
+                    self.play(Sound::Ping);
+                    self.notify("Ты на паузе", &format!("Уже {}. Таймер ждёт тебя.", fmt_dur(*paused_ms)));
+                }
+                Event::PauseAccessWarning { left_ms } => {
+                    self.play(Sound::Ping);
+                    self.notify("Доступ скоро закроется", &format!("Осталось {}. Потом блокировка вернётся.", fmt_dur(*left_ms)));
+                }
+                Event::PauseAccessExpired => {
+                    self.play(Sound::Ping);
+                    self.notify("Доступ закрыт", "Блокировка вернулась. Продлить — в приложении, через мини-капчу.");
+                    self.show_overlay(json!({
+                        "kind": "access", "passive": true, "auto_hide_ms": 4200,
+                        "title": "Доступ закрыт", "text": "Блокировка снова включена",
+                    }));
+                }
+                Event::EmergencyEnded => {
+                    self.play(Sound::Ping);
+                    self.notify("Аварийный доступ закончился", "Блокировка снова включена.");
+                }
+                Event::DayEndReached => {
+                    self.play(Sound::Done);
+                    self.notify(&format!("{} — блокировка снята", v.day_end), "Учебный день закончился по времени.");
+                }
+            }
+        }
+    }
+}
+
+fn start_label(name: &str, part: u32, parts: u32) -> String {
+    if parts == 0 {
+        format!("Начать круг {part}")
+    } else if part == 1 {
+        format!("Начать «{name}»")
+    } else {
+        format!("Начать часть {part}")
+    }
+}
+
+pub fn fmt_dur(ms: i64) -> String {
+    let m = (ms.max(0) + 30_000) / MIN;
+    match (m / 60, m % 60) {
+        (0, m) => format!("{m} мин"),
+        (h, 0) => format!("{h} ч"),
+        (h, m) => format!("{h} ч {m} мин"),
+    }
+}
+
+fn mmss(ms: i64) -> String {
+    let s = (ms.max(0) + 999) / 1000;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{:02}:{:02}", s / 60, s % 60)
+    }
+}
+
+fn tray_tooltip(v: &View) -> String {
+    let p = &v.phase;
+    let head = match p.kind.as_str() {
+        "work" | "break" | "lunch_break" => {
+            format!("{} — {}{}", p.title, mmss(p.remaining_ms), if p.paused { " (пауза)" } else { "" })
+        }
+        _ => p.title.clone(),
+    };
+    let lock = if v.lock.blocked { "блокировка включена" } else if v.lock.base { "доступ временно открыт" } else { "без блокировки" };
+    format!("ClockManage\n{head}\n{lock}")
+}
+
+// ---------------- day rollover & ticker ----------------
+
+fn today_str(now: Ts, cfg: &Config) -> String {
+    clock::local_date(now, cfg.tz_offset_min).format("%Y-%m-%d").to_string()
+}
+
+/// Load (or create) today's day, closing a day left open from an earlier date.
+pub fn load_today(store: &Store, cfg: &Config, now: Ts) -> DayState {
+    let today = today_str(now, cfg);
+    if let Some(mut old) = store.last_other_day(&today) {
+        if old.pause.is_some() || !matches!(old.phase, clockmanage_core::day::Phase::Idle | clockmanage_core::day::Phase::Done) {
+            let end = old.saved_at;
+            old.finalize(end);
+            store.save_day(&old);
+        }
+    }
+    match store.load_day(&today) {
+        Some(mut d) => {
+            d.restore(now, cfg);
+            d
+        }
+        None => DayState::new(now, cfg),
+    }
+}
+
+pub fn spawn_ticker(shared: Arc<Shared>) {
+    std::thread::Builder::new()
+        .name("ticker".into())
+        .spawn(move || ticker(shared))
+        .expect("spawn ticker");
+}
+
+fn ticker(shared: Arc<Shared>) {
+    let mut last_blocked: Option<bool> = None;
+    let mut last_verify: Ts = 0;
+    let mut last_kill: Ts = 0;
+    let mut last_tray: Ts = 0;
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        let now = clock::now_ts();
+        let (events, snap, emit, blocked, sites, apps, killed_note) = {
+            let mut g = shared.lock();
+            let g = &mut *g;
+            if clock::local_date(now, g.cfg.tz_offset_min) != g.day.date {
+                g.day.finalize(now);
+                shared.store.save_day(&g.day);
+                g.day = DayState::new(now, &g.cfg);
+                g.force_emit = true;
+            }
+            let events = g.day.tick(now, &g.cfg);
+            if !events.is_empty() || now - g.last_save > 10_000 {
+                shared.save_day(g, now);
+            }
+            let sec = now / 1000;
+            let emit = g.force_emit || !events.is_empty() || sec != g.last_emit_sec;
+            g.force_emit = false;
+            g.last_emit_sec = sec;
+            let snap = shared.snapshot_locked(g, now);
+            let killed_note = now - g.last_kill_note > 20_000;
+            let blocked = snap.view.lock.blocked;
+            (events, snap, emit, blocked, g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), killed_note)
+        };
+
+        if !events.is_empty() {
+            shared.react(&events, &snap);
+        }
+
+        // Enforcement: apply on change, verify/repair every 30 s.
+        if last_blocked != Some(blocked) || now - last_verify > 30_000 {
+            shared
+                .blocker
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .sync(blocked.then_some(sites.as_slice()), last_blocked.is_none());
+            last_verify = now;
+            if last_blocked.is_some() && last_blocked != Some(blocked) {
+                let mut g = shared.lock();
+                let text = if blocked { "Блокировка включена".to_string() } else { format!("Блокировка снята ({})", snap.view.lock.reason) };
+                g.day.log(now, "lock", text);
+                g.force_emit = true;
+            }
+            last_blocked = Some(blocked);
+        }
+        if blocked && now - last_kill >= 1_000 {
+            last_kill = now;
+            let killed = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).kill_apps(&apps);
+            if !killed.is_empty() {
+                let mut g = shared.lock();
+                g.day.log(now, "app_killed", format!("Закрыто: {}", killed.join(", ")));
+                if killed_note {
+                    g.last_kill_note = now;
+                    drop(g);
+                    shared.notify("Сейчас учёба", &format!("{} закрыт. Блокировка до конца блоков дня.", killed.join(", ")));
+                }
+            }
+        }
+
+        if emit {
+            let _ = shared.app.emit("state", &snap);
+        }
+        if now - last_tray >= 1_000 {
+            last_tray = now;
+            shared.update_tray(&snap.view);
+        }
+    }
+}
+
+// ---------------- MCP bridge ----------------
+
+pub struct McpBridge(pub Arc<Shared>);
+
+impl McpHost for McpBridge {
+    fn session_state(&self) -> Value {
+        let s = self.0.snapshot();
+        let v = s.view;
+        json!({
+            "date": v.date,
+            "day": if v.completed { "completed" } else if v.started { "started" } else { "not_started" },
+            "study_day": v.study_day,
+            "mode": v.mode,
+            "phase": v.phase.kind,
+            "title": v.phase.title,
+            "subtitle": v.phase.subtitle,
+            "paused": v.phase.paused,
+            "remaining": mmss(v.phase.remaining_ms),
+            "remaining_ms": v.phase.remaining_ms,
+            "elapsed_ms": v.phase.elapsed_ms,
+            "waiting_for_start_ms": v.phase.waiting_ms,
+            "current_block": v.phase.block.and_then(|i| v.blocks.get(i)).map(|b| b.name.clone()),
+            "blocks": v.blocks.iter().map(|b| json!({
+                "name": b.name, "planned_min": b.minutes, "done_min": b.work_ms / MIN,
+                "parts": b.parts, "parts_done": b.parts_done, "done": b.done, "current": b.current
+            })).collect::<Vec<_>>(),
+            "worked": fmt_dur(v.work_ms),
+            "planned": fmt_dur(v.planned_ms),
+            "blocking": { "active": v.lock.blocked, "day_lock": v.lock.base, "reason": v.lock.reason },
+            "day_end": v.day_end,
+        })
+    }
+
+    fn day_stats(&self, date: Option<&str>) -> Result<Value, String> {
+        let now = clock::now_ts();
+        let g = self.0.lock();
+        let tz = g.cfg.tz_offset_min;
+        let today = g.day.date.format("%Y-%m-%d").to_string();
+        let stats = match date {
+            None => stats::day_stats(&g.day, tz, now),
+            Some(d) if d == today => stats::day_stats(&g.day, tz, now),
+            Some(d) => {
+                let day = self.0.store.load_day(d).ok_or(format!("За {d} записей нет."))?;
+                stats::day_stats(&day, tz, now)
+            }
+        };
+        serde_json::to_value(stats).map_err(|e| e.to_string())
+    }
+
+    fn get_plan(&self) -> Value {
+        let g = self.0.lock();
+        json!({ "today": g.day.plan, "template": g.cfg.plan_template, "started": g.day.started_at.is_some() })
+    }
+
+    fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String> {
+        let shared = &self.0;
+        let res = shared.mutate(|g, now| {
+            let locked = g.day.plan_lock(now, &g.cfg);
+            g.day.set_plan(now, plan.clone(), locked)?;
+            if save_as_template {
+                g.cfg.plan_template = g.day.plan.clone();
+                shared.store.save_config(&g.cfg);
+            }
+            Ok(json!({ "ok": true, "plan": g.day.plan, "locked": locked }))
+        })?;
+        let _ = shared.app.emit("config", ());
+        Ok(res)
+    }
+}
+
+// ---------------- commands ----------------
+
+type S<'a> = State<'a, Arc<Shared>>;
+
+#[tauri::command]
+pub fn get_state(s: S) -> Snapshot {
+    s.snapshot()
+}
+
+#[tauri::command]
+pub fn get_config(s: S) -> Config {
+    s.lock().cfg.clone()
+}
+
+#[tauri::command]
+pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
+    cfg.normalize();
+    let shared = s.inner().clone();
+    let (autostart_changed, mcp_changed, saved) = shared.mutate(|g, now| {
+        let ctx = EditContext {
+            locked: g.day.plan_lock(now, &g.cfg),
+            after_day_end: clock::minute_of_day(now, g.cfg.tz_offset_min) >= g.cfg.day_end_min,
+        };
+        g.cfg.check_update(&cfg, ctx)?;
+        let autostart_changed = cfg.autostart != g.cfg.autostart;
+        let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
+        g.cfg = cfg.clone();
+        if g.day.started_at.is_none() {
+            g.day.study_day = g.cfg.study_days[clock::weekday_index(now, g.cfg.tz_offset_min)];
+            g.day.timing = g.cfg.timing.clone();
+        }
+        shared.store.save_config(&g.cfg);
+        Ok((autostart_changed, mcp_changed, g.cfg.clone()))
+    })?;
+    if autostart_changed {
+        system::set_autostart(saved.autostart)?;
+    }
+    if mcp_changed {
+        let port = shared.mcp.start(shared.clone(), saved.mcp_enabled, saved.mcp_port);
+        if port != saved.mcp_port {
+            shared.lock().cfg.mcp_port = port;
+            shared.store.save_config(&shared.lock().cfg);
+        }
+    }
+    let _ = shared.app.emit("config", ());
+    let _ = shared.app.emit("state", shared.snapshot());
+    let cfg = shared.lock().cfg.clone();
+    Ok(cfg)
+}
+
+#[tauri::command]
+pub fn regenerate_port(s: S) -> Result<u16, String> {
+    let shared = s.inner().clone();
+    let enabled = shared.lock().cfg.mcp_enabled;
+    let port = shared.mcp.start(shared.clone(), enabled, crate::mcp_server::random_port());
+    {
+        let mut g = shared.lock();
+        g.cfg.mcp_port = port;
+        shared.store.save_config(&g.cfg);
+    }
+    let _ = shared.app.emit("config", ());
+    let _ = shared.app.emit("state", shared.snapshot());
+    Ok(port)
+}
+
+#[tauri::command]
+pub fn start_day(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.start_day(now, &g.cfg))
+}
+
+#[tauri::command]
+pub fn pause(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.pause(now, &g.cfg))
+}
+
+#[tauri::command]
+pub fn resume(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.resume(now))
+}
+
+#[tauri::command]
+pub fn start_next(s: S) -> Result<(), String> {
+    let r = s.mutate(|g, now| g.day.start_next(now));
+    if r.is_ok() {
+        hide_overlay_window(&s.app);
+    }
+    r
+}
+
+/// Tray / mini window "main button": whatever the primary action is right now.
+pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
+    let v = shared.snapshot().view;
+    if v.can.resume {
+        shared.mutate(|g, now| g.day.resume(now))
+    } else if v.can.pause {
+        shared.mutate(|g, now| g.day.pause(now, &g.cfg))
+    } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
+        let r = shared.mutate(|g, now| g.day.start_next(now));
+        hide_overlay_window(&shared.app);
+        r
+    } else if v.can.start_day {
+        shared.mutate(|g, now| g.day.start_day(now, &g.cfg))
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn primary(s: S) -> Result<(), String> {
+    primary_action(s.inner())
+}
+
+#[tauri::command]
+pub fn start_lunch(s: S, with_timer: bool, at_pc: bool) -> Result<(), String> {
+    s.mutate(|g, now| g.day.start_lunch(now, with_timer, at_pc))
+}
+
+#[tauri::command]
+pub fn start_single(s: S, cfg: SingleCfg) -> Result<(), String> {
+    s.mutate(|g, now| g.day.start_single(now, cfg))
+}
+
+#[tauri::command]
+pub fn stop_single(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.stop_single(now))
+}
+
+#[tauri::command]
+pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(), String> {
+    McpBridge(s.inner().clone()).set_plan(blocks, save_template).map(|_| ())
+}
+
+#[tauri::command]
+pub fn emergency(s: S, phrase: String) -> Result<Ts, String> {
+    s.mutate(|g, now| g.day.emergency(now, &g.cfg, &phrase))
+}
+
+#[tauri::command]
+pub fn end_access(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.end_access_early(now))
+}
+
+#[derive(Serialize)]
+pub struct CaptchaView {
+    id: u64,
+    problems: Vec<String>,
+    wait_ms: i64,
+}
+
+#[tauri::command]
+pub fn captcha_new(s: S) -> CaptchaView {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut problems = vec![];
+    let mut answers = vec![];
+    let a: i64 = rng.gen_range(13..=99);
+    let b: i64 = rng.gen_range(4..=9);
+    problems.push(format!("{a} × {b}"));
+    answers.push(a * b);
+    let a: i64 = rng.gen_range(120..=899);
+    let b: i64 = rng.gen_range(120..=899);
+    problems.push(format!("{a} + {b}"));
+    answers.push(a + b);
+    let a: i64 = rng.gen_range(300..=999);
+    let b: i64 = rng.gen_range(101..=299);
+    let c: i64 = rng.gen_range(3..=9);
+    problems.push(format!("{a} − {b} × {c}"));
+    answers.push(a - b * c);
+    let id = rng.gen::<u32>() as u64;
+    s.lock().captcha = Some(Captcha { id, answers, created: clock::now_ts() });
+    CaptchaView { id, problems, wait_ms: CAPTCHA_WAIT_MS }
+}
+
+#[tauri::command]
+pub fn captcha_submit(s: S, id: u64, answers: Vec<i64>) -> Result<Ts, String> {
+    s.mutate(|g, now| {
+        let c = g.captcha.take().ok_or("Капча устарела — открой заново.")?;
+        if c.id != id {
+            return Err("Капча устарела — открой заново.".into());
+        }
+        if now - c.created < CAPTCHA_WAIT_MS {
+            g.captcha = Some(c);
+            return Err("Слишком быстро. Подумай ещё пару секунд.".into());
+        }
+        if c.answers != answers {
+            return Err("Есть ошибка. Держи новые примеры.".into());
+        }
+        g.day.extend_pause_access(now, &g.cfg)
+    })
+}
+
+#[derive(Serialize)]
+pub struct DaySummary {
+    date: String,
+    planned_min: u32,
+    actual_min: f64,
+    blocks_done: usize,
+    blocks: usize,
+    pauses: usize,
+    pauses_min: f64,
+    emergencies: usize,
+    pause_access_min: f64,
+    study_day: bool,
+    started: bool,
+}
+
+#[tauri::command]
+pub fn list_days(s: S) -> Vec<DaySummary> {
+    let now = clock::now_ts();
+    let (tz, today) = {
+        let g = s.lock();
+        (g.cfg.tz_offset_min, g.day.clone())
+    };
+    let today_str = today.date.format("%Y-%m-%d").to_string();
+    let mut out = vec![];
+    let mut dates = s.store.list_dates();
+    if !dates.contains(&today_str) {
+        dates.insert(0, today_str.clone());
+    }
+    for d in dates.into_iter().take(120) {
+        let day = if d == today_str { Some(today.clone()) } else { s.store.load_day(&d) };
+        let Some(day) = day else { continue };
+        let st = stats::day_stats(&day, tz, now);
+        out.push(DaySummary {
+            date: st.date,
+            planned_min: st.planned_min,
+            actual_min: st.actual_min,
+            blocks_done: st.blocks.iter().filter(|b| b.done).count(),
+            blocks: st.blocks.len(),
+            pauses: st.pauses_count,
+            pauses_min: st.pauses_min,
+            emergencies: st.emergency_count,
+            pause_access_min: st.pause_access_min,
+            study_day: st.study_day,
+            started: st.started_at.is_some(),
+        });
+    }
+    out
+}
+
+#[tauri::command]
+pub fn day_stats(s: S, date: String) -> Result<DayStats, String> {
+    let now = clock::now_ts();
+    let g = s.lock();
+    if g.day.date.format("%Y-%m-%d").to_string() == date {
+        return Ok(stats::day_stats(&g.day, g.cfg.tz_offset_min, now));
+    }
+    let tz = g.cfg.tz_offset_min;
+    drop(g);
+    let day = s.store.load_day(&date).ok_or(format!("За {date} записей нет."))?;
+    Ok(stats::day_stats(&day, tz, now))
+}
+
+#[tauri::command]
+pub fn export_log(s: S, format: String) -> Result<String, String> {
+    let now = clock::now_ts();
+    let (tz, today) = {
+        let g = s.lock();
+        (g.cfg.tz_offset_min, g.day.clone())
+    };
+    let today_str = today.date.format("%Y-%m-%d").to_string();
+    let mut days: Vec<DayStats> = vec![];
+    for d in s.store.list_dates() {
+        if d == today_str {
+            continue;
+        }
+        if let Some(day) = s.store.load_day(&d) {
+            days.push(stats::day_stats(&day, tz, now));
+        }
+    }
+    days.insert(0, stats::day_stats(&today, tz, now));
+    days.sort_by(|a, b| a.date.cmp(&b.date));
+    let stamp = clock::local(now, tz).format("%Y-%m-%d_%H-%M").to_string();
+    let (name, data) = match format.as_str() {
+        "csv" => (format!("clockmanage_{stamp}.csv"), stats::to_csv(&days)),
+        _ => (format!("clockmanage_{stamp}.json"), serde_json::to_string_pretty(&days).map_err(|e| e.to_string())?),
+    };
+    let path = s.store.write_export(&name, &data).map_err(|e| format!("Не удалось сохранить: {e}"))?;
+    system::reveal(&path);
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub fn open_data_dir(s: S) {
+    system::open_path(&s.store.dir);
+}
+
+#[tauri::command]
+pub fn test_sound(kind: String) {
+    if let Some(k) = Sound::parse(&kind) {
+        sound::play(k);
+    }
+}
+
+#[tauri::command]
+pub fn preview_overlay(s: S, kind: String) {
+    let p = match kind.as_str() {
+        "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": "Перерыв", "text": "Математика: часть 1 из 2 готова. Перерыв 10 мин.", "preview": true}),
+        "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.", "preview": true}),
+        _ => json!({"kind": "await", "passive": false, "title": "Перерыв окончен", "text": "Математика · часть 2 из 2", "action": "Начать часть 2", "preview": true}),
+    };
+    let was = s.lock().cfg.overlay;
+    s.lock().cfg.overlay = true;
+    s.show_overlay(p);
+    s.lock().cfg.overlay = was;
+}
+
+#[tauri::command]
+pub fn get_overlay(s: S) -> Option<Value> {
+    s.overlay.lock().unwrap().clone()
+}
+
+pub fn hide_overlay_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("overlay") {
+        let _ = w.hide();
+    }
+}
+
+#[tauri::command]
+pub fn hide_overlay(app: AppHandle) {
+    hide_overlay_window(&app);
+}
+
+#[tauri::command]
+pub fn show_main(app: AppHandle, route: Option<String>) {
+    crate::windows::show_main(&app);
+    if let Some(r) = route {
+        let _ = app.emit_to("main", "navigate", r);
+    }
+}
+
+#[tauri::command]
+pub fn toggle_mini(app: AppHandle) {
+    crate::windows::toggle_mini(&app);
+}

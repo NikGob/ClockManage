@@ -1,0 +1,54 @@
+html, body { background: transparent !important; overflow: hidden; }
+body { padding: 8px; }
+
+.mini {
+  height: 104px; display: flex; align-items: center; gap: 14px; padding: 0 12px 0 16px;
+  border-radius: var(--shape-xl);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / .3), 0 4px 8px 3px rgb(0 0 0 / .15);
+  cursor: grab; position: relative;
+  transition: background-color var(--dur-m2) var(--ease), color var(--dur-m2) var(--ease), border-radius var(--dur-l1) var(--spring);
+  animation: mini-in var(--dur-l1) var(--ease-emph-decel);
+}
+.mini:active { cursor: grabbing; }
+@keyframes mini-in { from { opacity: 0; transform: scale(.9); } }
+
+.ring-wrap { position: relative; width: 64px; height: 64px; flex: none; display: grid; place-items: center; }
+.ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 5; }
+.ring .track { stroke: var(--md-sys-color-secondary-container); }
+.ring .bar {
+  stroke: var(--md-sys-color-primary); stroke-linecap: round;
+  stroke-dasharray: 100; stroke-dashoffset: 100;
+  transition: stroke-dashoffset 900ms linear, stroke var(--dur-m2) linear;
+}
+.main-btn { width: 44px; height: 44px; }
+
+.info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.time { font: 400 36px/40px var(--font-display); letter-spacing: -.5px; }
+.label { font: 600 12px/16px var(--font); letter-spacing: .4px; color: var(--md-sys-color-on-surface-variant); }
+
+.tools { display: flex; flex-direction: column; gap: 2px; align-self: center; opacity: 0; transition: opacity var(--dur-s2) linear; }
+.mini:hover .tools, .mini:focus-within .tools { opacity: 1; }
+.tools .icon-btn { width: 28px; height: 28px; }
+.tools .icon { width: 18px; height: 18px; }
+
+/* phase colours */
+.mini[data-kind="break"] .ring .bar, .mini[data-kind="lunch_break"] .ring .bar { stroke: var(--md-sys-color-tertiary); }
+.mini[data-kind="break"] .ring .track, .mini[data-kind="lunch_break"] .ring .track { stroke: var(--md-sys-color-tertiary-container); }
+.mini[data-kind="break"] .main-btn, .mini[data-kind="lunch_break"] .main-btn { background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); }
+.mini[data-paused="true"] .ring .bar { stroke: var(--md-sys-color-outline); }
+.mini[data-paused="true"] .time { color: var(--md-sys-color-on-surface-variant); }
+.mini[data-kind="await"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border-radius: 40px; }
+.mini[data-kind="await"] .label { color: var(--md-sys-color-on-primary-container); }
+.mini[data-kind="await"] .time { font-size: 24px; line-height: 32px; }
+.mini[data-kind="await"] .main-btn { animation: nudge 1.05s var(--ease) 3; }
+@keyframes nudge { 0%, 60%, 100% { transform: none; } 15% { transform: scale(1.12) rotate(-8deg); } 30% { transform: scale(1.12) rotate(8deg); } 45% { transform: scale(1.06); } }
+.mini[data-kind="idle"] .ring .bar, .mini[data-kind="done"] .ring .bar { stroke-dashoffset: 100; }
+.mini[data-kind="done"] .ring .bar { stroke-dashoffset: 0; }
+
+/* seconds tick: digits slide like a flip clock (only the changed glyph moves) */
+.time span { display: inline-block; }
+.time span.tick { animation: tick 260ms var(--ease-emph-decel); }
+@keyframes tick { from { transform: translateY(-40%); opacity: 0; } }

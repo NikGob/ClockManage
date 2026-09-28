@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClockManage</title>
+  <link rel="stylesheet" href="css/scheme-default.css">
+  <link rel="stylesheet" href="css/m3.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="app">
+    <nav class="nav" id="nav" aria-label="Разделы"></nav>
+    <main class="content">
+      <header class="topbar">
+        <h1 id="screen-title" class="title-l">Сегодня</h1>
+        <div id="top-actions" class="top-actions"></div>
+      </header>
+      <div id="banner" class="banner" hidden></div>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+  <div id="snackbar" class="snackbar" role="status" aria-live="polite"><span id="snack-text"></span></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
