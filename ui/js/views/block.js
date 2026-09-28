@@ -1,6 +1,5 @@
 import { call, esc, mmss } from '../api.js';
 import { icon } from '../icons.js';
-import { doodle, play } from '../doodles.js';
 import { run, snack } from '../ui.js';
 import { emergencyDialog } from './dialogs.js';
 
@@ -120,7 +119,21 @@ export function mountBlock(root, ctx) {
     const hero = $('hero');
     hero.className = `lock-hero ${cls}`;
     const art = $('lockart');
-    if (!art.firstElementChild) { art.innerHTML = doodle('lock', 64); play(art); }
+    if (!art.firstElementChild) {
+      art.innerHTML = `<svg class="padlock" viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
+        <path class="shackle" d="M16 22 V15.5 a8 8 0 0 1 16 0 V22"/>
+        <g class="body"><rect x="9" y="21" width="30" height="21" rx="7"/>
+        <circle class="hole" cx="24" cy="30.5" r="3"/><rect class="hole" x="22.5" y="31" width="3" height="5.5" rx="1.5"/></g>
+      </svg>`;
+    }
+    const wasOn = hero.dataset.on === 'true';
+    hero.dataset.on = String(L.blocked);
+    if (hero.dataset.seen && L.blocked && !wasOn) {
+      art.classList.remove('click');
+      void art.offsetWidth;
+      art.classList.add('click');
+    }
+    hero.dataset.seen = '1';
     const txt = $('hero-text');
     if (txt.dataset.html !== html) {
       if (txt.dataset.html) txt.animate([{ opacity: 0, transform: 'translateX(-8px)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.05,.7,.1,1)' });

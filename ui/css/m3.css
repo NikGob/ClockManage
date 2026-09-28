@@ -108,6 +108,11 @@ h1, h2, h3, h4, p { margin: 0; }
     color var(--dur-s2) linear;
 }
 .btn:active:not(:disabled) { border-radius: var(--shape-m); transform: scale(.96); transition-duration: var(--dur-s2); }
+.btn .icon { transition: transform var(--dur-m2) var(--spring-fast); }
+.btn:hover:not(:disabled) .icon { transform: scale(1.1) rotate(-4deg); }
+.btn:active:not(:disabled) .icon { transform: scale(.82); transition-duration: 90ms; }
+.btn.released .icon { animation: icon-hop 420ms var(--spring-fast); }
+@keyframes icon-hop { 0% { transform: scale(.82); } 45% { transform: translateY(-3px) scale(1.12); } 100% { transform: none; } }
 .btn .icon { width: 20px; height: 20px; margin-left: -8px; }
 .btn.lg { --h: 56px; padding: 0 28px; font-size: 16px; line-height: 24px; border-radius: var(--shape-full); }
 .btn.lg .icon { width: 24px; height: 24px; }
@@ -142,6 +147,8 @@ h1, h2, h3, h4, p { margin: 0; }
   transition: border-radius var(--dur-m2) var(--spring), transform var(--dur-m2) var(--spring), background-color var(--dur-s2) linear;
 }
 .icon-btn:active:not(:disabled) { border-radius: var(--shape-m); transform: scale(.92); }
+.icon-btn .icon { transition: transform var(--dur-m2) var(--spring-fast); }
+.icon-btn:hover:not(:disabled) .icon { transform: scale(1.1); }
 .icon-btn.tonal { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .icon-btn.filled { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 .icon-btn.sm { width: 32px; height: 32px; }
@@ -295,9 +302,12 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
 .doodle .draw { stroke-dasharray: 1; stroke-dashoffset: 1; }
 .doodle.play .draw { animation: draw var(--d, 700ms) var(--ease) forwards; animation-delay: var(--delay, 0ms); }
 .doodle .pop { opacity: 0; transform-box: fill-box; transform-origin: center; }
-.doodle.play .pop { animation: pop 520ms var(--spring) forwards; animation-delay: var(--delay, 0ms); }
+.doodle.play .pop { animation: pop 460ms var(--ease-emph-decel) forwards; animation-delay: var(--delay, 0ms); }
 @keyframes draw { to { stroke-dashoffset: 0; } }
-@keyframes pop { from { opacity: 0; transform: scale(.3) rotate(-12deg); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+.doodle { cursor: pointer; transform-origin: 50% 90%; }
+.doodle.poke { animation: poke 520ms var(--spring-fast); }
+@keyframes poke { 0% { transform: none; } 25% { transform: scale(1.06, .92); } 55% { transform: scale(.97, 1.04); } 100% { transform: none; } }
 
 /* ---- micro-interactions ---- */
 .icon.morph path { transition: d 420ms var(--ease-emph-decel); }
@@ -329,8 +339,8 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
 .ringing .waves { animation: waves 1.05s linear 1.3s 3; transform-box: view-box; transform-origin: 120px 132px; }
 @keyframes waves { 0%, 70%, 100% { opacity: 1; transform: scale(1); } 20% { opacity: .5; transform: scale(1.08); } 40% { opacity: 1; transform: scale(1.14); } }
 
-.steaming .steam { animation: steam 2.8s var(--ease) 1.4s infinite; transform-box: view-box; }
-.writing .pencil { transform-box: view-box; transform-origin: 150px 165px; animation: scribble 2.4s var(--ease) 1.8s infinite; }
+.steaming .steam { animation: steam 2.8s var(--ease) 1.4s 1; transform-box: view-box; }
+.writing .pencil { transform-box: view-box; transform-origin: 150px 165px; animation: scribble 1.6s var(--ease) 1.6s 1; }
 @keyframes scribble { 0%, 100% { transform: none; } 20% { transform: translate(-6px, 3px) rotate(-4deg); } 40% { transform: translate(4px, -2px) rotate(3deg); } 60% { transform: translate(-3px, 2px) rotate(-2deg); } 80% { transform: translate(2px, 0) rotate(1deg); } }
 @keyframes steam { 0% { transform: none; opacity: 1; } 60% { transform: translateY(-10px); opacity: .25; } 100% { transform: none; opacity: 1; } }
 

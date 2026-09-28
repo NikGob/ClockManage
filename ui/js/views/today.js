@@ -100,7 +100,7 @@ export function mountToday(root, ctx) {
     if (!meta.admin && L.base) { text += ' · нет прав администратора'; cls = 'open'; }
     const btn = action === 'end'
       ? '<button class="btn text interactive" data-act="end_access">Закрыть доступ</button>'
-      : action === 'emergency' ? '<button class="btn text danger interactive" data-act="emergency">Аварийно</button>' : '';
+      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="Аварийный доступ" title="Аварийный доступ">${icon('warning')}<span class="lbl">Аварийно</span></button>` : '';
     const el = $('lockline');
     el.className = `lockline ${cls}`;
     const html = `${icon(ic)}<span class="grow">${esc(text)} <span class="when tnum">${esc(when)}</span></span>${btn}`;

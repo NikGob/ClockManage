@@ -68,5 +68,15 @@ export function installRipples(root = document) {
     dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
     el.appendChild(dot);
     dot.addEventListener('animationend', () => dot.remove());
+    // Icon "hop" on release, like M3 Expressive buttons.
+    if (el.classList.contains('btn')) {
+      const up = () => {
+        el.classList.remove('released');
+        void el.offsetWidth;
+        el.classList.add('released');
+        setTimeout(() => el.classList.remove('released'), 450);
+      };
+      el.addEventListener('pointerup', up, { once: true });
+    }
   });
 }

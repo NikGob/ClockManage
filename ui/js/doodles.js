@@ -1,10 +1,18 @@
-// Hand-drawn illustrations: ink strokes drawn on with stroke-dashoffset, flat colour fills
-// slightly out of register, and a "boiling line": every path has three jittered vector
-// variants that swap ~8 times a second, like hand-drawn animation shot "on twos".
-// Pure vector geometry, so edges stay anti-aliased (no raster displacement filters).
+// Hand-drawn illustrations: ink strokes drawn on with stroke-dashoffset and flat fills.
+// While a doodle moves it "boils" like hand-drawn animation: jittered vector frames at 12 fps
+// plus a light pixel-crunchy displacement filter. When the motion is over it settles on the
+// clean, exact vector frame and stays still (no perpetual jitter). Clicking it wiggles again.
+
+let uid = 0;
 
 function frame(inner, { size = 240, label = '' } = {}) {
-  return `<svg class="doodle" viewBox="0 0 240 240" width="${size}" height="${size}" role="img" aria-label="${label}">${inner}</svg>`;
+  const id = `crunch${++uid}`;
+  return `<svg class="doodle" viewBox="0 0 240 240" width="${size}" height="${size}" role="img" aria-label="${label}" data-filter="${id}">
+  <defs><filter id="${id}" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="1" seed="1"/>
+    <feDisplacementMap in="SourceGraphic" scale="3.2" xChannelSelector="R" yChannelSelector="G"/>
+  </filter></defs>
+  <g class="layer">${inner}</g></svg>`;
 }
 
 // stroke helper: draw-on path with delay (ms) and duration
@@ -165,8 +173,9 @@ function noise(a, b, c) {
   return ((h >>> 0) / 4294967295) * 2 - 1;
 }
 
-const JITTER = 1.7;
-const VARIANTS = 3;
+const JITTER = 1.5;
+const VARIANTS = 6;
+const FPS_MS = 83; // ~12 fps: enough frames to feel alive, still reads as hand-drawn
 let pathSeed = 0;
 
 function variants(d, seed) {
@@ -178,33 +187,76 @@ function variants(d, seed) {
   return out;
 }
 
-const live = new Set();
-let frameNo = 0;
-let timer = 0;
-
-function boilTick() {
-  if (document.hidden) return;
-  frameNo = (frameNo + 1) % VARIANTS;
-  for (const svg of live) {
-    if (!svg.isConnected) { live.delete(svg); continue; }
-    for (const p of svg._boil) p.el.setAttribute('d', p.v[frameNo]);
+function prepare(svg) {
+  if (svg._paths) return;
+  svg._paths = [...svg.querySelectorAll('.layer path')].map((el) => {
+    const d = el.getAttribute('d');
+    return { el, d, v: variants(d, ++pathSeed) };
+  });
+  svg._turb = svg.querySelector('feTurbulence');
+  svg._layer = svg.querySelector('.layer');
+  // Motion length = the latest draw-on / pop end.
+  let end = 0;
+  for (const el of svg.querySelectorAll('[style]')) {
+    const st = el.getAttribute('style');
+    const delay = Number(/--delay:(\d+)/.exec(st)?.[1] || 0);
+    const dur = Number(/--d:(\d+)/.exec(st)?.[1] || 520);
+    end = Math.max(end, delay + dur);
   }
-  if (!live.size) { clearInterval(timer); timer = 0; }
+  svg._drawMs = end;
+  svg.addEventListener('pointerdown', () => wiggle(svg));
 }
 
-/** Draw every doodle inside `root` on and keep its lines gently "boiling" while it is on screen. */
-export function play(root) {
+/** Boil for `ms`, then settle on the exact clean frame. */
+function boil(svg, ms) {
+  clearInterval(svg._boilT);
+  clearTimeout(svg._settleT);
+  if (reduced()) return;
+  let f = 0;
+  svg._layer.setAttribute('filter', `url(#${svg.dataset.filter})`);
+  const tick = () => {
+    f = (f + 1) % VARIANTS;
+    for (const p of svg._paths) p.el.setAttribute('d', p.v[f]);
+    svg._turb?.setAttribute('seed', String(f + 1));
+  };
+  tick();
+  svg._boilT = setInterval(tick, FPS_MS);
+  svg._settleT = setTimeout(() => settle(svg), ms);
+}
+
+function settle(svg) {
+  clearInterval(svg._boilT);
+  for (const p of svg._paths) p.el.setAttribute('d', p.d);
+  svg._layer.removeAttribute('filter');
+}
+
+/** Short squash + boil when the user pokes a doodle. */
+export function wiggle(svg) {
+  if (!svg._paths) return;
+  svg.classList.remove('poke');
+  void svg.getBoundingClientRect();
+  svg.classList.add('poke');
+  // restart one-shot state animations (steam, pencil, wag…) inside it
+  svg.querySelectorAll('.pencil, .steam, .wag, .wag-lines, .shake, .waves').forEach((g) => {
+    g.style.animation = 'none';
+    void g.getBoundingClientRect();
+    g.style.animation = '';
+  });
+  boil(svg, 700);
+}
+
+/**
+ * Draw every doodle inside `root` on, boil while it draws (plus `extraMs`), then settle.
+ * Returns a function that settles immediately.
+ */
+export function play(root, { extraMs = 900 } = {}) {
   const svgs = [...root.querySelectorAll('svg.doodle')];
   for (const svg of svgs) {
+    prepare(svg);
     svg.classList.remove('play');
     void svg.getBoundingClientRect();
     svg.classList.add('play');
-    if (!svg._boil) {
-      svg._boil = [...svg.querySelectorAll('path')].map((el) => ({ el, v: variants(el.getAttribute('d'), ++pathSeed) }));
-      svg._boil.forEach((p) => p.el.setAttribute('d', p.v[0]));
-    }
-    if (!reduced()) live.add(svg);
+    boil(svg, svg._drawMs + extraMs);
   }
-  if (live.size && !timer) timer = setInterval(boilTick, 125);
-  return () => svgs.forEach((svg) => live.delete(svg));
+  return () => svgs.forEach((svg) => svg._paths && settle(svg));
 }

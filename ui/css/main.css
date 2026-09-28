@@ -272,9 +272,7 @@ table.t tr:last-child td { border-bottom: 0; }
 @keyframes done-flash { 0% { background: var(--md-sys-color-primary-container); transform: scale(1.02); } 100% { background: transparent; transform: none; } }
 
 .blk .linear::after, .day-row .linear::after { transition: transform 900ms var(--ease-emph-decel); }
-.hero .art { animation: art-in 520ms var(--spring); }
-@keyframes art-in { from { opacity: 0; transform: scale(.85) rotate(-3deg); } }
-.hero .center { animation: art-in 420ms var(--ease-emph-decel); }
+.hero .center { animation: fade-in 320ms var(--ease-emph-decel); }
 
 .surface, .hero, .plan-card { transition: background-color var(--dur-l1) var(--ease), box-shadow var(--dur-m2) var(--ease); }
 .day-row, .blk, .prow { transition: background-color var(--dur-m1) var(--ease), transform var(--dur-m2) var(--spring); }
@@ -287,10 +285,39 @@ table.t tr:last-child td { border-bottom: 0; }
 
 .lock-hero .lockart { width: 72px; height: 72px; flex: none; display: grid; place-items: center; border-radius: 24px; background: color-mix(in srgb, currentColor 10%, transparent); transition: border-radius var(--dur-l2) var(--spring); }
 .lock-hero.on .lockart { border-radius: 36px; }
-.lock-hero .doodle { --ink: currentColor; }
-.lock-hero .doodle .ink { stroke-width: 9; }
-.lock-hero .doodle .ink.thin { stroke-width: 7; }
-.lock-hero .doodle .fill-p { fill: color-mix(in srgb, currentColor 30%, transparent); }
-.lock-hero .shackle { transform-box: view-box; transform-origin: 148px 112px; transition: transform 620ms var(--spring-fast); }
-.lock-hero:not(.on) .shackle { transform: translateY(-16px) rotate(28deg); }
+.padlock { overflow: visible; }
+.padlock .shackle { fill: none; stroke: currentColor; stroke-width: 4.5; stroke-linecap: round; transform-box: view-box; transform-origin: 32px 22px; transition: transform 640ms var(--spring-fast); }
+.padlock .body rect:first-child { fill: currentColor; }
+.padlock .hole { fill: var(--hole, var(--md-sys-color-surface-container)); }
+.lock-hero.on { --hole: var(--md-sys-color-primary-container); }
+.lock-hero.open { --hole: var(--md-sys-color-error-container); }
+.lock-hero:not(.on) .padlock .shackle { transform: translateY(-5px) rotate(32deg); }
+.lockart.click .padlock .body { transform-box: view-box; transform-origin: 24px 42px; animation: lock-click 460ms var(--spring-fast) 180ms; }
+@keyframes lock-click { 0% { transform: none; } 35% { transform: scale(1.08, .9); } 70% { transform: scale(.97, 1.03); } 100% { transform: none; } }
+.lockart.click { animation: halo 700ms var(--ease-emph-decel) 180ms; }
+@keyframes halo { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 35%, transparent); } 100% { box-shadow: 0 0 0 18px transparent; } }
 .hero .doodle .fill-s { fill: color-mix(in srgb, currentColor 14%, var(--hero-bg)); }
+
+/* Emergency: a quiet icon in the corner that unfolds into a labelled button on hover/focus. */
+.sos {
+  flex: none; margin-left: auto; align-self: flex-start;
+  height: 32px; min-width: 32px; max-width: 32px; padding: 0 6px; border: 0; border-radius: var(--shape-full);
+  display: inline-flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap;
+  background: transparent; color: color-mix(in srgb, var(--md-sys-color-error) 70%, var(--md-sys-color-on-surface-variant));
+  font: 600 13px/20px var(--font); opacity: .7;
+  transition: max-width var(--dur-l1) var(--spring), background-color var(--dur-m1) var(--ease), color var(--dur-m1) var(--ease), opacity var(--dur-m1) var(--ease), padding var(--dur-l1) var(--spring);
+}
+.sos .icon { width: 20px !important; height: 20px !important; flex: none; }
+.sos .lbl { opacity: 0; transform: translateX(-6px); transition: opacity var(--dur-m1) var(--ease), transform var(--dur-m2) var(--ease-emph-decel); }
+.sos:hover, .sos:focus-visible {
+  max-width: 160px; padding: 0 14px 0 8px; opacity: 1;
+  background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container);
+}
+.sos:hover .lbl, .sos:focus-visible .lbl { opacity: 1; transform: none; }
+.sos:active { transform: scale(.95); }
+
+/* M3 Expressive button group: the pressed button widens, neighbours make room. */
+.controls .btn { transition: border-radius var(--dur-m2) var(--spring), transform var(--dur-m2) var(--spring), padding var(--dur-l1) var(--spring), background-color var(--dur-s2) linear, box-shadow var(--dur-s2) linear; }
+.controls .btn:active:not(:disabled) { padding-inline: 44px; transform: none; }
+.controls .btn.xl:active:not(:disabled) { padding-inline: 52px; }
+.controls:has(.btn:active) .btn:not(:active) { transform: scale(.94); }
