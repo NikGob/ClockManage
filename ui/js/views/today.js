@@ -143,7 +143,7 @@ export function mountToday(root, ctx) {
         B('start_next', 'Пообедал — начать', 'filled xl', 'play');
         break;
       case 'done':
-        if (c.single) B('single', 'Один таймер', 'tonal lg', 'timer');
+        if (c.single) B('single', 'Один таймер', 'outlined lg', 'timer');
         break;
     }
     if (c.stop_single) B('stop_single', 'Стоп', 'outlined lg', 'stop');

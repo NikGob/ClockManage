@@ -447,11 +447,23 @@ fn ticker(shared: Arc<Shared>) {
                 shared.lock().day.log(now, "firefox", n.clone());
                 shared.notify("Firefox", &n);
             }
-            shared
-                .blocker
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .sync_launch_guard(blocked.then_some(apps.as_slice()), last_blocked == Some(blocked));
+            let restart_ff_now = {
+                let mut b = shared.blocker.lock().unwrap_or_else(|e| e.into_inner());
+                b.sync_launch_guard(blocked.then_some(apps.as_slice()), last_blocked == Some(blocked));
+                b.take_firefox_restart()
+            };
+            if restart_ff_now {
+                // Takes seconds (waits for Firefox to close and come back): never on this thread.
+                let s = shared.clone();
+                std::thread::spawn(move || {
+                    let text = match crate::blocker::restart_firefox() {
+                        Ok(()) => "Firefox перезапущен, чтобы блокировка в нём заработала. Вкладки восстановятся.".to_string(),
+                        Err(e) => format!("Не удалось перезапустить Firefox ({e}) — перезапусти его вручную."),
+                    };
+                    s.lock().day.log(clock::now_ts(), "firefox", text.clone());
+                    s.notify("Firefox", &text);
+                });
+            }
             last_verify = now;
             if last_blocked.is_some() && last_blocked != Some(blocked) {
                 let mut g = shared.lock();
@@ -959,7 +971,11 @@ pub async fn restart_firefox(s: State<'_, Arc<Shared>>) -> Result<(), String> {
     let shared = s.inner().clone();
     // Restarting waits for Firefox to close and come back: keep it off the UI thread.
     tauri::async_runtime::spawn_blocking(move || {
-        let r = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).restart_firefox_now();
+        // Restart without holding the blocker lock, so the timer thread keeps ticking.
+        let r = crate::blocker::restart_firefox();
+        if r.is_ok() {
+            shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).mark_firefox_restarted();
+        }
         let text = match &r {
             Ok(()) => "Firefox перезапущен вручную".to_string(),
             Err(e) => format!("Перезапуск Firefox не удался: {e}"),

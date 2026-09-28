@@ -54,7 +54,8 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 @media (max-width: 599px) {
   .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
   .nav { grid-row: 2; flex-direction: row; justify-content: space-around; padding: 12px 0 16px; background: var(--md-sys-color-surface-container); gap: 0; }
-  .nav .dest { width: auto; flex: 1; margin: 0; }
+  .nav .dest { width: auto; flex: 1; min-width: 0; margin: 0; font-size: 11px; letter-spacing: .2px; }
+  .nav .dest > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nav .spacer, .nav .rail-only { display: none; }
   .topbar { padding: 8px 16px; }
   .view { padding: 0 16px 16px; }

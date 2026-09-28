@@ -170,14 +170,16 @@ impl Config {
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
         self.blocklist.sites = normalize_list(&self.blocklist.sites, normalize_site);
         self.blocklist.apps = normalize_list(&self.blocklist.apps, |s| {
-            let s = s.trim();
-            if s.is_empty() {
-                None
+            // Only a bare file name: "C:\x\Steam.exe" -> "Steam.exe".
+            let s = s.trim().rsplit(['\\', '/']).next().unwrap_or("").trim();
+            let exe = if s.is_empty() {
+                return None;
             } else if s.to_ascii_lowercase().ends_with(".exe") {
-                Some(s.to_string())
+                s.to_string()
             } else {
-                Some(format!("{s}.exe"))
-            }
+                format!("{s}.exe")
+            };
+            (!is_protected_app(&exe)).then_some(exe)
         });
         for b in &mut self.plan_template {
             b.normalize();
@@ -242,6 +244,21 @@ fn normalize_list(v: &[String], f: impl Fn(&str) -> Option<String>) -> Vec<Strin
     out
 }
 
+/// Processes that must never be blocked: Windows itself, the WebView runtime, ClockManage.
+/// Blocking any of them would break the system (or the app) for the whole study day.
+const PROTECTED_APPS: [&str; 22] = [
+    "explorer.exe", "svchost.exe", "csrss.exe", "wininit.exe", "winlogon.exe", "lsass.exe",
+    "services.exe", "smss.exe", "dwm.exe", "fontdrvhost.exe", "sihost.exe", "ctfmon.exe",
+    "taskhostw.exe", "runtimebroker.exe", "searchhost.exe", "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe", "conhost.exe", "msedgewebview2.exe", "clockmanage.exe",
+    "cm-guard.exe", "system",
+];
+
+pub fn is_protected_app(exe: &str) -> bool {
+    let e = exe.to_ascii_lowercase();
+    PROTECTED_APPS.contains(&e.as_str())
+}
+
 /// `https://www.YouTube.com/shorts/` -> `youtube.com/shorts`.
 pub fn normalize_site(s: &str) -> Option<String> {
     let mut s = s.trim().to_ascii_lowercase();
@@ -277,6 +294,14 @@ mod tests {
         assert_eq!(normalize_site("x.com").as_deref(), Some("x.com"));
         assert_eq!(normalize_site("nonsense"), None);
         assert_eq!(normalize_site("  "), None);
+    }
+
+    #[test]
+    fn system_apps_cannot_be_blocked() {
+        let mut c = Config::default();
+        c.blocklist.apps = vec!["explorer.exe".into(), "Steam".into(), r"C:\Games\Epic.exe".into(), "ClockManage.exe".into()];
+        c.normalize();
+        assert_eq!(c.blocklist.apps, vec!["Steam.exe".to_string(), "Epic.exe".to_string()]);
     }
 
     #[test]

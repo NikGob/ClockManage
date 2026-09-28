@@ -13,7 +13,27 @@ use std::sync::{Arc, Mutex};
 use clockmanage_core::clock;
 use tauri::{Emitter, Manager};
 
+/// `clockmanage.exe --cleanup` (run by the uninstaller): undo everything we put into the
+/// system — hosts section, browser policies, launch-guard redirects, scheduled tasks — and exit.
+fn cleanup() {
+    let dir = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default()
+        .join("com.nikgob.clockmanage");
+    let mut b = blocker::Blocker::new(dir.join("blocker.json"));
+    b.sync(None, true, false);
+    b.sync_launch_guard(None, false);
+    // Belt and braces: also every app from the saved block list.
+    blocker::clear_guard_redirects(&store::Store::new(dir.clone()).load_config().blocklist.apps);
+    let _ = std::fs::remove_file(dir.join("guard.beat"));
+    let _ = system::set_autostart(false);
+}
+
 fn main() {
+    if std::env::args().any(|a| a == "--cleanup") {
+        cleanup();
+        return;
+    }
     let background = std::env::args().any(|a| a == "--background");
 
     tauri::Builder::default()

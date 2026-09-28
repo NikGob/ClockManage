@@ -37,6 +37,20 @@ pub struct Blocker {
     state_file: PathBuf,
     pub applied: Applied,
     pub last_error: Option<String>,
+    firefox_restart_pending: bool,
+}
+
+/// Remove launch-guard redirects for these exes (only entries pointing at our guard).
+pub fn clear_guard_redirects(exes: &[String]) {
+    for e in exes {
+        platform::ifeo_clear_any_guard(&e.to_ascii_lowercase());
+    }
+}
+
+/// Restart Firefox so it loads the current rules. Slow (waits for Firefox): call it off the
+/// timer thread and without holding the blocker lock.
+pub fn restart_firefox() -> Result<(), String> {
+    platform::restart_firefox()
 }
 
 pub const HOSTS_BEGIN: &str = "# >>> ClockManage study lock (auto-generated, removed when the lock ends)";
@@ -155,7 +169,7 @@ impl Blocker {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Self { state_file, applied, last_error: None }
+        Self { state_file, applied, last_error: None, firefox_restart_pending: false }
     }
 
     fn persist(&self) {
@@ -205,18 +219,20 @@ impl Blocker {
         if !restart {
             return Some("Firefox запущен до блокировки и её не видит — перезапусти его.".into());
         }
-        Some(match platform::restart_firefox() {
-            Ok(()) => "Firefox перезапущен, чтобы блокировка в нём заработала. Вкладки восстановятся.".into(),
-            Err(e) => format!("Не удалось перезапустить Firefox ({e}) — перезапусти его вручную."),
-        })
+        // The restart itself takes seconds: the caller runs it off the timer thread.
+        self.firefox_restart_pending = true;
+        None
     }
 
-    /// Manual "restart Firefox now".
-    pub fn restart_firefox_now(&mut self) -> Result<(), String> {
-        platform::restart_firefox()?;
+    /// True once when a Firefox restart was requested by `sync`.
+    pub fn take_firefox_restart(&mut self) -> bool {
+        std::mem::take(&mut self.firefox_restart_pending)
+    }
+
+    /// Mark the current rules as delivered to Firefox (after a manual restart).
+    pub fn mark_firefox_restarted(&mut self) {
         self.applied.ff_handled_at = self.applied.ff_rules_at;
         self.persist();
-        Ok(())
     }
 
     /// If the focused browser tab shows a blocked site (its error/blocked page is titled with the
