@@ -45,6 +45,9 @@ export function mountToday(root, ctx) {
   let prevBig = '';
   let last = null;
   let prevDone = [];
+  let shieldUntil = 0;
+  const SHIELD_MS = 900;
+  const SHIELD_REPEAT_MS = 700;
 
   $('edit-plan').addEventListener('click', () => ctx.navigate('plan'));
   ctx.setActions(`<button class="btn tonal interactive" data-top="mini">${icon('pip')}Мини-таймер</button>`);
@@ -200,7 +203,7 @@ export function mountToday(root, ctx) {
         if (c.lunch) B('lunch', 'Обед', 'outlined lg', 'restaurant');
         break;
       case 'lunch_break':
-        B('start_next', 'Закончить обед', 'filled lg', 'skip');
+        B('start_next', 'Закончить обед раньше', 'tonal lg', 'skip');
         break;
       case 'await':
         B('start_next', startLabel(p), 'filled xl', 'play');
@@ -216,13 +219,17 @@ export function mountToday(root, ctx) {
     if (c.stop_single) B('stop_single', 'Стоп', 'outlined lg', 'stop');
     const sig = items.map((i) => i.act + i.label + i.cls).join('|');
     if (sig === ctrlSig) return;
+    // The buttons just changed under the cursor: a click that was meant for the old button
+    // (spamming "Обед", say) must not land on the new one ("Закончить обед").
+    if (ctrlSig) shieldUntil = performance.now() + SHIELD_MS;
     ctrlSig = sig;
     const el = $('controls');
     // Keyed update: pause/resume is one control whose icon morphs; new buttons spring in.
-    const keyOf = (act) => (act === 'pause' || act === 'resume' ? 'toggle' : act);
+    // A different action is a different element (it springs in), never a relabelled old one.
+    const keyOf = (act, label) => (act === 'pause' || act === 'resume' ? 'toggle' : `${act}:${label}`);
     const old = new Map([...el.querySelectorAll('[data-key]')].map((b) => [b.dataset.key, b]));
     const next = items.map((i) => {
-      const key = keyOf(i.act);
+      const key = keyOf(i.act, i.label);
       let b = old.get(key);
       old.delete(key);
       const fresh = !b;
@@ -376,11 +383,19 @@ export function mountToday(root, ctx) {
     if (!b || !last) return;
     const act = b.dataset.act;
     const v = last.view;
+    if (b.closest('#controls') && performance.now() < shieldUntil) {
+      // Still clicking right after the buttons changed: ignore, and keep ignoring until the
+      // clicks stop for a moment.
+      shieldUntil = performance.now() + SHIELD_REPEAT_MS;
+      b.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'none' }], { duration: 240, easing: 'ease-in-out' });
+      return;
+    }
     switch (act) {
       case 'start_day': await run(() => call('start_day'), b); break;
       case 'pause': await run(() => call('pause'), b); break;
       case 'resume': await run(() => call('resume'), b); break;
-      case 'start_next': await run(() => call('start_next'), b); break;
+      // `expect`: the backend refuses if the phase moved on since this button was drawn.
+      case 'start_next': await run(() => call('start_next', { expect: v.phase.kind }), b); break;
       case 'stop_single': await run(() => call('stop_single'), b); break;
       case 'end_access': await run(() => call('end_access'), b); break;
       case 'mini': await call('toggle_mini'); break;

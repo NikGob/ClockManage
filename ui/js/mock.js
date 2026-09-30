@@ -1,7 +1,10 @@
 // Browser-only mock of the Rust backend, used for design previews (`?state=work`).
 // Never loaded inside the Tauri app.
 const q = new URLSearchParams(location.search);
-const STATE = q.get('state') || 'work';
+let STATE = q.get('state') || 'work';
+// `?then=lunch_break&at=2000`: switch the phase after a while (to test what a click does
+// when the buttons change under the cursor).
+if (q.get('then')) setTimeout(() => { STATE = q.get('then'); }, Number(q.get('at') || 2000));
 const t0 = Date.now();
 const MIN = 60000;
 
@@ -40,6 +43,7 @@ function phase(now) {
   switch (STATE) {
     case 'work': { const dur = 45 * MIN, e = 13 * MIN + el; return { kind: 'work', title: 'Словацкий', subtitle: 'Часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
     case 'paused': { const dur = 45 * MIN, e = 21 * MIN; return { kind: 'work', title: 'Словацкий', subtitle: 'Часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: false, paused: true, waiting_ms: 0 }; }
+    case 'lunch_break': { const dur = 45 * MIN, e = el; return { kind: 'lunch_break', title: 'Обед', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
     case 'break': { const dur = 10 * MIN, e = 3 * MIN + el; return { kind: 'break', title: 'Перерыв', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
     case 'await': return { kind: 'await', title: 'Перерыв окончен', subtitle: 'Словацкий · часть 2 из 2', block: 1, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 74000 + el };
     case 'done': return { kind: 'done', title: 'День закрыт', subtitle: 'Все блоки отсижены', block: null, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 0 };
@@ -66,7 +70,7 @@ function snapshot() {
       pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN, access_enabled: cfg.pause_access, access_until: access ? t0 + 7 * MIN : null, access_left_ms: access ? t0 + 7 * MIN - now : 0, extensions: 0 } : null,
       emergency_count: 0, lunch_used: false, single: null,
       can: {
-        start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break'].includes(STATE),
+        start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
         extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1439, lighter_kind: !lock.base,

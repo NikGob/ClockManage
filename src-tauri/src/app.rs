@@ -759,8 +759,17 @@ pub fn resume(s: S) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn start_next(s: S) -> Result<(), String> {
-    let r = s.mutate(|g, now| g.day.start_next(now));
+pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
+    let r = s.mutate(|g, now| {
+        // The button was drawn for a phase; if the timer moved on since (a click queued
+        // behind another one), don't skip into the next part by accident.
+        if let Some(e) = &expect {
+            if view::build(&g.day, &g.cfg, now).phase.kind != *e {
+                return Err("Таймер уже перешёл дальше — ничего не сделал.".into());
+            }
+        }
+        g.day.start_next(now)
+    });
     if r.is_ok() {
         hide_overlay_window(&s.app);
     }

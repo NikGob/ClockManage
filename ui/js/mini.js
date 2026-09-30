@@ -9,6 +9,10 @@ el('open').innerHTML = icon('open');
 el('close').innerHTML = icon('close');
 
 let prevTime = '';
+// The single button changes meaning (pause → start the next part): clicks that keep coming
+// right after it changed are ignored until they stop for a moment.
+let btnSig = '';
+let shieldUntil = 0;
 
 function setTime(text) {
   const t = el('time');
@@ -71,6 +75,9 @@ function render(s) {
   el('label').textContent = label;
   el('label').title = label;
   b.hidden = !btn;
+  const sig = btn ? btn[1] : '';
+  if (btnSig && sig !== btnSig) shieldUntil = performance.now() + 900;
+  btnSig = sig;
   if (btn) {
     if (!morphIcon(b, btn[0])) b.innerHTML = icon(btn[0]);
     b.setAttribute('aria-label', btn[1]);
@@ -79,7 +86,10 @@ function render(s) {
 }
 
 root.addEventListener('mousedown', startDrag);
-el('primary').addEventListener('click', () => call('primary').catch(console.warn));
+el('primary').addEventListener('click', () => {
+  if (performance.now() < shieldUntil) { shieldUntil = performance.now() + 700; return; }
+  call('primary').catch(console.warn);
+});
 el('open').addEventListener('click', () => call('show_main', { route: 'today' }));
 el('close').addEventListener('click', () => call('toggle_mini'));
 root.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) call('show_main', { route: 'today' }); });

@@ -80,7 +80,7 @@ stage.addEventListener('click', async (e) => {
   if (b.dataset.act === 'start') {
     b.setAttribute('aria-busy', 'true');
     try {
-      if (!current?.preview) await call('start_next');
+      if (!current?.preview) await call('start_next', { expect: 'await' });
     } catch (err) {
       console.warn(err);
     }
