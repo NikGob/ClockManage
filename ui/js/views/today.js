@@ -286,13 +286,14 @@ export function mountToday(root, ctx) {
     el.classList.toggle('warn', warn);
     if (sig !== accessSig) { el.innerHTML = html; accessSig = sig; }
     else {
-      const cnt = el.querySelector('.count');
-      if (cnt && p) cnt.textContent = mmss(p.access_left_ms);
-      const d = el.querySelector('.body-m');
+      // Same structure: refresh every live text in place (title "Пауза 12 мин", note, countdown).
       const tmp = document.createElement('div');
       tmp.innerHTML = html;
-      const nd = tmp.querySelector('.body-m');
-      if (d && nd && d.textContent !== nd.textContent) d.textContent = nd.textContent;
+      for (const sel of ['.title-m', '.body-m', '.count']) {
+        const cur = el.querySelector(sel);
+        const next = tmp.querySelector(sel);
+        if (cur && next && cur.textContent !== next.textContent) cur.textContent = next.textContent;
+      }
     }
   }
 
