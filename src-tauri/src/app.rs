@@ -136,7 +136,7 @@ impl Shared {
         res
     }
 
-    fn notify(&self, title: &str, body: &str) {
+    pub fn notify(&self, title: &str, body: &str) {
         let _ = self.app.notification().builder().title(title).body(body).show();
     }
 
@@ -178,8 +178,11 @@ impl Shared {
     }
 
     pub fn update_tray(&self, v: &View) {
-        let tray = self.tray.lock().unwrap();
-        let Some(items) = tray.as_ref() else { return };
+        // Menu calls wait for the main thread: never make them while holding the mutex, or a
+        // tray update from the main thread (a command) and one from the ticker deadlock.
+        let Some((action, quit)) = self.tray.lock().unwrap().as_ref().map(|t| (t.action.clone(), t.quit.clone())) else {
+            return;
+        };
         let (label, enabled) = if v.can.resume {
             ("Продолжить", true)
         } else if v.can.pause {
@@ -191,11 +194,10 @@ impl Shared {
         } else {
             ("Пауза", false)
         };
-        let _ = items.action.set_text(label);
-        let _ = items.action.set_enabled(enabled);
-        let _ = items.quit.set_enabled(!v.lock.base);
-        let _ = items.quit.set_text(if v.lock.base { "Выход недоступен во время учёбы" } else { "Выход" });
-        drop(tray);
+        let _ = action.set_text(label);
+        let _ = action.set_enabled(enabled);
+        let _ = quit.set_enabled(!v.lock.base);
+        let _ = quit.set_text(if v.lock.base { "Выход недоступен во время учёбы" } else { "Выход" });
         if let Some(t) = self.app.tray_by_id("main") {
             let _ = t.set_tooltip(Some(tray_tooltip(v)));
         }
@@ -389,27 +391,25 @@ pub fn load_today(store: &Store, cfg: &Config, now: Ts) -> DayState {
 }
 
 pub fn spawn_ticker(shared: Arc<Shared>) {
+    let s = shared.clone();
     std::thread::Builder::new()
         .name("ticker".into())
-        .spawn(move || ticker(shared))
+        .spawn(move || ticker(s))
         .expect("spawn ticker");
+    std::thread::Builder::new()
+        .name("enforcer".into())
+        .spawn(move || enforcer(shared))
+        .expect("spawn enforcer");
 }
 
+/// Timer, UI and tray. Window and tray calls wait for the main thread, so this thread may
+/// stall now and then: blocking lives on its own thread (`enforcer`) and never waits for UI.
 fn ticker(shared: Arc<Shared>) {
-    let mut last_blocked: Option<bool> = None;
-    let mut last_verify: Ts = 0;
-    let mut last_kill: Ts = 0;
     let mut last_tray: Ts = 0;
-    let mut last_nope: Ts = 0;
-    let mut last_tab_check: Ts = 0;
-    let mut last_tab_hit: Option<(String, Ts)> = None;
-    let mut last_beat: Ts = 0;
-    let mut last_beat_blocked = false;
-    let mut last_attempts: Ts = 0;
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
-        let (events, snap, emit, blocked, sites, apps, killed_note, restart_ff) = {
+        let (events, snap, emit) = {
             let mut g = shared.lock();
             let g = &mut *g;
             if clock::local_date(now, g.cfg.tz_offset_min) != g.day.date {
@@ -426,32 +426,74 @@ fn ticker(shared: Arc<Shared>) {
             let emit = g.force_emit || !events.is_empty() || sec != g.last_emit_sec;
             g.force_emit = false;
             g.last_emit_sec = sec;
-            let snap = shared.snapshot_locked(g, now);
-            let killed_note = now - g.last_kill_note > 20_000;
-            let blocked = snap.view.lock.blocked;
-            (events, snap, emit, blocked, g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), killed_note, g.cfg.restart_firefox)
+            (events, shared.snapshot_locked(g, now), emit)
         };
 
         if !events.is_empty() {
             shared.react(&events, &snap);
         }
+        if emit {
+            let _ = shared.app.emit("state", &snap);
+        }
+        if now - last_tray >= 1_000 {
+            last_tray = now;
+            shared.update_tray(&snap.view);
+        }
+    }
+}
 
-        // Enforcement: apply on change, verify/repair every 30 s.
+/// Run a UI reaction (overlay, sound, notification) off the enforcer thread: those calls wait
+/// for the main thread, and blocking must keep working even while the UI is busy.
+fn ui(shared: &Arc<Shared>, f: impl FnOnce(&Shared) + Send + 'static) {
+    let s = shared.clone();
+    std::thread::spawn(move || f(&s));
+}
+
+/// Blocking: hosts / policies, launch guard + its heartbeat, killing blocked apps.
+/// Never holds the state lock while waiting for anything, and never touches windows.
+fn enforcer(shared: Arc<Shared>) {
+    let mut last_blocked: Option<bool> = None;
+    let mut last_verify: Ts = 0;
+    let mut last_kill: Ts = 0;
+    let mut last_nope: Ts = 0;
+    let mut last_tab_check: Ts = 0;
+    let mut last_tab_hit: Option<(String, Ts)> = None;
+    let mut last_beat: Ts = 0;
+    let mut last_beat_blocked = false;
+    let mut last_attempts: Ts = 0;
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        let now = clock::now_ts();
+        let (lock, sites, apps, restart_ff) = {
+            let g = shared.lock();
+            (g.day.lock_state(now, &g.cfg), g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), g.cfg.restart_firefox)
+        };
+        let blocked = lock.blocked;
+
+        // Heartbeat first: the launch guard lets apps through once it is 20 s old.
+        if now - last_beat >= 2_000 || last_beat_blocked != blocked {
+            last_beat = now;
+            last_beat_blocked = blocked;
+            let beat = shared.store.dir.join("guard.beat");
+            if blocked {
+                let _ = std::fs::write(&beat, now.to_string());
+            } else {
+                let _ = std::fs::remove_file(&beat);
+            }
+        }
+
+        // Apply on change, verify/repair every 30 s.
         if last_blocked != Some(blocked) || now - last_verify > 30_000 {
-            let note = shared
-                .blocker
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .sync(blocked.then_some(sites.as_slice()), last_blocked.is_none(), restart_ff);
+            let (note, restart_ff_now) = {
+                let mut b = shared.blocker.lock().unwrap_or_else(|e| e.into_inner());
+                let note = b.sync(blocked.then_some(sites.as_slice()), last_blocked.is_none(), restart_ff);
+                b.sync_launch_guard(blocked.then_some(apps.as_slice()), last_blocked == Some(blocked));
+                (note, b.take_firefox_restart())
+            };
             if let Some(n) = note {
                 shared.lock().day.log(now, "firefox", n.clone());
-                shared.notify("Firefox", &n);
+                ui(&shared, move |s| s.notify("Firefox", &n));
             }
-            let restart_ff_now = {
-                let mut b = shared.blocker.lock().unwrap_or_else(|e| e.into_inner());
-                b.sync_launch_guard(blocked.then_some(apps.as_slice()), last_blocked == Some(blocked));
-                b.take_firefox_restart()
-            };
             if restart_ff_now {
                 // Takes seconds (waits for Firefox to close and come back): never on this thread.
                 let s = shared.clone();
@@ -467,15 +509,16 @@ fn ticker(shared: Arc<Shared>) {
             last_verify = now;
             if last_blocked.is_some() && last_blocked != Some(blocked) {
                 let mut g = shared.lock();
-                let text = if blocked { "Блокировка включена".to_string() } else { format!("Блокировка снята ({})", snap.view.lock.reason) };
+                let text = if blocked { "Блокировка включена".to_string() } else { format!("Блокировка снята ({})", lock.reason) };
                 g.day.log(now, "lock", text);
                 g.force_emit = true;
             }
             last_blocked = Some(blocked);
         }
+
         if blocked && now - last_kill >= 1_000 {
             last_kill = now;
-            let killed = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).kill_apps(&apps);
+            let killed = crate::blocker::kill_apps(&apps);
             if !killed.is_empty() {
                 let mut names: Vec<String> = vec![];
                 for k in &killed {
@@ -486,29 +529,26 @@ fn ticker(shared: Arc<Shared>) {
                 }
                 if now - last_nope > 3_000 {
                     last_nope = now;
-                    shared.nope(&format!("{} — после учёбы", names.join(", ")));
+                    let text = format!("{} — после учёбы", names.join(", "));
+                    ui(&shared, move |s| s.nope(&text));
                 }
-                let mut g = shared.lock();
-                g.day.log(now, "app_killed", format!("Закрыто: {}", killed.join(", ")));
-                if killed_note {
-                    g.last_kill_note = now;
-                    drop(g);
-                    shared.notify("Сейчас учёба", &format!("{} закрыт. Блокировка до конца блоков дня.", killed.join(", ")));
+                let notify = {
+                    let mut g = shared.lock();
+                    g.day.log(now, "app_killed", format!("Закрыто: {}", killed.join(", ")));
+                    let due = now - g.last_kill_note > 20_000;
+                    if due {
+                        g.last_kill_note = now;
+                    }
+                    due
+                };
+                if notify {
+                    let body = format!("{} закрыт. Блокировка до конца блоков дня.", killed.join(", "));
+                    ui(&shared, move |s| s.notify("Сейчас учёба", &body));
                 }
             }
         }
 
-        // Launch guard: heartbeat tells it the lock is live; it reports stopped launches back.
-        if now - last_beat >= 4_000 || last_beat_blocked != blocked {
-            last_beat = now;
-            last_beat_blocked = blocked;
-            let beat = shared.store.dir.join("guard.beat");
-            if blocked {
-                let _ = std::fs::write(&beat, now.to_string());
-            } else {
-                let _ = std::fs::remove_file(&beat);
-            }
-        }
+        // Launches stopped by the guard.
         if now - last_attempts >= 400 {
             last_attempts = now;
             let dir = shared.store.dir.join("attempts");
@@ -526,7 +566,8 @@ fn ticker(shared: Arc<Shared>) {
                     shared.lock().day.log(now, "app_blocked", format!("Не дал запустить: {}", names.join(", ")));
                     if now - last_nope > 1_500 {
                         last_nope = now;
-                        shared.nope(&format!("{} — после учёбы", names.join(", ")));
+                        let text = format!("{} — после учёбы", names.join(", "));
+                        ui(&shared, move |s| s.nope(&text));
                     }
                 }
             }
@@ -535,24 +576,16 @@ fn ticker(shared: Arc<Shared>) {
         // Foreground browser tab showing a blocked site -> wag a finger (once per site per 20 s).
         if blocked && now - last_tab_check >= 800 {
             last_tab_check = now;
-            let hit = shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).blocked_tab(&sites);
-            match hit {
+            match crate::blocker::blocked_tab(&sites) {
                 Some(site) if last_tab_hit.as_ref().map(|(s, t)| s != &site || now - t > 20_000).unwrap_or(true) => {
                     last_tab_hit = Some((site.clone(), now));
                     last_nope = now;
                     shared.lock().day.log(now, "site_attempt", format!("Попытка открыть {site}"));
-                    shared.nope(&format!("{site} — после учёбы"));
+                    let text = format!("{site} — после учёбы");
+                    ui(&shared, move |s| s.nope(&text));
                 }
                 _ => {}
             }
-        }
-
-        if emit {
-            let _ = shared.app.emit("state", &snap);
-        }
-        if now - last_tray >= 1_000 {
-            last_tray = now;
-            shared.update_tray(&snap.view);
         }
     }
 }

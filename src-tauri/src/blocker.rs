@@ -4,7 +4,7 @@
 //! * Domains and paths (`youtube.com/shorts`) -> browser policies `URLBlocklist`
 //!   (Chrome, Edge, Brave, Yandex) and `WebsiteFilter` (Firefox). This is the only
 //!   way to block a path without a proxy: hosts can only block whole domains.
-//! * Apps -> watchdog kills matching processes while the lock is active.
+//! * Apps -> launch guard (IFEO) stops new launches; the enforcer thread kills running ones.
 //!
 //! Everything written is remembered in `blocker.json` so cleanup removes only our entries,
 //! even after a crash. Other platforms get a no-op implementation (dev builds).
@@ -51,6 +51,19 @@ pub fn clear_guard_redirects(exes: &[String]) {
 /// timer thread and without holding the blocker lock.
 pub fn restart_firefox() -> Result<(), String> {
     platform::restart_firefox()
+}
+
+/// Kill blocked apps. Returns names of killed processes. Needs no `Blocker` (no lock).
+pub fn kill_apps(apps: &[String]) -> Vec<String> {
+    platform::kill_apps(apps)
+}
+
+/// If the focused browser tab shows a blocked site (its error/blocked page is titled with the
+/// bare host, e.g. "x.com - Google Chrome"), return that host. A heuristic: browsers do not
+/// report policy/DNS blocks to other programs.
+pub fn blocked_tab(sites: &[String]) -> Option<String> {
+    let (exe, title) = platform::foreground_window()?;
+    match_blocked_tab(&exe, &title, sites)
 }
 
 pub const HOSTS_BEGIN: &str = "# >>> ClockManage study lock (auto-generated, removed when the lock ends)";
@@ -235,14 +248,6 @@ impl Blocker {
         self.persist();
     }
 
-    /// If the focused browser tab shows a blocked site (its error/blocked page is titled with the
-    /// bare host, e.g. "x.com - Google Chrome"), return that host. A heuristic: browsers do not
-    /// report policy/DNS blocks to other programs.
-    pub fn blocked_tab(&self, sites: &[String]) -> Option<String> {
-        let (exe, title) = platform::foreground_window()?;
-        match_blocked_tab(&exe, &title, sites)
-    }
-
     /// Redirect launches of blocked apps to the guard (`cm-guard.exe` next to our exe) while
     /// `apps` is Some; remove every redirect we made when None. The guard stops the launch
     /// before the app starts, so Windows shows no "cannot access" error as it does when a
@@ -278,11 +283,6 @@ impl Blocker {
         if changed {
             self.persist();
         }
-    }
-
-    /// Kill blocked apps. Returns names of killed processes.
-    pub fn kill_apps(&self, apps: &[String]) -> Vec<String> {
-        platform::kill_apps(apps)
     }
 }
 
