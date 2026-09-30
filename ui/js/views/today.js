@@ -3,7 +3,7 @@ import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack } from '../ui.js';
-import { lunchDialog, singleDialog, emergencyDialog, captchaDialog } from './dialogs.js';
+import { lunchDialog, singleDialog, emergencyDialog, captchaDialog, raiseDialog } from './dialogs.js';
 
 export function mountToday(root, ctx) {
   root.innerHTML = `
@@ -90,17 +90,19 @@ export function mountToday(root, ctx) {
       case 'pause_access': text = 'Доступ открыт на паузе'; when = left; cls = 'open'; action = 'end'; break;
       case 'emergency': text = 'Аварийный доступ'; when = left; cls = 'open'; action = 'end'; break;
       case 'lunch_at_pc': text = 'Обед за ПК — доступ открыт'; when = left; cls = 'open'; break;
-      case 'not_started': text = v.study_day ? 'Блокировка включится по кнопке «Начать день»' : 'Сегодня не учебный день — без блокировки'; break;
+      case 'not_started': text = v.day_kind === 'light' ? 'Лёгкий день · блокировка по «Начать день»' : 'Блокировка включится по кнопке «Начать день»'; break;
       case 'completed': text = 'Все блоки отсижены — блокировка снята'; break;
       case 'day_end': text = `После ${v.day_end} блокировки нет`; break;
-      case 'not_study_day': text = 'Сегодня не учебный день — без блокировки'; break;
+      case 'not_study_day': text = 'Выходной — блокировки нет'; break;
       default: text = '';
     }
     if (L.base && !['pause_access', 'emergency'].includes(L.reason) && v.can.emergency) action = 'emergency';
+    else if (!action && v.can.raise.length && v.mode !== 'single') action = 'raise';
     if (!meta.admin && L.base) { text += ' · нет прав администратора'; cls = 'open'; }
     const btn = action === 'end'
       ? '<button class="btn text interactive" data-act="end_access">Закрыть доступ</button>'
-      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="Аварийный доступ" title="Аварийный доступ">${icon('warning')}<span class="lbl">Аварийно</span></button>` : '';
+      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="Аварийный доступ" title="Аварийный доступ">${icon('warning')}<span class="lbl">Аварийно</span></button>`
+      : action === 'raise' ? `<button class="btn text sm interactive" data-act="raise">${v.day_kind === 'off' ? 'Сделать учебным' : 'Сделать полным'}</button>` : '';
     const el = $('lockline');
     el.className = `lockline ${cls}`;
     const html = `${icon(ic)}<span class="grow">${esc(text)} <span class="when tnum">${esc(when)}</span></span>${btn}`;
@@ -284,8 +286,10 @@ export function mountToday(root, ctx) {
         big = v.planned_ms ? dur(v.planned_ms) : '—';
         small = true;
         state = v.mode === 'single' ? '' : 'в плане';
-        title = v.started ? p.title : (v.study_day ? 'Готов начать?' : 'Выходной');
-        sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} · ${v.blocks.map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
+        title = v.started ? p.title : (v.day_kind === 'off' ? 'Сегодня выходной' : 'Готов начать?');
+        sub = v.started ? '' : v.day_kind === 'off' ? 'Отдыхай — учёба подождёт до завтра'
+          : (v.blocks.length ? `${v.day_kind === 'light' ? 'Лёгкий день · ' : ''}${dur(v.planned_ms)} · ${v.blocks.map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
+        if (v.day_kind === 'off' && !v.started) { big = '—'; state = ''; }
         if (!v.started && v.mode !== 'single') art = 'idle';
     }
     setArt(art);
@@ -319,6 +323,11 @@ export function mountToday(root, ctx) {
       case 'goplan': ctx.navigate('plan'); break;
       case 'lunch': await lunchDialog(last.meta.lunch_min); break;
       case 'single': await singleDialog(); break;
+      case 'raise': {
+        const k = await raiseDialog(v);
+        if (k) snack(k === 'full' ? 'Сегодня полный день' : 'Сегодня лёгкий день');
+        break;
+      }
       case 'emergency': {
         const cfg = await call('get_config');
         const ok = await emergencyDialog(cfg, v.emergency_count);

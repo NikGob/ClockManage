@@ -20,7 +20,8 @@ export function mountPlan(root, ctx) {
       <div class="plan-editor" id="rows"></div>
       <button class="btn outlined interactive" id="add" style="margin-top:12px">${icon('add')}Добавить блок</button>
       <div class="plan-footer">
-        <label><input type="checkbox" class="check" id="tpl"> Сделать шаблоном для следующих дней</label>
+        <label><input type="checkbox" class="check" id="tpl"> Сделать шаблоном</label>
+        <div class="field"><select id="tplkind" aria-label="Шаблон какого дня"><option value="full">полного дня</option><option value="light">лёгкого дня</option></select></div>
         <span class="grow"></span>
         <button class="btn text interactive" id="reset">Сбросить</button>
         <button class="btn filled interactive" id="save" disabled>${icon('check')}Сохранить план</button>
@@ -80,6 +81,7 @@ export function mountPlan(root, ctx) {
       progress: { work_ms: b.work_ms, started: b.started, done: b.done },
     }));
     $('tpl').checked = false;
+    $('tplkind').value = s.view.day_kind === 'light' ? 'light' : 'full';
     render();
   }
 
@@ -117,9 +119,10 @@ export function mountPlan(root, ctx) {
   $('reset').addEventListener('click', () => load(true));
   $('save').addEventListener('click', async (e) => {
     const blocks = rows.map((r) => ({ name: r.name.trim(), minutes: r.minutes }));
-    const ok = await run(() => call('set_plan', { blocks, saveTemplate: $('tpl').checked }).then(() => true), e.currentTarget);
+    const template = $('tpl').checked ? $('tplkind').value : null;
+    const ok = await run(() => call('set_plan', { blocks, template }).then(() => true), e.currentTarget);
     if (ok) {
-      snack($('tpl').checked ? 'План сохранён и стал шаблоном' : 'План на сегодня сохранён');
+      snack(template ? `План сохранён и стал шаблоном ${template === 'light' ? 'лёгкого' : 'полного'} дня` : 'План на сегодня сохранён');
       dirty = false;
       await load(true);
     }

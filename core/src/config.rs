@@ -89,6 +89,43 @@ impl Default for Appearance {
     }
 }
 
+/// What kind of day a weekday is. Ordered by strictness: `Off < Light < Full`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DayKind {
+    /// Day off: the study day cannot be started.
+    Off,
+    /// Light day: its own plan and an earlier end of the day.
+    Light,
+    #[default]
+    Full,
+}
+
+impl DayKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            DayKind::Off => "выходной",
+            DayKind::Light => "лёгкий день",
+            DayKind::Full => "полный день",
+        }
+    }
+}
+
+/// Settings of the light day.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LightDay {
+    pub plan: Vec<PlanBlock>,
+    /// Blocking ends here on light days; never later than the full day's end.
+    pub day_end_min: u32,
+}
+
+impl Default for LightDay {
+    fn default() -> Self {
+        Self { plan: vec![PlanBlock::new("Математика", 60), PlanBlock::new("Словацкий", 60)], day_end_min: 18 * 60 }
+    }
+}
+
 pub const DEFAULT_PHRASE: &str =
     "Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе";
 
@@ -96,9 +133,13 @@ pub const DEFAULT_PHRASE: &str =
 #[serde(default)]
 pub struct Config {
     /// Monday..Sunday.
-    pub study_days: [bool; 7],
-    /// Minutes after local midnight when blocking ends (22:00 = 1320).
+    pub week: [DayKind; 7],
+    /// Pre-0.1.6 schedule (study day yes/no). Read once to fill `week`, never written back.
+    #[serde(rename = "study_days", skip_serializing)]
+    pub legacy_study_days: Option<[bool; 7]>,
+    /// Minutes after local midnight when blocking ends on a full day (22:00 = 1320).
     pub day_end_min: u32,
+    pub light: LightDay,
     /// Offset of the "study clock" from UTC. Moscow = +180, no DST.
     pub tz_offset_min: i32,
     pub timing: Timing,
@@ -124,8 +165,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            study_days: [true, true, true, true, true, false, false],
+            week: [DayKind::Full, DayKind::Full, DayKind::Light, DayKind::Full, DayKind::Full, DayKind::Off, DayKind::Off],
+            legacy_study_days: None,
             day_end_min: 22 * 60,
+            light: LightDay::default(),
             tz_offset_min: 180,
             timing: Timing::default(),
             plan_template: vec![
@@ -159,7 +202,38 @@ pub struct EditContext {
 }
 
 impl Config {
+    /// Kind of the day `now` falls on, by the weekly schedule.
+    pub fn kind_on(&self, now: crate::clock::Ts) -> DayKind {
+        self.week[crate::clock::weekday_index(now, self.tz_offset_min)]
+    }
+
+    /// Plan template for a kind of day (a started day off uses the full plan).
+    pub fn plan_for(&self, kind: DayKind) -> &Vec<PlanBlock> {
+        match kind {
+            DayKind::Light => &self.light.plan,
+            DayKind::Full | DayKind::Off => &self.plan_template,
+        }
+    }
+
+    pub fn plan_for_mut(&mut self, kind: DayKind) -> &mut Vec<PlanBlock> {
+        match kind {
+            DayKind::Light => &mut self.light.plan,
+            DayKind::Full | DayKind::Off => &mut self.plan_template,
+        }
+    }
+
+    /// End of the study day (minutes after midnight) for a kind of day.
+    pub fn day_end_for(&self, kind: DayKind) -> u32 {
+        match kind {
+            DayKind::Light => self.light.day_end_min,
+            DayKind::Full | DayKind::Off => self.day_end_min,
+        }
+    }
+
     pub fn normalize(&mut self) {
+        if let Some(old) = self.legacy_study_days.take() {
+            self.week = old.map(|study| if study { DayKind::Full } else { DayKind::Off });
+        }
         self.timing.work_segment_min = self.timing.work_segment_min.clamp(5, 240);
         self.timing.short_break_min = self.timing.short_break_min.clamp(1, 120);
         self.timing.between_blocks_min = self.timing.between_blocks_min.clamp(1, 180);
@@ -168,6 +242,8 @@ impl Config {
         self.emergency_min = self.emergency_min.clamp(1, 60);
         self.reminder_sec = self.reminder_sec.clamp(15, 600);
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
+        // A light day is never stricter than a full one: raising light -> full only moves the end later.
+        self.light.day_end_min = self.light.day_end_min.min(self.day_end_min);
         self.blocklist.sites = normalize_list(&self.blocklist.sites, normalize_site);
         self.blocklist.apps = normalize_list(&self.blocklist.apps, |s| {
             // Only a bare file name: "C:\x\Steam.exe" -> "Steam.exe".
@@ -181,10 +257,12 @@ impl Config {
             };
             (!is_protected_app(&exe)).then_some(exe)
         });
-        for b in &mut self.plan_template {
-            b.normalize();
+        for plan in [&mut self.plan_template, &mut self.light.plan] {
+            for b in plan.iter_mut() {
+                b.normalize();
+            }
+            plan.retain(|b| b.minutes > 0);
         }
-        self.plan_template.retain(|b| b.minutes > 0);
         if self.emergency_phrase.trim().chars().count() < 30 {
             self.emergency_phrase = DEFAULT_PHRASE.into();
         }
@@ -210,8 +288,9 @@ impl Config {
         if lower(&self.blocklist.apps).iter().any(|s| !new_apps.contains(s)) {
             return Err("Во время блокировки приложения можно только добавлять.".into());
         }
-        if new.study_days != self.study_days
+        if new.week != self.week
             || new.day_end_min != self.day_end_min
+            || new.light.day_end_min != self.light.day_end_min
             || new.tz_offset_min != self.tz_offset_min
         {
             return Err("Расписание учебных дней меняется только вне блокировки.".into());

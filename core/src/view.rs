@@ -47,6 +47,8 @@ pub struct PauseView {
 #[derive(Debug, Clone, Serialize)]
 pub struct Can {
     pub start_day: bool,
+    /// Kinds today can be raised to (stricter than now).
+    pub raise: Vec<crate::config::DayKind>,
     pub pause: bool,
     pub resume: bool,
     pub start_next: bool,
@@ -65,6 +67,10 @@ pub struct View {
     pub date: String,
     pub weekday: usize,
     pub study_day: bool,
+    /// full | light | off
+    pub day_kind: crate::config::DayKind,
+    /// Kind by the schedule, when today was raised by hand.
+    pub raised_from: Option<crate::config::DayKind>,
     pub started: bool,
     pub completed: bool,
     pub after_day_end: bool,
@@ -217,7 +223,15 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
     let access_open = matches!(lock.reason.as_str(), "emergency" | "pause_access");
     let after_day_end = d.after_day_end(now, cfg);
     let can = Can {
-        start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.plan.iter().any(|b| b.minutes > 0),
+        start_day: d.mode == Mode::Plan
+            && d.started_at.is_none()
+            && d.kind() != crate::config::DayKind::Off
+            && d.plan.iter().any(|b| b.minutes > 0),
+        raise: if d.started_at.is_some() && d.after_day_end(now, cfg) {
+            vec![]
+        } else {
+            [crate::config::DayKind::Light, crate::config::DayKind::Full].into_iter().filter(|k| *k > d.kind()).collect()
+        },
         pause: running && !lunch_break,
         resume: paused,
         start_next: matches!(d.phase, Phase::Await { .. } | Phase::Break { .. } | Phase::Lunch { .. }),
@@ -235,10 +249,12 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         date: d.date.format("%Y-%m-%d").to_string(),
         weekday: clock::weekday_index(now, cfg.tz_offset_min),
         study_day: d.study_day,
+        day_kind: d.kind(),
+        raised_from: d.raised_from,
         started: d.started_at.is_some(),
         completed: d.completed_at.is_some(),
         after_day_end,
-        day_end: fmt_hm(cfg.day_end_min),
+        day_end: fmt_hm(d.day_end_min(cfg)),
         mode: d.mode,
         planned_ms: d.plan.iter().map(|b| b.total_ms()).sum(),
         work_ms: blocks.iter().map(|b| b.work_ms).sum(),

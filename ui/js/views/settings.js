@@ -3,6 +3,10 @@ import { icon } from '../icons.js';
 import { applyTheme } from '../theme.js';
 import { run, snack, WEEKDAYS } from '../ui.js';
 
+const KIND_LABEL = { full: 'полный', light: 'лёгкий', off: 'выходной' };
+const NEXT_KIND = { full: 'light', light: 'off', off: 'full' };
+const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
 const SWATCHES = [
   ['#2E7D32', 'Зелёный'], ['#00796B', 'Бирюзовый'], ['#1565C0', 'Синий'], ['#5E35B1', 'Фиолетовый'],
   ['#C2185B', 'Малиновый'], ['#E65100', 'Оранжевый'], ['#6D4C41', 'Коричневый'],
@@ -27,7 +31,6 @@ export function mountSettings(root, ctx) {
     const m = last.meta;
     const mcpUrl = m.mcp.url || `http://127.0.0.1:${cfg.mcp_port}/mcp`;
     const cmd = `claude mcp add --transport http clockmanage ${mcpUrl}`;
-    const dayEnd = `${String(Math.floor(cfg.day_end_min / 60)).padStart(2, '0')}:${String(cfg.day_end_min % 60).padStart(2, '0')}`;
     const custom = !SWATCHES.some(([c]) => c.toLowerCase() === cfg.appearance.seed.toLowerCase());
     const focused = document.activeElement?.dataset?.num;
     box.innerHTML = `
@@ -36,13 +39,19 @@ export function mountSettings(root, ctx) {
         <h2>Учебные дни</h2>
         <div class="surface">
           <div class="setting col">
-            <div><div class="t">Дни, когда действует учебный режим</div><div class="d">В эти дни «Начать день» включает блокировку.</div></div>
-            <div class="chips weekdays" role="group" aria-label="Дни недели">${WEEKDAYS.map((d, i) =>
-              `<button class="chip interactive" data-day="${i}" aria-pressed="${cfg.study_days[i]}" ${locked ? 'disabled' : ''}>${cfg.study_days[i] ? icon('check') : ''}${d}</button>`).join('')}</div>
+            <div><div class="t">Какой день по расписанию</div><div class="d">Нажми на день, чтобы переключить: полный → лёгкий → выходной. Выходной можно сделать учебным прямо на экране «Сегодня».</div></div>
+            <div class="chips weekdays" role="group" aria-label="Дни недели">${WEEKDAYS.map((d, i) => {
+              const k = cfg.week[i];
+              return `<button class="chip kind interactive" data-day="${i}" data-kind="${k}" aria-pressed="${k === 'full'}" aria-label="${d}: ${KIND_LABEL[k]}" ${locked ? 'disabled' : ''}>${d}<small>${KIND_LABEL[k]}</small></button>`;
+            }).join('')}</div>
           </div>
           <div class="setting">
-            <div class="grow"><div class="t">Конец учебного дня (МСК)</div><div class="d">В это время блокировка снимается, даже если блоки не закрыты.</div></div>
-            <div class="field"><input type="time" id="dayend" value="${dayEnd}" ${locked ? 'disabled' : ''} aria-label="Конец дня"></div>
+            <div class="grow"><div class="t">Конец полного дня (МСК)</div><div class="d">В это время блокировка снимается, даже если блоки не закрыты.</div></div>
+            <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" ${locked ? 'disabled' : ''} aria-label="Конец полного дня"></div>
+          </div>
+          <div class="setting">
+            <div class="grow"><div class="t">Конец лёгкого дня</div><div class="d">Не позже конца полного. Его план — на вкладке «План»: «Сделать шаблоном» → лёгкого дня.</div></div>
+            <div class="field"><input type="time" id="lightend" value="${hm(cfg.light.day_end_min)}" ${locked ? 'disabled' : ''} aria-label="Конец лёгкого дня"></div>
           </div>
         </div>
       </section>
@@ -160,9 +169,12 @@ export function mountSettings(root, ctx) {
     const t = e.target;
     if (t.dataset.sw) save((c) => setPath(c, t.dataset.sw, t.checked));
     else if (t.dataset.num) save((c) => setPath(c, t.dataset.num, Math.round(Number(t.value))));
-    else if (t.id === 'dayend') {
+    else if (t.id === 'dayend' || t.id === 'lightend') {
       const [h, mm] = t.value.split(':').map(Number);
-      if (Number.isFinite(h)) save((c) => { c.day_end_min = h * 60 + (mm || 0); });
+      if (!Number.isFinite(h)) return;
+      const min = h * 60 + (mm || 0);
+      if (t.id === 'dayend') save((c) => { c.day_end_min = min; });
+      else save((c) => { c.light.day_end_min = min; }, min > cfg.day_end_min ? `Лёгкий день не может кончаться позже полного — ${hm(cfg.day_end_min)}` : '');
     } else if (t.id === 'seed-in') {
       save((c) => { c.appearance.seed = t.value; });
     }
@@ -173,7 +185,7 @@ export function mountSettings(root, ctx) {
   box.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
-    if (t.dataset.day !== undefined) save((c) => { c.study_days[Number(t.dataset.day)] = !c.study_days[Number(t.dataset.day)]; });
+    if (t.dataset.day !== undefined) save((c) => { const i = Number(t.dataset.day); c.week[i] = NEXT_KIND[c.week[i]]; });
     else if (t.dataset.seed) reveal(t, { ...cfg.appearance, seed: t.dataset.seed });
     else if (t.closest('[data-seg]')) {
       const name = t.closest('[data-seg]').dataset.seg;

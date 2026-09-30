@@ -2,11 +2,12 @@
 // Never loaded inside the Tauri app.
 const q = new URLSearchParams(location.search);
 const STATE = q.get('state') || 'work';
+let KIND = q.get('kind') || 'full';
 const t0 = Date.now();
 const MIN = 60000;
 
 const cfg = {
-  study_days: [true, true, true, true, true, false, false], day_end_min: 1320, tz_offset_min: 180,
+  week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, light: { plan: [{ name: 'Математика', minutes: 60 }], day_end_min: 1080 }, tz_offset_min: 180,
   timing: { work_segment_min: 45, short_break_min: 10, between_blocks_min: 20, lunch_min: 45 },
   plan_template: [{ name: 'Математика', minutes: 90 }, { name: 'Словацкий', minutes: 90 }, { name: 'Экстернат', minutes: 150 }],
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
@@ -48,18 +49,18 @@ function snapshot() {
   const started = STATE !== 'idle';
   const paused = STATE === 'paused';
   const access = paused && cfg.pause_access;
-  const lock = STATE === 'idle' ? { blocked: false, base: false, reason: 'not_started', until: null }
+  const lock = STATE === 'idle' ? { blocked: false, base: false, reason: KIND === 'off' ? 'not_study_day' : 'not_started', until: null }
     : STATE === 'done' ? { blocked: false, base: false, reason: 'completed', until: null }
       : access ? { blocked: false, base: true, reason: 'pause_access', until: t0 + 7 * MIN }
         : { blocked: true, base: true, reason: 'study', until: null };
   return {
     view: {
-      now, date: '2026-09-28', weekday: 0, study_day: true, started, completed: STATE === 'done', after_day_end: false, day_end: '22:00', mode: 'plan',
+      now, date: '2026-09-28', weekday: 0, study_day: KIND !== 'off', day_kind: KIND, raised_from: null, started, completed: STATE === 'done', after_day_end: false, day_end: '22:00', mode: 'plan',
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
       pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN, access_enabled: cfg.pause_access, access_until: access ? t0 + 7 * MIN : null, access_left_ms: access ? t0 + 7 * MIN - now : 0, extensions: 0 } : null,
       emergency_count: 0, lunch_used: false, single: null,
       can: {
-        start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break'].includes(STATE),
+        start_day: STATE === 'idle' && KIND !== 'off', raise: ['light', 'full'].filter((k) => ({ off: 0, light: 1, full: 2 })[k] > ({ off: 0, light: 1, full: 2 })[KIND]), pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: false,
       },
@@ -90,6 +91,7 @@ export async function invoke(cmd, args) {
   switch (cmd) {
     case 'get_state': return snapshot();
     case 'get_config': return structuredClone(cfg);
+    case 'raise_day': KIND = args.kind; return null;
     case 'save_config': Object.assign(cfg, args.cfg); return structuredClone(cfg);
     case 'get_overlay': return null;
     case 'list_days': return q.get('empty') ? [] : days;

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
-use clockmanage_core::config::{EditContext, SchemeVariant, ThemeMode};
+use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
 use clockmanage_core::day::{Event, PlanBlock, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
@@ -641,16 +641,33 @@ impl McpHost for McpBridge {
 
     fn get_plan(&self) -> Value {
         let g = self.0.lock();
-        json!({ "today": g.day.plan, "template": g.cfg.plan_template, "started": g.day.started_at.is_some() })
+        json!({
+            "today": g.day.plan,
+            "day_kind": g.day.kind(),
+            "template": g.cfg.plan_for(g.day.kind()),
+            "full_template": g.cfg.plan_template,
+            "light_template": g.cfg.light.plan,
+            "started": g.day.started_at.is_some(),
+        })
     }
 
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String> {
+        // MCP: the template of today's kind of day.
+        let kind = save_as_template.then(|| self.0.lock().day.kind());
+        self.set_plan_as(plan, kind)
+    }
+}
+
+impl McpBridge {
+    /// Replace today's plan; `template` = also save it as the template of that kind of day.
+    fn set_plan_as(&self, plan: Vec<PlanBlock>, template: Option<DayKind>) -> Result<Value, String> {
         let shared = &self.0;
         let res = shared.mutate(|g, now| {
             let locked = g.day.plan_lock(now, &g.cfg);
             g.day.set_plan(now, plan.clone(), locked)?;
-            if save_as_template {
-                g.cfg.plan_template = g.day.plan.clone();
+            if let Some(kind) = template {
+                *g.cfg.plan_for_mut(kind) = g.day.plan.clone();
+                g.cfg.normalize();
                 shared.store.save_config(&g.cfg);
             }
             Ok(json!({ "ok": true, "plan": g.day.plan, "locked": locked }))
@@ -685,7 +702,7 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
         g.cfg = cfg.clone();
         if g.day.started_at.is_none() {
-            g.day.study_day = g.cfg.study_days[clock::weekday_index(now, g.cfg.tz_offset_min)];
+            g.day.reschedule(&g.cfg);
             g.day.timing = g.cfg.timing.clone();
         }
         shared.store.save_config(&g.cfg);
@@ -785,8 +802,14 @@ pub fn stop_single(s: S) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(), String> {
-    McpBridge(s.inner().clone()).set_plan(blocks, save_template).map(|_| ())
+pub fn set_plan(s: S, blocks: Vec<PlanBlock>, template: Option<DayKind>) -> Result<(), String> {
+    McpBridge(s.inner().clone()).set_plan_as(blocks, template).map(|_| ())
+}
+
+/// "Today is a light/full day" — only stricter than now.
+#[tauri::command]
+pub fn raise_day(s: S, kind: DayKind) -> Result<(), String> {
+    s.mutate(|g, now| g.day.raise_kind(now, &g.cfg, kind))
 }
 
 #[tauri::command]

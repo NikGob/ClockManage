@@ -3,11 +3,11 @@
 //! Everything is driven by explicit timestamps so the engine is deterministic and testable.
 //! The app calls [`DayState::tick`] a few times per second and reacts to returned [`Event`]s.
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::clock::{self, Ts, MIN};
-use crate::config::{Config, Timing};
+use crate::config::{Config, DayKind, Timing};
 
 /// A remainder shorter than this is merged into the previous work segment (50 min -> one part).
 const MERGE_TAIL_MS: i64 = 15 * MIN;
@@ -187,7 +187,14 @@ pub enum Event {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DayState {
     pub date: NaiveDate,
+    /// `kind() != Off`; kept for the log/stats of older days.
     pub study_day: bool,
+    /// Kind of this day. `None` in day files written before 0.1.6 (derived from `study_day`).
+    #[serde(default)]
+    pub kind: Option<DayKind>,
+    /// Kind by the schedule when the day was raised by hand ("today is a full day").
+    #[serde(default)]
+    pub raised_from: Option<DayKind>,
     pub plan: Vec<PlanBlock>,
     pub progress: Vec<BlockProgress>,
     pub timing: Timing,
@@ -244,10 +251,13 @@ fn norm_phrase(s: &str) -> String {
 
 impl DayState {
     pub fn new(now: Ts, cfg: &Config) -> Self {
-        let plan = cfg.plan_template.clone();
+        let kind = cfg.kind_on(now);
+        let plan = cfg.plan_for(kind).clone();
         Self {
             date: clock::local_date(now, cfg.tz_offset_min),
-            study_day: cfg.study_days[clock::weekday_index(now, cfg.tz_offset_min)],
+            study_day: kind != DayKind::Off,
+            kind: Some(kind),
+            raised_from: None,
             progress: vec![BlockProgress::default(); plan.len()],
             plan,
             timing: cfg.timing.clone(),
@@ -302,9 +312,62 @@ impl DayState {
                 w.until = w.until.min(now);
             }
         }
-        if self.started_at.is_none() {
-            self.study_day = cfg.study_days[clock::weekday_index(now, cfg.tz_offset_min)];
+        if self.kind.is_none() {
+            self.kind = Some(if self.study_day { DayKind::Full } else { DayKind::Off });
         }
+        self.reschedule(cfg);
+    }
+
+    pub fn kind(&self) -> DayKind {
+        self.kind.unwrap_or(if self.study_day { DayKind::Full } else { DayKind::Off })
+    }
+
+    /// Follow a schedule change for a day that has not started and was not raised by hand.
+    /// Today's plan follows too, unless it was edited (differs from the old kind's template).
+    pub fn reschedule(&mut self, cfg: &Config) {
+        if self.started_at.is_some() || self.raised_from.is_some() {
+            return;
+        }
+        let old = self.kind();
+        let new = cfg.week[self.date.weekday().num_days_from_monday() as usize];
+        if new == old {
+            return;
+        }
+        if self.plan == *cfg.plan_for(old) || self.plan.is_empty() {
+            self.plan = cfg.plan_for(new).clone();
+            self.progress = vec![BlockProgress::default(); self.plan.len()];
+        }
+        self.kind = Some(new);
+        self.study_day = new != DayKind::Off;
+    }
+
+    /// "Today is a lighter/fuller day than the schedule says" — only ever stricter:
+    /// day off -> light -> full. Today's plan gains the blocks (and minutes) of the new kind's
+    /// template; nothing is removed, so it works during the lock as well.
+    pub fn raise_kind(&mut self, now: Ts, cfg: &Config, to: DayKind) -> Result<(), String> {
+        let from = self.kind();
+        if to <= from {
+            return Err("День можно сделать только строже: выходной → лёгкий → полный.".into());
+        }
+        if self.started_at.is_some() && self.after_day_end(now, cfg) {
+            return Err("Учебный день уже закончился по времени.".into());
+        }
+        let mut plan = self.plan.clone();
+        for t in cfg.plan_for(to) {
+            match plan.iter_mut().find(|b| b.name.eq_ignore_ascii_case(&t.name)) {
+                Some(b) => b.minutes = b.minutes.max(t.minutes),
+                None => plan.push(t.clone()),
+            }
+        }
+        plan.truncate(MAX_PLAN_BLOCKS.max(self.plan.len()));
+        if plan != self.plan {
+            self.set_plan(now, plan, false)?;
+        }
+        self.raised_from.get_or_insert(from);
+        self.kind = Some(to);
+        self.study_day = true;
+        self.log(now, "day_kind", format!("Сегодня {} вместо «{}»", to.label(), from.label()));
+        Ok(())
     }
 
     /// Close the day for good (date rollover): partial work is credited, open pause is closed.
@@ -393,12 +456,17 @@ impl DayState {
 
     pub fn after_day_end(&self, now: Ts, cfg: &Config) -> bool {
         clock::local_date(now, cfg.tz_offset_min) != self.date
-            || clock::minute_of_day(now, cfg.tz_offset_min) >= cfg.day_end_min
+            || clock::minute_of_day(now, cfg.tz_offset_min) >= self.day_end_min(cfg)
+    }
+
+    pub fn day_end_min(&self, cfg: &Config) -> u32 {
+        cfg.day_end_for(self.kind())
     }
 
     /// The study-day lock (before exemptions like pause access or emergency).
     pub fn plan_lock(&self, now: Ts, cfg: &Config) -> bool {
-        self.study_day && self.started_at.is_some() && self.completed_at.is_none() && !self.after_day_end(now, cfg)
+        // A started day always blocks: pressing "start the day" means studying (days off can't start).
+        self.started_at.is_some() && self.completed_at.is_none() && !self.after_day_end(now, cfg)
     }
 
     fn single_lock(&self) -> bool {
@@ -416,7 +484,7 @@ impl DayState {
         if !self.base_lock(now, cfg) {
             let reason = if self.single_lock() {
                 "single"
-            } else if !self.study_day {
+            } else if self.started_at.is_none() && self.kind() == DayKind::Off {
                 "not_study_day"
             } else if self.started_at.is_none() {
                 "not_started"
@@ -466,12 +534,18 @@ impl DayState {
         if self.mode != Mode::Plan || self.started_at.is_some() {
             return Err("День уже начат.".into());
         }
+        if self.kind() == DayKind::Off {
+            return Err("Сегодня выходной. Если хочешь позаниматься — сделай день учебным.".into());
+        }
         let first = self.first_open_block().ok_or("План на сегодня пустой — добавь хотя бы один блок.")?;
         self.timing = cfg.timing.clone();
-        self.study_day = cfg.study_days[clock::weekday_index(now, cfg.tz_offset_min)];
         self.started_at = Some(now);
         self.start_work(now, first);
-        let msg = if self.plan_lock(now, cfg) { "День начат, блокировка включена" } else { "День начат (без блокировки)" };
+        let msg = if self.plan_lock(now, cfg) {
+            format!("День начат ({}), блокировка включена", self.kind().label())
+        } else {
+            format!("День начат ({}) после конца учебного дня — без блокировки", self.kind().label())
+        };
         self.log(now, "day_start", msg);
         Ok(())
     }
@@ -839,9 +913,9 @@ impl DayState {
                 ev.push(Event::EmergencyEnded);
             }
         }
-        if !self.day_end_notified && self.started_at.is_some() && self.completed_at.is_none() && self.study_day && self.after_day_end(now, cfg) {
+        if !self.day_end_notified && self.started_at.is_some() && self.completed_at.is_none() && self.after_day_end(now, cfg) {
             self.day_end_notified = true;
-            self.log(now, "day_end", format!("{} — блокировка снята по времени", crate::config::fmt_hm(cfg.day_end_min)));
+            self.log(now, "day_end", format!("{} — блокировка снята по времени", crate::config::fmt_hm(self.day_end_min(cfg))));
             ev.push(Event::DayEndReached);
         }
         ev
@@ -984,6 +1058,72 @@ mod tests {
             plan_template: vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 150)],
             ..Config::default()
         }
+    }
+
+    // Wednesday 2026-09-30 (light by default) and Saturday 2026-10-03 (off), 13:00 MSK.
+    fn wed() -> Ts {
+        t("2026-09-30T10:00:00Z")
+    }
+    fn sat() -> Ts {
+        t("2026-10-03T10:00:00Z")
+    }
+
+    #[test]
+    fn day_off_cannot_start_but_can_be_raised() {
+        let c = cfg();
+        let mut d = DayState::new(sat(), &c);
+        assert_eq!(d.kind(), DayKind::Off);
+        assert!(d.start_day(sat(), &c).is_err());
+        assert_eq!(d.lock_state(sat(), &c).reason, "not_study_day");
+        d.raise_kind(sat(), &c, DayKind::Full).unwrap();
+        assert!(d.raise_kind(sat(), &c, DayKind::Light).is_err(), "never lower");
+        d.start_day(sat(), &c).unwrap();
+        assert!(d.lock_state(sat() + MIN, &c).blocked);
+        // Restart keeps the raised kind.
+        let mut r: DayState = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        r.restore(sat() + 2 * MIN, &c);
+        assert_eq!(r.kind(), DayKind::Full);
+    }
+
+    #[test]
+    fn light_day_plan_end_and_raise_to_full() {
+        let c = cfg();
+        let mut d = DayState::new(wed(), &c);
+        assert_eq!(d.kind(), DayKind::Light);
+        assert_eq!(d.plan, c.light.plan);
+        d.start_day(wed(), &c).unwrap();
+        let six_pm = t("2026-09-30T15:00:00Z");
+        assert!(d.lock_state(six_pm - 1, &c).blocked);
+        assert!(!d.lock_state(six_pm, &c).blocked, "light day ends at 18:00");
+        // Raised during the day: the full plan's blocks are added, the end moves to 22:00.
+        d.raise_kind(wed() + MIN, &c, DayKind::Full).unwrap();
+        assert!(d.lock_state(six_pm, &c).blocked);
+        let names: Vec<_> = d.plan.iter().map(|b| (b.name.as_str(), b.minutes)).collect();
+        assert_eq!(names, vec![("Математика", 90), ("Словацкий", 60), ("Экстернат", 150)]);
+    }
+
+    #[test]
+    fn schedule_change_moves_unstarted_day() {
+        let mut c = cfg();
+        let mut d = DayState::new(wed(), &c);
+        c.week[2] = DayKind::Full;
+        d.reschedule(&c);
+        assert_eq!(d.kind(), DayKind::Full);
+        assert_eq!(d.plan, c.plan_template);
+    }
+
+    #[test]
+    fn old_day_files_and_config_migrate() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.kind = None;
+        d.study_day = false;
+        d.start_day(start(), &c).unwrap_err();
+        let mut cfg: Config = serde_json::from_str(r#"{"study_days":[true,true,false,true,true,false,false]}"#).unwrap();
+        cfg.normalize();
+        assert_eq!(cfg.week[2], DayKind::Off);
+        assert_eq!(cfg.week[0], DayKind::Full);
+        assert!(!serde_json::to_string(&cfg).unwrap().contains("study_days"));
     }
 
     #[test]

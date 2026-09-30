@@ -179,3 +179,27 @@ export function captchaDialog(minutes) {
     refresh();
   });
 }
+
+/// "Today is a light / full day" — only stricter than the schedule. Resolves to the new kind.
+export function raiseDialog(v) {
+  const opts = [
+    ['light', 'Лёгкий день', 'План и конец дня как у лёгкого дня.'],
+    ['full', 'Полный день', 'Полный план, блокировка до конца полного дня.'],
+  ].filter(([k]) => v.can.raise.includes(k));
+  return dialog(`
+    <h2>${v.day_kind === 'off' ? 'Сделать день учебным' : 'Сделать день полным'}</h2>
+    <p class="body-m muted">Только на сегодня. Вернуть обратно не получится — день можно сделать только строже.${v.started ? ' Недостающие блоки добавятся в план.' : ''}</p>
+    <div class="options" role="radiogroup" aria-label="Какой день">
+      ${opts.map(([k, t, d], i) => `<label class="option"><input type="radio" name="kind" value="${k}" ${i === opts.length - 1 ? 'checked' : ''}><span class="t">${t}</span><span class="d">${d}</span></label>`).join('')}
+    </div>
+    <div class="actions">
+      <button class="btn text interactive" data-close>Отмена</button>
+      <button class="btn filled interactive" data-ok>${icon('check')}Сделать</button>
+    </div>`, (d, close) => {
+    d.querySelector('[data-ok]').addEventListener('click', async (e) => {
+      const kind = d.querySelector('[name=kind]:checked').value;
+      const r = await run(() => call('raise_day', { kind }).then(() => true), e.currentTarget);
+      if (r) close(kind);
+    });
+  });
+}

@@ -115,7 +115,7 @@ export function mountBlock(root, ctx) {
       p = L.until ? `Блокировка вернётся через ${mmss(L.until - v.now)}` : '';
     } else {
       h = 'Сейчас без блокировки';
-      p = { not_started: v.study_day ? 'Включится по кнопке «Начать день».' : 'Сегодня не учебный день.', completed: 'Все блоки дня отсижены.', day_end: `После ${v.day_end} блокировки нет.`, not_study_day: 'Сегодня не учебный день.' }[L.reason] || '';
+      p = { not_started: 'Включится по кнопке «Начать день».', completed: 'Все блоки дня отсижены.', day_end: `После ${v.day_end} блокировки нет.`, not_study_day: 'Сегодня выходной.' }[L.reason] || '';
     }
     if (!last.meta.admin) p += ' Внимание: программа запущена без прав администратора — сайты не блокируются.';
     if (last.meta.blocker_error) p += ` Ошибка: ${last.meta.blocker_error}`;

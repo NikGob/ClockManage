@@ -243,6 +243,11 @@ table.t tr:last-child td { border-bottom: 0; }
 .color-in { width: 48px; height: 48px; border: 0; padding: 0; background: none; cursor: pointer; }
 .code { font: 400 13px/20px ui-monospace, "Cascadia Code", Consolas, monospace; padding: 10px 12px; border-radius: var(--shape-s); background: var(--md-sys-color-surface-container-highest); user-select: text; overflow-wrap: anywhere; flex: 1; min-width: 0; }
 .weekdays .chip { min-width: 56px; justify-content: center; }
+.weekdays .chip.kind { flex-direction: column; gap: 0; height: auto; min-height: 48px; padding: 6px 12px; line-height: 18px; }
+.weekdays .chip.kind small { font: 400 11px/14px var(--font); opacity: .8; }
+.weekdays .chip.kind[data-kind="light"] { background: color-mix(in srgb, var(--md-sys-color-secondary-container) 55%, transparent); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
+.weekdays .chip.kind[data-kind="off"] { opacity: .7; }
+.lockline .btn.sm { --h: 32px; padding: 0 12px; font-size: 13px; flex: none; }
 
 /* ---- dialogs specific ---- */
 .phrase { padding: 12px 16px; border-radius: var(--shape-m); background: var(--md-sys-color-surface-container-highest); font: 400 16px/24px var(--font); user-select: none; }
