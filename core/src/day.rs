@@ -1278,3 +1278,36 @@ mod tests {
         assert!(!d.lock_state(sunday, &c).blocked);
     }
 }
+
+#[cfg(test)]
+mod lunch_tests {
+    use super::*;
+    use chrono::DateTime;
+
+    fn t(s: &str) -> Ts {
+        DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis()
+    }
+
+    #[test]
+    fn lunch_starts_from_a_paused_break() {
+        let mut c = Config::default();
+        c.profiles.full.plan = vec![PlanBlock::new("Математика", 105)];
+        let s = t("2026-09-30T10:00:00Z");
+        for with_timer in [true, false] {
+            let mut d = DayState::new(s, &c);
+            d.start_day(s, &c).unwrap();
+            d.tick(s + 46 * MIN, &c);
+            d.pause(s + 47 * MIN, &c).unwrap();
+            assert!(crate::view::build(&d, &c, s + 48 * MIN).can.lunch);
+            d.start_lunch(s + 48 * MIN, with_timer, false).unwrap();
+            assert!(d.pause.is_none());
+            let v = crate::view::build(&d, &c, s + 49 * MIN);
+            if with_timer {
+                assert_eq!(v.phase.kind, "lunch_break");
+                assert!(v.phase.running);
+            } else {
+                assert_eq!(v.phase.kind, "lunch");
+            }
+        }
+    }
+}

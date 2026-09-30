@@ -6,6 +6,16 @@ let snackTimer = 0;
 export function snack(text, ms = 3600) {
   const el = document.getElementById('snackbar');
   document.getElementById('snack-text').textContent = text;
+  // A popover lives in the top layer: re-opening it puts it above any modal dialog, so an
+  // error raised from inside a dialog is actually seen (it used to hide under the backdrop).
+  if (el.showPopover) {
+    try {
+      if (el.matches(':popover-open')) el.hidePopover();
+      el.classList.remove('show');
+      el.showPopover();
+      void el.offsetWidth;
+    } catch { /* not supported: plain fixed element */ }
+  }
   el.classList.add('show');
   clearTimeout(snackTimer);
   snackTimer = setTimeout(() => el.classList.remove('show'), ms);

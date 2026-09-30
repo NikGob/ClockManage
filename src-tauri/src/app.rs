@@ -39,6 +39,7 @@ pub struct Inner {
     pub last_kill_note: Ts,
 }
 
+#[derive(Clone)]
 pub struct TrayItems {
     pub action: MenuItem<Wry>,
     pub quit: MenuItem<Wry>,
@@ -180,8 +181,11 @@ impl Shared {
     }
 
     pub fn update_tray(&self, v: &View) {
-        let tray = self.tray.lock().unwrap();
-        let Some(items) = tray.as_ref() else { return };
+        // Menu setters called off the main thread wait for the main thread. Sync commands run
+        // on the main thread and call this too, so no lock may be held across the setters:
+        // the ticker holding `tray` while waiting for the main thread, and a command waiting
+        // for `tray` on the main thread, froze the whole app (a click on "Обед" just hung).
+        let Some(items) = self.tray.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
         let (label, enabled) = if v.can.resume {
             ("Продолжить", true)
         } else if v.can.pause {
@@ -197,7 +201,6 @@ impl Shared {
         let _ = items.action.set_enabled(enabled);
         let _ = items.quit.set_enabled(!v.lock.base);
         let _ = items.quit.set_text(if v.lock.base { "Выход недоступен во время учёбы" } else { "Выход" });
-        drop(tray);
         if let Some(t) = self.app.tray_by_id("main") {
             let _ = t.set_tooltip(Some(tray_tooltip(v)));
         }

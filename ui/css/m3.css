@@ -356,6 +356,8 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
   transition: transform var(--dur-spring) var(--spring), opacity var(--dur-effects) linear;
 }
 .snackbar.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.snackbar[popover] { inset: auto auto 24px 50%; margin: 0; border: 0; overflow: visible; color: var(--md-sys-color-inverse-on-surface); }
+.snackbar[popover]:popover-open { display: flex; }
 .snackbar .btn.text { color: var(--md-sys-color-inverse-primary); margin: -8px -8px -8px auto; }
 
 /* ---- lists ---- */
