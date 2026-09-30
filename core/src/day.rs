@@ -7,7 +7,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use crate::clock::{self, Ts, MIN};
-use crate::config::{Config, Timing};
+use crate::config::{fmt_hm, Config, DayKind, Timing};
 
 /// A remainder shorter than this is merged into the previous work segment (50 min -> one part).
 const MERGE_TAIL_MS: i64 = 15 * MIN;
@@ -15,6 +15,8 @@ const PAUSE_REMINDER_MS: i64 = 5 * MIN;
 const ACCESS_WARNING_MS: i64 = 2 * MIN;
 const MAX_PLAN_BLOCKS: usize = 12;
 const MAX_BLOCK_MIN: u32 = 8 * 60;
+/// 23:59 — a day end can't move past midnight: the day is tied to its date.
+pub const LAST_MINUTE: u32 = 24 * 60 - 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlanBlock {
@@ -187,6 +189,10 @@ pub enum Event {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DayState {
     pub date: NaiveDate,
+    /// Kind of today (from the week schedule, or switched on the Today screen).
+    #[serde(default)]
+    pub kind: DayKind,
+    /// "Начать день" turns on blocking today (the profile's setting, pinned at start).
     pub study_day: bool,
     pub plan: Vec<PlanBlock>,
     pub progress: Vec<BlockProgress>,
@@ -208,6 +214,9 @@ pub struct DayState {
     pub events: Vec<LogEvent>,
     #[serde(default)]
     pub day_end_notified: bool,
+    /// Day end moved later for today only (minutes after local midnight).
+    #[serde(default)]
+    pub day_end_min: Option<u32>,
     #[serde(default)]
     pub saved_at: Ts,
 }
@@ -244,10 +253,12 @@ fn norm_phrase(s: &str) -> String {
 
 impl DayState {
     pub fn new(now: Ts, cfg: &Config) -> Self {
-        let plan = cfg.plan_template.clone();
+        let kind = cfg.week[clock::weekday_index(now, cfg.tz_offset_min)];
+        let plan = cfg.profile(kind).plan.clone();
         Self {
             date: clock::local_date(now, cfg.tz_offset_min),
-            study_day: cfg.study_days[clock::weekday_index(now, cfg.tz_offset_min)],
+            kind,
+            study_day: cfg.profile(kind).block,
             progress: vec![BlockProgress::default(); plan.len()],
             plan,
             timing: cfg.timing.clone(),
@@ -262,6 +273,7 @@ impl DayState {
             singles: vec![],
             events: vec![],
             day_end_notified: false,
+            day_end_min: None,
             saved_at: now,
         }
     }
@@ -303,7 +315,7 @@ impl DayState {
             }
         }
         if self.started_at.is_none() {
-            self.study_day = cfg.study_days[clock::weekday_index(now, cfg.tz_offset_min)];
+            self.study_day = cfg.profile(self.kind).block;
         }
     }
 
@@ -391,9 +403,14 @@ impl DayState {
         (0..self.plan.len()).find(|&i| !self.is_block_done(i) && self.plan[i].minutes > 0)
     }
 
+    /// Today's day end: the configured one, or later if it was extended for today.
+    pub fn day_end(&self, cfg: &Config) -> u32 {
+        self.day_end_min.unwrap_or(0).max(cfg.day_end_min)
+    }
+
     pub fn after_day_end(&self, now: Ts, cfg: &Config) -> bool {
         clock::local_date(now, cfg.tz_offset_min) != self.date
-            || clock::minute_of_day(now, cfg.tz_offset_min) >= cfg.day_end_min
+            || clock::minute_of_day(now, cfg.tz_offset_min) >= self.day_end(cfg)
     }
 
     /// The study-day lock (before exemptions like pause access or emergency).
@@ -468,7 +485,7 @@ impl DayState {
         }
         let first = self.first_open_block().ok_or("План на сегодня пустой — добавь хотя бы один блок.")?;
         self.timing = cfg.timing.clone();
-        self.study_day = cfg.study_days[clock::weekday_index(now, cfg.tz_offset_min)];
+        self.study_day = cfg.profile(self.kind).block;
         self.started_at = Some(now);
         self.start_work(now, first);
         let msg = if self.plan_lock(now, cfg) { "День начат, блокировка включена" } else { "День начат (без блокировки)" };
@@ -715,6 +732,59 @@ impl DayState {
         Ok(())
     }
 
+    /// Move today's day end later (never earlier). After the old end has passed this turns the
+    /// lock back on until the new end.
+    pub fn extend_day_end(&mut self, now: Ts, cfg: &Config, new_end: u32) -> Result<(), String> {
+        if clock::local_date(now, cfg.tz_offset_min) != self.date {
+            return Err("Этот день уже закончился.".into());
+        }
+        let cur = self.day_end(cfg);
+        if new_end <= cur {
+            return Err("Конец дня можно только сдвинуть позже.".into());
+        }
+        if new_end > LAST_MINUTE {
+            return Err(format!("Позже {} продлить нельзя.", fmt_hm(LAST_MINUTE)));
+        }
+        self.day_end_min = Some(new_end);
+        if clock::minute_of_day(now, cfg.tz_offset_min) < new_end {
+            self.day_end_notified = false;
+        }
+        self.log(now, "day_end_moved", format!("Конец дня: {} → {}", fmt_hm(cur), fmt_hm(new_end)));
+        Ok(())
+    }
+
+    /// Switch today's kind. Before the start the plan is replaced by the profile's template;
+    /// after it the template is merged in (blocks only grow). While `locked` only a stricter kind
+    /// is accepted.
+    pub fn set_kind(&mut self, now: Ts, cfg: &Config, kind: DayKind, locked: bool) -> Result<(), String> {
+        if kind == self.kind {
+            return Ok(());
+        }
+        if locked && kind < self.kind {
+            return Err(format!("Во время учёбы день можно сделать только плотнее, не «{}».", kind.label()));
+        }
+        let profile = cfg.profile(kind);
+        let from = self.kind;
+        if self.started_at.is_none() {
+            self.set_plan(now, profile.plan.clone(), false)?;
+        } else {
+            let mut plan = self.plan.clone();
+            for b in &profile.plan {
+                match plan.iter_mut().find(|p| p.name.eq_ignore_ascii_case(&b.name)) {
+                    Some(p) => p.minutes = p.minutes.max(b.minutes),
+                    None => plan.push(b.clone()),
+                }
+            }
+            if plan != self.plan {
+                self.set_plan(now, plan, locked)?;
+            }
+        }
+        self.kind = kind;
+        self.study_day = if locked { self.study_day || profile.block } else { profile.block };
+        self.log(now, "kind", format!("День: {} → {}", from.label(), kind.label()));
+        Ok(())
+    }
+
     /// Replace today's plan. While `locked`, blocks can only be added or extended.
     pub fn set_plan(&mut self, now: Ts, mut plan: Vec<PlanBlock>, locked: bool) -> Result<(), String> {
         for b in &mut plan {
@@ -841,7 +911,7 @@ impl DayState {
         }
         if !self.day_end_notified && self.started_at.is_some() && self.completed_at.is_none() && self.study_day && self.after_day_end(now, cfg) {
             self.day_end_notified = true;
-            self.log(now, "day_end", format!("{} — блокировка снята по времени", crate::config::fmt_hm(cfg.day_end_min)));
+            self.log(now, "day_end", format!("{} — блокировка снята по времени", fmt_hm(self.day_end(cfg))));
             ev.push(Event::DayEndReached);
         }
         ev
@@ -980,10 +1050,9 @@ mod tests {
     }
 
     fn cfg() -> Config {
-        Config {
-            plan_template: vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 150)],
-            ..Config::default()
-        }
+        let mut c = Config::default();
+        c.profiles.full.plan = vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 150)];
+        c
     }
 
     #[test]
@@ -1061,7 +1130,7 @@ mod tests {
     #[test]
     fn day_done_unlocks_and_22_unlocks() {
         let mut c = cfg();
-        c.plan_template = vec![PlanBlock::new("A", 45)];
+        c.profiles.full.plan = vec![PlanBlock::new("A", 45)];
         let mut d = DayState::new(start(), &c);
         d.start_day(start(), &c).unwrap();
         let ev = d.tick(start() + 45 * MIN, &c);
@@ -1156,5 +1225,56 @@ mod tests {
         d.stop_single(start() + 31 * MIN).unwrap();
         assert_eq!(d.singles[0].work_ms, 25 * MIN);
         assert!(!d.lock_state(start() + 31 * MIN, &c).blocked);
+    }
+
+    #[test]
+    fn day_end_moves_only_later_and_relocks() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        let ten_pm = t("2026-09-28T19:00:00Z");
+        assert!(d.tick(ten_pm, &c).contains(&Event::DayEndReached));
+        assert!(!d.lock_state(ten_pm, &c).blocked);
+        assert!(d.extend_day_end(ten_pm, &c, 21 * 60).is_err());
+        assert!(d.extend_day_end(ten_pm, &c, 24 * 60).is_err());
+        d.extend_day_end(ten_pm, &c, 23 * 60).unwrap();
+        assert!(d.lock_state(ten_pm, &c).blocked);
+        let eleven = t("2026-09-28T20:00:00Z");
+        assert!(d.lock_state(eleven - 1, &c).blocked);
+        assert!(d.tick(eleven, &c).contains(&Event::DayEndReached));
+        assert!(!d.lock_state(eleven, &c).blocked);
+    }
+
+    #[test]
+    fn kind_switch_rules() {
+        let mut c = cfg();
+        c.profiles.light.plan = vec![PlanBlock::new("Математика", 45)];
+        c.profiles.off.block = false;
+        // Monday is full by default; before the start anything goes and the plan follows.
+        let mut d = DayState::new(start(), &c);
+        assert_eq!(d.kind, DayKind::Full);
+        d.set_kind(start(), &c, DayKind::Light, false).unwrap();
+        assert_eq!(d.plan, c.profiles.light.plan);
+        d.start_day(start(), &c).unwrap();
+        let locked = d.plan_lock(start(), &c);
+        assert!(locked);
+        // During the lock: not lighter, but heavier merges the template in.
+        assert!(d.set_kind(start(), &c, DayKind::Off, locked).is_err());
+        d.set_kind(start(), &c, DayKind::Full, locked).unwrap();
+        assert_eq!(d.kind, DayKind::Full);
+        assert_eq!(d.plan[0], PlanBlock::new("Математика", 90));
+        assert_eq!(d.plan[1], PlanBlock::new("Экстернат", 150));
+        assert!(d.study_day);
+    }
+
+    #[test]
+    fn off_day_has_no_lock() {
+        let c = cfg();
+        let sunday = t("2026-10-04T10:00:00Z");
+        let mut d = DayState::new(sunday, &c);
+        assert_eq!(d.kind, DayKind::Off);
+        d.set_plan(sunday, vec![PlanBlock::new("Чтение", 30)], false).unwrap();
+        d.start_day(sunday, &c).unwrap();
+        assert!(!d.lock_state(sunday, &c).blocked);
     }
 }

@@ -16,7 +16,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .nav .dest .pill {
   width: 56px; height: 32px; border-radius: var(--shape-full); display: grid; place-items: center;
   position: relative; overflow: hidden; isolation: isolate;
-  transition: width var(--dur-l1) var(--spring), background-color var(--dur-m1) var(--ease);
+  transition: width var(--dur-spring) var(--spring-fast), background-color var(--dur-effects) var(--ease);
 }
 .nav .dest .pill::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: 0; transition: opacity var(--dur-s2) linear; z-index: -1; border-radius: inherit; }
 .nav .dest:hover .pill::before { opacity: .08; }
@@ -26,7 +26,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .nav .dest[aria-current="page"] { color: var(--md-sys-color-on-surface); }
 .nav .dest[aria-current="page"] .pill {
   background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
-  animation: pill-in var(--dur-l1) var(--spring);
+  animation: pill-in var(--dur-spring) var(--spring-fast);
 }
 @keyframes pill-in { from { width: 24px; } }
 .nav .dest .badge {
@@ -48,8 +48,9 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .banner .icon { flex: none; }
 
 .view { flex: 1; min-height: 0; overflow: auto; padding: 0 24px 24px 16px; scrollbar-gutter: stable; }
-.view.enter { animation: fade-through var(--dur-m2) var(--ease-emph-decel); }
-@keyframes fade-through { from { opacity: 0; transform: scale(.98); } }
+/* Screen change: the new screen rises and fades in on the slow spatial spring. */
+.view.enter { animation: fade-through var(--dur-spring-slow) var(--spring), fade-in 360ms var(--ease) both; }
+@keyframes fade-through { from { transform: translateY(14px) scale(.985); } }
 
 @media (max-width: 599px) {
   .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
@@ -81,7 +82,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
   position: relative; border-radius: var(--shape-xl); padding: 20px 24px 28px;
   background: var(--md-sys-color-surface-container);
   display: flex; flex-direction: column; align-items: center; gap: 16px; min-height: 520px;
-  transition: background-color var(--dur-l1) var(--ease), color var(--dur-l1) var(--ease), border-radius var(--dur-l2) var(--spring);
+  transition: background-color 520ms var(--ease), color 520ms var(--ease), border-radius var(--dur-spring-slow) var(--spring);
 }
 .hero[data-kind="await"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border-radius: 48px; }
 .hero[data-kind="break"], .hero[data-kind="lunch_break"] { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
@@ -94,13 +95,42 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .lockline .when { display: block; font-weight: 400; opacity: .8; }
 .lockline .when:empty { display: none; }
 .lockline.open { color: var(--md-sys-color-error); }
+/* The day end inside the lock line: reads as text, is a button (move the end later). */
+.when-btn {
+  display: inline-flex; align-items: center; gap: 0; margin: -2px -4px; padding: 2px 2px 2px 6px;
+  border: 0; border-radius: var(--shape-s); background: transparent; color: inherit; font: inherit;
+  text-decoration: underline dotted color-mix(in srgb, currentColor 55%, transparent); text-underline-offset: 4px;
+  transition: border-radius var(--dur-spring) var(--spring), background-color var(--dur-effects) linear;
+}
+.when-btn .icon { width: 18px !important; height: 18px !important; opacity: .7; transition: transform var(--dur-spring) var(--spring-fast); }
+.when-btn[aria-expanded="true"] { background: color-mix(in srgb, currentColor 10%, transparent); border-radius: var(--shape-m); }
+.when-btn[aria-expanded="true"] .icon { transform: rotate(180deg); }
+
+/* Kind of today, next to the plan title. */
+.kind-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 10px; align-self: center;
+  border: 0; border-radius: var(--shape-s); font: 600 13px/20px var(--font); letter-spacing: .1px;
+  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
+  transition: border-radius var(--dur-spring) var(--spring), background-color var(--dur-effects-slow) var(--ease), transform var(--dur-spring) var(--spring-fast);
+}
+.kind-chip[data-kind="full"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.kind-chip[data-kind="off"] { background: transparent; color: var(--md-sys-color-on-surface-variant); box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant); }
+.kind-chip .icon { width: 18px; height: 18px; }
+.kind-chip .caret { width: 18px; height: 18px; opacity: .75; transition: transform var(--dur-spring) var(--spring-fast); }
+.kind-chip[aria-expanded="true"] { border-radius: var(--shape-l); }
+.kind-chip[aria-expanded="true"] .caret { transform: rotate(180deg); }
+.kind-chip:active { transform: scale(.95); transition-duration: 120ms; }
+.kind-chip.just .icon:first-child { animation: pop-in var(--dur-spring) var(--spring-fast); }
 .hero[data-kind="await"] .lockline.open, .hero[data-kind="break"] .lockline.open { color: inherit; }
 
 .dial { position: relative; width: min(340px, 72vw); aspect-ratio: 1; display: grid; place-items: center; margin-top: 4px; }
 .dial > svg#ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .dial .track { fill: none; stroke: color-mix(in srgb, currentColor 12%, transparent); stroke-width: 7; stroke-linecap: round; }
 .dial .wave { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 7; stroke-linecap: round; transition: stroke var(--dur-m2) linear; }
-.hero[data-kind="break"] .dial .wave, .hero[data-kind="lunch_break"] .dial .wave { stroke: var(--md-sys-color-tertiary); }
+/* On coloured heroes the wave takes the text colour: container + its accent can be nearly
+   the same tone (fidelity schemes), the "on" colour never is. */
+.hero[data-kind="break"] .dial .wave, .hero[data-kind="lunch_break"] .dial .wave { stroke: currentColor; }
+.hero[data-kind="break"] .dial .track, .hero[data-kind="lunch_break"] .dial .track { stroke: color-mix(in srgb, currentColor 16%, transparent); }
 .hero[data-paused="true"] .dial .wave { stroke: var(--md-sys-color-outline); }
 .dial .center { position: relative; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0 24px; }
 .dial .big { font: 300 76px/80px var(--font-display); letter-spacing: -1.5px; }
@@ -114,8 +144,20 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .dial .art svg { width: 240px; height: 240px; display: block; }
 .dial:has(.art:not([hidden])) svg#ring { opacity: 0; }
 .hero { --hero-bg: var(--md-sys-color-surface-container); }
-.hero[data-kind="await"] { --hero-bg: var(--md-sys-color-primary-container); }
-.hero[data-kind="done"] { --hero-bg: var(--md-sys-color-secondary-container); }
+.hero[data-kind="await"] { --hero-bg: var(--md-sys-color-primary-container); --hero-fg: var(--md-sys-color-on-primary-container); }
+.hero[data-kind="break"], .hero[data-kind="lunch_break"] { --hero-bg: var(--md-sys-color-tertiary-container); --hero-fg: var(--md-sys-color-on-tertiary-container); }
+.hero[data-kind="done"] { --hero-bg: var(--md-sys-color-secondary-container); --hero-fg: var(--md-sys-color-on-secondary-container); }
+/* On a coloured hero the buttons are built from that hero's own pair of colours, so a green
+   button never lands on a pink break card. */
+.hero[data-kind="await"] .controls .btn, .hero[data-kind="break"] .controls .btn,
+.hero[data-kind="lunch_break"] .controls .btn, .hero[data-kind="done"] .controls .btn { color: var(--hero-fg); }
+.hero[data-kind="await"] .controls .btn.filled, .hero[data-kind="break"] .controls .btn.filled,
+.hero[data-kind="lunch_break"] .controls .btn.filled, .hero[data-kind="done"] .controls .btn.filled { background: var(--hero-fg); color: var(--hero-bg); }
+.hero[data-kind="await"] .controls .btn.tonal, .hero[data-kind="break"] .controls .btn.tonal,
+.hero[data-kind="lunch_break"] .controls .btn.tonal, .hero[data-kind="done"] .controls .btn.tonal { background: color-mix(in srgb, var(--hero-fg) 14%, transparent); }
+.hero[data-kind="await"] .controls .btn.outlined, .hero[data-kind="break"] .controls .btn.outlined,
+.hero[data-kind="lunch_break"] .controls .btn.outlined, .hero[data-kind="done"] .controls .btn.outlined { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hero-fg) 45%, transparent); }
+.hero .controls .btn { transition: border-radius var(--dur-spring) var(--spring), transform var(--dur-spring) var(--spring-fast), background-color 520ms var(--ease), color 520ms var(--ease), box-shadow var(--dur-effects) linear; }
 .hero .doodle { --ink: currentColor; }
 .hero .doodle .fill-bg { fill: var(--hero-bg); }
 .hero .doodle .fill-p { fill: color-mix(in srgb, currentColor 22%, var(--hero-bg)); }
@@ -130,7 +172,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .plan-card { padding: 20px 8px 12px; }
 .plan-card .head { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 8px; }
-.plan-card .head .row1 { display: flex; align-items: baseline; gap: 8px; }
+.plan-card .head .row1 { display: flex; align-items: center; gap: 8px; }
 .plan-card .head .row1 h2 { font: 400 22px/28px var(--font-display); flex: 1; }
 .plan-card .total { font: 600 14px/20px var(--font); color: var(--md-sys-color-on-surface-variant); }
 .blk { display: grid; grid-template-columns: 24px 1fr auto; gap: 4px 16px; align-items: center; padding: 12px 16px; border-radius: var(--shape-l); transition: background-color var(--dur-m1) var(--ease); }
@@ -153,12 +195,14 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .access.warn { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 
 /* ================= PLAN ================= */
+.plan-tabs { margin-bottom: 16px; }
+.plan-tabs .segmented { flex-wrap: wrap; }
 .plan-editor { display: flex; flex-direction: column; gap: 8px; }
 .prow {
   display: grid; grid-template-columns: minmax(140px, 1fr) auto auto; gap: 12px; align-items: center;
   padding: 12px 12px 12px 16px; border-radius: var(--shape-l); background: var(--md-sys-color-surface-container-low);
 }
-.prow.fresh { animation: row-in var(--dur-l1) var(--spring); }
+.prow.fresh { animation: row-in var(--dur-spring) var(--spring); }
 @keyframes row-in { from { opacity: 0; transform: translateY(-12px) scale(.96); } }
 .prow.removing { animation: row-out var(--dur-s2) var(--ease-emph-accel) forwards; }
 @keyframes row-out { to { opacity: 0; transform: scale(.96); } }
@@ -234,15 +278,62 @@ table.t tr:last-child td { border-bottom: 0; }
 .swatch {
   width: 48px; height: 48px; border-radius: var(--shape-full); border: 0; padding: 0; cursor: pointer;
   background: var(--c); position: relative;
-  transition: border-radius var(--dur-l1) var(--spring), transform var(--dur-m2) var(--spring);
+  transition: border-radius var(--dur-spring) var(--spring), transform var(--dur-spring) var(--spring-fast);
 }
 .swatch:hover { transform: scale(1.06); }
 .swatch[aria-pressed="true"] { border-radius: 14px; box-shadow: 0 0 0 3px var(--md-sys-color-surface), 0 0 0 5px var(--c); }
-.swatch[aria-pressed="true"]::after { content: ""; position: absolute; left: 50%; top: 45%; width: 8px; height: 16px; border: solid #fff; border-width: 0 3px 3px 0; transform: translate(-50%, -50%) rotate(45deg); }
+.swatch { display: grid; place-items: center; color: var(--on-c, #fff); }
+.swatch .ck { width: 22px; height: 22px; stroke-width: 3; }
 .swatch:focus-visible { outline: var(--focus-ring); outline-offset: 4px; }
 .color-in { width: 48px; height: 48px; border: 0; padding: 0; background: none; cursor: pointer; }
 .code { font: 400 13px/20px ui-monospace, "Cascadia Code", Consolas, monospace; padding: 10px 12px; border-radius: var(--shape-s); background: var(--md-sys-color-surface-container-highest); user-select: text; overflow-wrap: anywhere; flex: 1; min-width: 0; }
-.weekdays .chip { min-width: 56px; justify-content: center; }
+
+/* Week schedule: one tile per weekday, tinted by the kind of day. */
+.week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.day-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 2px 10px; min-width: 0;
+  border: 0; border-radius: var(--shape-l); color: var(--md-sys-color-on-surface-variant);
+  background: transparent; box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant);
+  transition: background-color var(--dur-effects-slow) var(--ease), color var(--dur-effects-slow) var(--ease), border-radius var(--dur-spring) var(--spring), transform var(--dur-spring) var(--spring-fast);
+}
+.day-tile .dn { font: 600 14px/20px var(--font); color: var(--md-sys-color-on-surface); }
+.day-tile .kn { font: 400 12px/16px var(--font); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.day-tile .icon { width: 20px; height: 20px; }
+.day-tile[data-kind="full"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); box-shadow: none; }
+.day-tile[data-kind="light"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); box-shadow: none; }
+.day-tile[data-kind="full"] .dn, .day-tile[data-kind="light"] .dn { color: inherit; }
+.day-tile.today { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.day-tile[aria-expanded="true"] { border-radius: var(--shape-xl); }
+.day-tile:active:not(:disabled) { transform: scale(.94); transition-duration: 120ms; transition-timing-function: var(--ease); }
+.day-tile.just .icon { animation: pop-in var(--dur-spring) var(--spring-fast); }
+.week-legend { display: flex; gap: 16px; flex-wrap: wrap; font: 400 12px/16px var(--font); color: var(--md-sys-color-on-surface-variant); }
+.week-legend span { display: inline-flex; gap: 6px; align-items: center; }
+.week-legend i { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--md-sys-color-outline); }
+.week-legend i.full { background: var(--md-sys-color-primary-container); box-shadow: none; }
+.week-legend i.light { background: var(--md-sys-color-secondary-container); box-shadow: none; }
+
+.profile .badge {
+  width: 40px; height: 40px; border-radius: 14px; flex: none; display: grid; place-items: center;
+  background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant);
+}
+.profile[data-kind="full"] .badge { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.profile[data-kind="light"] .badge { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.profile .badge .icon { width: 20px; height: 20px; }
+.profile .sw-label { font: 600 12px/16px var(--font); color: var(--md-sys-color-on-surface-variant); }
+.profile .sw-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+/* Compact − value + control for minutes and seconds. */
+.num-step { display: inline-flex; align-items: center; gap: 2px; flex: none; padding: 2px; border-radius: var(--shape-full); background: var(--md-sys-color-surface-container-highest); }
+.num-step .v { min-width: 68px; text-align: center; font: 400 16px/24px var(--font); }
+.num-step .v small { font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
+.num-step .v.bump { animation: bump var(--dur-spring-fast) var(--spring-fast); }
+.num-step .icon-btn { width: 36px; height: 36px; }
+.num-step .icon-btn .icon { width: 20px; height: 20px; }
+
+.setting .t .info { display: inline-block; vertical-align: -2px; margin-left: 4px; width: 16px; height: 16px; color: var(--md-sys-color-outline); opacity: .6; cursor: help; transition: opacity var(--dur-effects) linear; }
+.setting .t .info .icon { width: 16px; height: 16px; }
+.setting .t .info:hover { opacity: 1; }
+.setting.off { opacity: .6; }
 
 /* ---- dialogs specific ---- */
 .phrase { padding: 12px 16px; border-radius: var(--shape-m); background: var(--md-sys-color-surface-container-highest); font: 400 16px/24px var(--font); user-select: none; }
@@ -269,31 +360,31 @@ table.t tr:last-child td { border-bottom: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---- motion details ---- */
-.nav .dest[aria-current="page"] .pill .icon { animation: nav-icon 520ms var(--spring-fast); }
-@keyframes nav-icon { 0% { transform: scale(.6); } 60% { transform: scale(1.12); } 100% { transform: none; } }
+.nav .dest[aria-current="page"] .pill .icon { animation: nav-icon var(--dur-spring) var(--spring-fast); }
+@keyframes nav-icon { from { transform: scale(.7); } }
 .nav .dest:active .pill { transform: scale(.94); }
-.nav .dest .pill { transition: width var(--dur-l1) var(--spring), background-color var(--dur-m1) var(--ease), transform var(--dur-m2) var(--spring); }
+.nav .dest .pill { transition: width var(--dur-spring) var(--spring-fast), background-color var(--dur-effects) var(--ease), transform var(--dur-spring) var(--spring-fast); }
 
 .blk.just-done { animation: done-flash 1200ms var(--ease); }
-.blk.just-done .st .icon { animation: pop-in 620ms var(--spring-fast); }
+.blk.just-done .st .icon { animation: pop-in var(--dur-spring) var(--spring-fast); }
 @keyframes done-flash { 0% { background: var(--md-sys-color-primary-container); transform: scale(1.02); } 100% { background: transparent; transform: none; } }
 
 .blk .linear::after, .day-row .linear::after { transition: transform 900ms var(--ease-emph-decel); }
 .hero .center { animation: fade-in 320ms var(--ease-emph-decel); }
 
 .surface, .hero, .plan-card { transition: background-color var(--dur-l1) var(--ease), box-shadow var(--dur-m2) var(--ease); }
-.day-row, .blk, .prow { transition: background-color var(--dur-m1) var(--ease), transform var(--dur-m2) var(--spring); }
+.day-row, .blk, .prow { transition: background-color var(--dur-effects-slow) var(--ease), transform var(--dur-spring) var(--spring-fast); }
 .day-row:active { transform: scale(.985); }
 
-.stepper .val.bump { animation: bump 380ms var(--spring-fast); }
+.stepper .val.bump { animation: bump var(--dur-spring-fast) var(--spring-fast); }
 @keyframes bump { 0% { transform: scale(.86); } 100% { transform: none; } }
 
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 
-.lock-hero .lockart { width: 72px; height: 72px; flex: none; display: grid; place-items: center; border-radius: 24px; background: color-mix(in srgb, currentColor 10%, transparent); transition: border-radius var(--dur-l2) var(--spring); }
+.lock-hero .lockart { width: 72px; height: 72px; flex: none; display: grid; place-items: center; border-radius: 24px; background: color-mix(in srgb, currentColor 10%, transparent); transition: border-radius var(--dur-spring-slow) var(--spring); }
 .lock-hero.on .lockart { border-radius: 36px; }
 .padlock { overflow: visible; }
-.padlock .shackle { fill: none; stroke: currentColor; stroke-width: 4.5; stroke-linecap: round; transform-box: view-box; transform-origin: 32px 22px; transition: transform 640ms var(--spring-fast); }
+.padlock .shackle { fill: none; stroke: currentColor; stroke-width: 4.5; stroke-linecap: round; transform-box: view-box; transform-origin: 32px 22px; transition: transform var(--dur-spring) var(--spring-fast); }
 .padlock .body rect:first-child { fill: currentColor; }
 .padlock .hole { fill: var(--hole, var(--md-sys-color-surface-container)); }
 .lock-hero.on { --hole: var(--md-sys-color-primary-container); }
@@ -312,7 +403,7 @@ table.t tr:last-child td { border-bottom: 0; }
   display: inline-flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap;
   background: transparent; color: color-mix(in srgb, var(--md-sys-color-error) 70%, var(--md-sys-color-on-surface-variant));
   font: 600 13px/20px var(--font); opacity: .7;
-  transition: max-width var(--dur-l1) var(--spring), background-color var(--dur-m1) var(--ease), color var(--dur-m1) var(--ease), opacity var(--dur-m1) var(--ease), padding var(--dur-l1) var(--spring);
+  transition: max-width var(--dur-spring) var(--spring), background-color var(--dur-effects) var(--ease), color var(--dur-effects) var(--ease), opacity var(--dur-effects) var(--ease), padding var(--dur-spring) var(--spring);
 }
 .sos .icon { width: 20px !important; height: 20px !important; flex: none; }
 .sos .lbl { opacity: 0; transform: translateX(-6px); transition: opacity var(--dur-m1) var(--ease), transform var(--dur-m2) var(--ease-emph-decel); }
@@ -323,8 +414,10 @@ table.t tr:last-child td { border-bottom: 0; }
 .sos:hover .lbl, .sos:focus-visible .lbl { opacity: 1; transform: none; }
 .sos:active { transform: scale(.95); }
 
-/* M3 Expressive button group: the pressed button widens, neighbours make room. */
-.controls .btn { transition: border-radius var(--dur-m2) var(--spring), transform var(--dur-m2) var(--spring), padding var(--dur-l1) var(--spring), background-color var(--dur-s2) linear, box-shadow var(--dur-s2) linear; }
-.controls .btn:active:not(:disabled) { padding-inline: 44px; transform: none; }
-.controls .btn.xl:active:not(:disabled) { padding-inline: 52px; }
-.controls:has(.btn:active) .btn:not(:active) { transform: scale(.94); }
+/* Big timer buttons: only transforms move (composited, no layout), so nothing shifts by a
+   pixel. Press sinks and squares the pill; release bounces back on the fast spatial spring;
+   neighbours lean away a little to make room. */
+.controls .btn { will-change: transform; backface-visibility: hidden; }
+.controls .btn:active:not(:disabled) { transform: scale(.94); }
+.controls .btn.xl:active:not(:disabled) { border-radius: 24px; }
+.controls:has(.btn:active) .btn:not(:active) { transform: scale(.97); }

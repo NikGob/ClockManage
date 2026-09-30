@@ -2,7 +2,7 @@ import { call, mmss, dur, esc } from '../api.js';
 import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
-import { run, snack } from '../ui.js';
+import { run, snack, menu, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
 import { lunchDialog, singleDialog, emergencyDialog, captchaDialog } from './dialogs.js';
 
 export function mountToday(root, ctx) {
@@ -28,7 +28,7 @@ export function mountToday(root, ctx) {
       <section class="surface access" id="access" hidden aria-live="polite"></section>
       <section class="surface plan-card" aria-labelledby="plan-h">
         <div class="head">
-          <div class="row1"><h2 id="plan-h">План дня</h2><button class="btn text interactive" id="edit-plan">Изменить</button></div>
+          <div class="row1"><h2 id="plan-h">План дня</h2><button class="kind-chip interactive" id="kind" data-act="kind" aria-haspopup="menu"></button><button class="btn text interactive" id="edit-plan">Изменить</button></div>
           <div class="total tnum" id="total"></div>
           <div class="linear" id="total-bar"></div>
         </div>
@@ -84,32 +84,99 @@ export function mountToday(root, ctx) {
     const L = v.lock;
     let ic = 'lock_open', text = '', when = '', cls = '', action = '';
     const left = L.until ? mmss(L.until - v.now) : '';
+    // The day end is a quiet button: click → move it later for today.
+    const endBtn = (label) => (v.can.extend_day_end
+      ? `<button class="when-btn interactive" data-act="dayend" aria-haspopup="menu" data-tip="Продлить учёбу сегодня — только позже">${esc(label)}${icon('expand')}</button>`
+      : esc(label));
+    const offText = v.kind === 'off' ? 'Выходной — без блокировки' : `${kindLabel(v.kind)} день без блокировки`;
     switch (L.reason) {
-      case 'study': ic = 'lock'; text = 'Блокировка включена'; when = `до ${v.day_end} или до конца плана`; break;
+      case 'study': ic = 'lock'; text = 'Блокировка включена'; when = `${endBtn(`до ${v.day_end}`)} или до конца плана`; break;
       case 'single': ic = 'lock'; text = 'Блокировка на время таймера'; break;
       case 'pause_access': text = 'Доступ открыт на паузе'; when = left; cls = 'open'; action = 'end'; break;
       case 'emergency': text = 'Аварийный доступ'; when = left; cls = 'open'; action = 'end'; break;
       case 'lunch_at_pc': text = 'Обед за ПК — доступ открыт'; when = left; cls = 'open'; break;
-      case 'not_started': text = v.study_day ? 'Блокировка включится по кнопке «Начать день»' : 'Сегодня не учебный день — без блокировки'; break;
+      case 'not_started':
+        text = v.study_day ? 'Блокировка включится по кнопке «Начать день»' : offText;
+        if (v.study_day) when = `и продержится ${endBtn(`до ${v.day_end}`)}`;
+        break;
       case 'completed': text = 'Все блоки отсижены — блокировка снята'; break;
-      case 'day_end': text = `После ${v.day_end} блокировки нет`; break;
-      case 'not_study_day': text = 'Сегодня не учебный день — без блокировки'; break;
+      case 'day_end':
+        text = `После ${v.day_end} блокировки нет`;
+        if (v.started && v.can.extend_day_end) when = endBtn('Вернуть блокировку');
+        break;
+      case 'not_study_day': text = offText; break;
       default: text = '';
     }
     if (L.base && !['pause_access', 'emergency'].includes(L.reason) && v.can.emergency) action = 'emergency';
     if (!meta.admin && L.base) { text += ' · нет прав администратора'; cls = 'open'; }
     const btn = action === 'end'
       ? '<button class="btn text interactive" data-act="end_access">Закрыть доступ</button>'
-      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="Аварийный доступ" title="Аварийный доступ">${icon('warning')}<span class="lbl">Аварийно</span></button>` : '';
+      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="Аварийный доступ">${icon('warning')}<span class="lbl">Аварийно</span></button>` : '';
     const el = $('lockline');
     el.className = `lockline ${cls}`;
-    const html = `${icon(ic)}<span class="grow">${esc(text)} <span class="when tnum">${esc(when)}</span></span>${btn}`;
+    // `when` is HTML: every dynamic piece in it is escaped or numeric.
+    const html = `${icon(ic)}<span class="grow">${esc(text)} <span class="when tnum">${when}</span></span>${btn}`;
     if (el.dataset.html !== html) {
       const had = !!el.dataset.html;
       el.innerHTML = html;
       el.dataset.html = html;
       if (had) el.querySelector('.icon')?.classList.add('pop-in');
     }
+  }
+
+  function kindChip(v) {
+    const k = KINDS.find((x) => x.id === v.kind) || KINDS[0];
+    const html = `${icon(k.icon)}<span>${k.label}</span>${icon('expand', 'caret')}`;
+    const b = $('kind');
+    if (b.dataset.html !== html) {
+      const had = !!b.dataset.html;
+      b.innerHTML = html;
+      b.dataset.html = html;
+      b.dataset.kind = k.id;
+      if (had) b.classList.add('just');
+    }
+    b.dataset.tip = v.can.lighter_kind ? 'Тип сегодняшнего дня: свой план и блокировка' : 'Во время учёбы день можно сделать только плотнее';
+  }
+
+  async function pickKind(b) {
+    const v = last.view;
+    const cfg = await call('get_config');
+    const cur = v.kind;
+    const kind = await menu(b, KINDS.map((k) => {
+      const lighter = KIND_RANK[k.id] < KIND_RANK[cur];
+      const p = cfg.profiles[k.id];
+      return {
+        value: k.id, label: k.label, icon: icon(k.icon), selected: k.id === cur,
+        sub: `${planSummary(p.plan)}${p.block ? '' : ' · без блокировки'}`,
+        disabled: lighter && !v.can.lighter_kind,
+        tip: lighter && !v.can.lighter_kind ? 'Во время учёбы — только плотнее' : '',
+      };
+    }), {
+      title: 'Тип дня',
+      note: v.started ? 'День уже идёт: блоки нового типа добавятся к плану, начатое не пропадёт.' : 'План на сегодня заменится шаблоном этого типа.',
+    });
+    if (!kind || kind === cur) return;
+    const ok = await run(() => call('set_day_kind', { kind }).then(() => true), b);
+    if (ok) snack(`Сегодня — ${kindLabel(kind).toLowerCase()} день`);
+  }
+
+  async function extendDayEnd(b) {
+    const v = last.view;
+    const base = Math.max(v.day_end_min, v.now_min);
+    const LAST = 23 * 60 + 59;
+    const opts = [];
+    for (const add of [30, 60, 120]) {
+      const m = Math.ceil((base + add) / 5) * 5;
+      if (m <= LAST && m > v.day_end_min && !opts.includes(m)) opts.push(m);
+    }
+    if (!opts.includes(LAST) && LAST > v.day_end_min) opts.push(LAST);
+    const minutes = await menu(b, opts.map((m) => ({
+      value: m, label: `до ${hm(m)}`, icon: icon('schedule'),
+      sub: m === LAST ? 'до конца суток' : `+${m - v.day_end_min >= 60 ? `${Math.floor((m - v.day_end_min) / 60)} ч ` : ''}${(m - v.day_end_min) % 60 ? `${(m - v.day_end_min) % 60} мин` : ''}`.trim(),
+    })), { title: v.after_day_end ? 'Вернуть блокировку до' : 'Продлить учёбу сегодня', note: 'Только на сегодня. Сдвинуть обратно на раньше нельзя.' });
+    if (!minutes) return;
+    const ok = await run(() => call('extend_day_end', { minutes }).then(() => true), b);
+    if (ok) snack(`Учёба сегодня — до ${hm(minutes)}`);
   }
 
   function controls(v) {
@@ -256,6 +323,7 @@ export function mountToday(root, ctx) {
     hero.dataset.kind = p.kind;
     hero.dataset.paused = String(!!p.paused);
     lockLine(v, s.meta);
+    kindChip(v);
 
     let frac = 0, running = false, big = '', small = false, state = '', title = p.title, sub = p.subtitle;
     let art = '';
@@ -317,6 +385,8 @@ export function mountToday(root, ctx) {
       case 'end_access': await run(() => call('end_access'), b); break;
       case 'mini': await call('toggle_mini'); break;
       case 'goplan': ctx.navigate('plan'); break;
+      case 'kind': await pickKind(b); break;
+      case 'dayend': await extendDayEnd(b); break;
       case 'lunch': await lunchDialog(last.meta.lunch_min); break;
       case 'single': await singleDialog(); break;
       case 'emergency': {

@@ -20,7 +20,7 @@ html, body { background: transparent !important; overflow: hidden; }
   max-width: 720px; pointer-events: auto;
   opacity: 0; transform: translateY(32px) scale(.9);
 }
-.card.in { animation: card-in var(--dur-l2) var(--ease-emph-decel) forwards; }
+.card.in { animation: card-in 700ms var(--spring) forwards, fade-in 320ms var(--ease) both; }
 .card.out { animation: card-out 220ms var(--ease-emph-accel) forwards; }
 @keyframes card-in { to { opacity: 1; transform: none; } }
 @keyframes card-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-16px) scale(.96); } }
@@ -47,7 +47,7 @@ html, body { background: transparent !important; overflow: hidden; }
   box-shadow: 0 4px 8px 3px rgb(0 0 0 / .15), 0 1px 3px rgb(0 0 0 / .3);
   transform: translateY(-120%);
 }
-.card.passive.in { animation: drop-in var(--dur-l2) var(--spring) forwards; }
+.card.passive.in { animation: drop-in var(--dur-spring-slow) var(--spring) forwards; }
 .card.passive.out { animation: drop-out 240ms var(--ease-emph-accel) forwards; }
 @keyframes drop-in { from { opacity: 0; transform: translateY(-120%); } to { opacity: 1; transform: none; } }
 @keyframes drop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-60%); } }
@@ -63,7 +63,7 @@ html, body { background: transparent !important; overflow: hidden; }
   box-shadow: 0 8px 24px rgb(0 0 0 / .18), 0 2px 6px rgb(0 0 0 / .2);
   transform: scale(.4) rotate(-8deg);
 }
-.card.bubble.in { animation: bubble-in 560ms var(--spring-fast) forwards; }
+.card.bubble.in { animation: bubble-in 620ms var(--spring-fast) forwards; }
 .card.bubble.out { animation: bubble-out 260ms var(--ease-emph-accel) forwards; }
 @keyframes bubble-in { from { opacity: 0; transform: scale(.4) rotate(-8deg); } to { opacity: 1; transform: none; } }
 @keyframes bubble-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.7) translateY(20px); } }

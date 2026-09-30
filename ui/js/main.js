@@ -1,5 +1,6 @@
 import { call, on, installRipples, esc } from './api.js';
 import { applyTheme } from './theme.js';
+import { installTooltips, hideTip } from './tooltip.js';
 import { icon } from './icons.js';
 import { mountToday } from './views/today.js';
 import { mountPlan } from './views/plan.js';
@@ -31,6 +32,7 @@ const ctx = {
 };
 
 installRipples();
+installTooltips();
 
 nav.innerHTML = ROUTES.map((r) => `
   <button class="dest" data-route="${r.id}" aria-label="${r.label}">
@@ -62,6 +64,7 @@ function go(id) {
     else b.removeAttribute('aria-current');
   });
   title.textContent = r.title;
+  hideTip();
   actions.innerHTML = '';
   ctx.onAction = null;
   // A fresh container per screen: listeners of the previous screen go away with it

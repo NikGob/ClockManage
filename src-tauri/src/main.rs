@@ -108,6 +108,8 @@ fn main() {
             app::save_config,
             app::regenerate_port,
             app::start_day,
+            app::set_day_kind,
+            app::extend_day_end,
             app::pause,
             app::resume,
             app::start_next,

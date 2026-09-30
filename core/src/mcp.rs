@@ -63,7 +63,7 @@ fn tools() -> Value {
                             "required": ["name"]
                         }
                     },
-                    "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном для следующих дней" }
+                    "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном профиля сегодняшнего дня (Полный/Лёгкий/Выходной)" }
                 },
                 "required": ["blocks"],
                 "additionalProperties": false

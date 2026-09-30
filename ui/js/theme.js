@@ -20,6 +20,7 @@ const SURFACES = new Set([
   'surfaceContainer', 'surfaceContainerHigh', 'surfaceContainerHighest',
 ]);
 const LIGHT_SHIFT = 3.5;
+const SELECT_SHIFT = 6;
 
 const VARIANTS = { fidelity: SchemeFidelity, tonal_spot: SchemeTonalSpot, vibrant: SchemeVibrant };
 
@@ -37,6 +38,16 @@ export function schemeVars(seed, dark, variant = 'fidelity') {
     if (!dark && SURFACES.has(r)) {
       const h = Hct.fromInt(c);
       c = Hct.from(s.neutralPalette.hue, Math.max(h.chroma, 2.5), h.tone - LIGHT_SHIFT).toInt();
+    }
+    // ...and the selection colour moves with them, otherwise a selected chip or the current
+    // block barely differs from the card it sits on.
+    if (!dark && r === 'secondaryContainer') {
+      const h = Hct.fromInt(c);
+      c = Hct.from(h.hue, Math.max(h.chroma, 14), h.tone - SELECT_SHIFT).toInt();
+    }
+    if (!dark && r === 'onSecondaryContainer') {
+      const h = Hct.fromInt(c);
+      c = Hct.from(h.hue, h.chroma, Math.min(h.tone, 20)).toInt();
     }
     out[`--md-sys-color-${kebab(r)}`] = hexFromArgb(c);
   }

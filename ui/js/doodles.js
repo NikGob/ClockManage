@@ -18,8 +18,9 @@ function frame(inner, { size = 240, label = '' } = {}) {
 // stroke helper: draw-on path with delay (ms) and duration
 const s = (d, delay = 0, dur = 600, cls = '') =>
   `<path class="ink draw ${cls}" pathLength="1" d="${d}" style="--delay:${delay}ms;--d:${dur}ms"/>`;
+// "fade" fills only fade in (they stay pinned under their outline); the rest pop.
 const fill = (d, cls, delay = 0) =>
-  `<path class="${cls} pop" d="${d}" style="--delay:${delay}ms"/>`;
+  `<path class="${cls}${/\bfade\b/.test(cls) ? '' : ' pop'}" d="${d}" style="--delay:${delay}ms"/>`;
 
 export function alarmClock(size) {
   return frame(`
@@ -136,25 +137,46 @@ export function bowl(size) {
     </g>`, { size, label: 'Обед' });
 }
 
+// The hand is drawn around x=128 and shifted left so the swing is centred in the frame.
+const HAND_DX = -14;
+const shiftX = (d) => d.replace(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g, (m, x, y) => `${+x + HAND_DX} ${y}`);
+// Wrist pivot of the wagging hand (keep in sync with .wagging .wag in m3.css).
+const WRIST = [128 + HAND_DX, 222];
+
+/** Arc around the wrist at radius r between angles a0..a1 (degrees from vertical, + = right). */
+function wristArc(r, a0, a1) {
+  const pt = (rr, a) => {
+    const t = (a * Math.PI) / 180;
+    return [(WRIST[0] + rr * Math.sin(t)).toFixed(1), (WRIST[1] - rr * Math.cos(t)).toFixed(1)];
+  };
+  const [x0, y0] = pt(r, a0);
+  const [x1, y1] = pt(r, a1);
+  const [cx, cy] = pt(r / Math.cos(((a1 - a0) / 2) * Math.PI / 180), (a0 + a1) / 2);
+  return `M${x0} ${y0} Q${cx} ${cy} ${x1} ${y1}`;
+}
+
 export function fingerWag(size) {
-  // Index finger on the thumb side, three curled fingers with knuckles, thumb across: an
-  // unmistakable "no-no" gesture.
-  const fist = 'M120 132 Q124 118 136 120 Q146 122 146 134 Q150 124 160 126 Q170 130 168 142 Q176 138 180 148 L178 180 Q172 212 136 214 Q100 214 90 190 L86 160 Q84 146 96 140';
+  // One closed silhouette (index finger + fist) so fill and outline can never drift apart.
+  // Motion arcs sit on circles around the wrist, farther out than any point of the hand, so
+  // however the hand swings it never crosses them.
+  const hand = shiftX('M98 134 L98 58 Q98 42 110 42 Q122 42 122 58 L122 120 Q126 112 136 113 Q146 114 147 124 '
+    + 'Q151 116 160 118 Q169 121 169 131 Q177 128 180 137 Q182 144 180 152 L178 178 '
+    + 'Q174 206 140 208 Q106 209 96 188 L90 160 Q88 146 98 134 Z');
+  const cuff = shiftX('M110 204 L108 228 L154 228 L152 202');
+  const still = (d, delay, cls = '') => `<path class="ink ${cls}" d="${d}" style="--delay:${delay}ms"/>`;
   return frame(`
     <g class="wag">
-      ${fill('M96 140 L96 62 Q96 48 108 48 Q120 48 120 62 L120 134 Z', 'fill-p', 150)}
-      ${fill(fist + ' Z', 'fill-p', 100)}
-      ${s('M96 140 L96 62 Q96 46 108 46 Q120 46 120 62 L120 132', 0, 500)}
-      ${s(fist, 250, 800)}
-      ${s('M102 58 Q108 53 114 58', 700, 160, 'thin')}
-      ${s('M146 134 L147 154', 760, 180, 'thin')}${s('M168 142 L168 160', 820, 180, 'thin')}
-      ${s('M88 164 Q102 176 126 168 Q138 162 134 148', 880, 320, 'thin')}
-      ${s('M104 212 L102 232 L158 232 L156 212', 500, 400)}
+      ${fill(cuff + ' Z', 'fill-s fade', 260)}
+      ${s(cuff, 380, 320)}
+      ${fill(hand, 'fill-p fade', 160)}
+      ${s(hand, 0, 620)}
+      ${s(shiftX('M104 56 Q110 51 116 56'), 520, 160, 'thin')}
+      ${s(shiftX('M147 124 L148 144'), 560, 160, 'thin')}${s(shiftX('M169 131 L169 150'), 600, 160, 'thin')}
+      ${s(shiftX('M92 164 Q106 176 128 168 Q140 162 136 150'), 620, 260, 'thin')}
     </g>
-    <g class="wag-lines">
-      ${s('M76 72 Q64 58 74 40', 1000, 260, 'thin')}${s('M58 84 Q42 62 54 34', 1060, 300, 'thin')}
-      ${s('M142 72 Q154 58 144 40', 1030, 260, 'thin')}${s('M160 84 Q176 62 164 34', 1090, 300, 'thin')}
-    </g>`, { size, label: 'Не-не-не, грозящий палец' });
+    <g class="wag-arcs left">${still(wristArc(194, -35, -24), 0, 'thin')}${still(wristArc(208, -32, -26), 0, 'thin')}</g>
+    <g class="wag-arcs right">${still(wristArc(194, 12, 23), 0, 'thin')}${still(wristArc(208, 15, 21), 0, 'thin')}</g>`,
+  { size, label: 'Не-не-не, грозящий палец' });
 }
 
 // Circles are drawn with quadratic curves (no arcs): jittering arc flags would break paths.
@@ -285,26 +307,27 @@ export function wiggle(svg) {
   void svg.getBoundingClientRect();
   svg.classList.add('poke');
   // restart one-shot state animations (steam, pencil, wag…) inside it
-  svg.querySelectorAll('.pencil, .steam, .wag, .wag-lines, .shake, .waves').forEach((g) => {
+  svg.querySelectorAll('.pencil, .steam, .wag, .wag-arcs, .shake, .waves').forEach((g) => {
     g.style.animation = 'none';
     void g.getBoundingClientRect();
     g.style.animation = '';
   });
-  boil(svg, 700);
+  if (!svg._still) boil(svg, 700);
 }
 
 /**
  * Draw every doodle inside `root` on, boil while it draws (plus `extraMs`), then settle.
  * Returns a function that settles immediately.
  */
-export function play(root, { extraMs = 900 } = {}) {
+export function play(root, { extraMs = 900, jitter = true } = {}) {
   const svgs = [...root.querySelectorAll('svg.doodle')];
   for (const svg of svgs) {
     prepare(svg);
     svg.classList.remove('play');
     void svg.getBoundingClientRect();
     svg.classList.add('play');
-    boil(svg, svg._drawMs + extraMs);
+    svg._still = !jitter;
+    if (jitter) boil(svg, svg._drawMs + extraMs);
   }
   return () => svgs.forEach((svg) => svg._paths && settle(svg));
 }

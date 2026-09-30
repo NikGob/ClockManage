@@ -6,9 +6,13 @@ body { padding: 8px; }
   border-radius: var(--shape-xl);
   background: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface);
-  box-shadow: 0 1px 3px rgb(0 0 0 / .3), 0 4px 8px 3px rgb(0 0 0 / .15);
+  /* A hairline in the theme's outline colour + a tight two-layer shadow: the pill stays
+     visible on any desktop, light or dark (it lives in a transparent window with 8px room). */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--md-sys-color-outline) 45%, transparent),
+    0 1px 2px rgb(0 0 0 / .24), 0 2px 6px rgb(0 0 0 / .16);
   cursor: grab; position: relative;
-  transition: background-color var(--dur-m2) var(--ease), color var(--dur-m2) var(--ease), border-radius var(--dur-l1) var(--spring);
+  transition: background-color var(--dur-m2) var(--ease), color var(--dur-m2) var(--ease), border-radius var(--dur-spring-slow) var(--spring);
   animation: mini-in var(--dur-l1) var(--ease-emph-decel);
 }
 .mini:active { cursor: grabbing; }
@@ -52,3 +56,26 @@ body { padding: 8px; }
 .time span { display: inline-block; }
 .time span.tick { animation: tick 260ms var(--ease-emph-decel); }
 @keyframes tick { from { transform: translateY(-40%); opacity: 0; } }
+
+/* Contrast mode: inverse colours — a dark pill in the light theme, a light one in the dark. */
+.mini[data-contrast="true"] {
+  --c-bg: var(--md-sys-color-inverse-surface);
+  --c-fg: var(--md-sys-color-inverse-on-surface);
+  --c-accent: var(--md-sys-color-inverse-primary);
+  background: var(--c-bg); color: var(--c-fg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / .3), 0 2px 6px rgb(0 0 0 / .2);
+}
+.mini[data-contrast="true"] .label { color: color-mix(in srgb, var(--c-fg) 72%, transparent); }
+.mini[data-contrast="true"] .ring .track { stroke: color-mix(in srgb, var(--c-fg) 16%, transparent); }
+.mini[data-contrast="true"] .ring .bar { stroke: var(--c-accent); }
+.mini[data-contrast="true"] .main-btn { background: var(--c-accent); color: var(--c-bg); }
+.mini[data-contrast="true"] .tools .icon-btn { color: var(--c-fg); }
+.mini[data-contrast="true"][data-kind="break"] .ring .bar, .mini[data-contrast="true"][data-kind="lunch_break"] .ring .bar { stroke: color-mix(in srgb, var(--c-fg) 85%, var(--md-sys-color-tertiary)); }
+.mini[data-contrast="true"][data-kind="break"] .ring .track, .mini[data-contrast="true"][data-kind="lunch_break"] .ring .track { stroke: color-mix(in srgb, var(--c-fg) 16%, transparent); }
+.mini[data-contrast="true"][data-kind="break"] .main-btn, .mini[data-contrast="true"][data-kind="lunch_break"] .main-btn { background: var(--c-fg); color: var(--c-bg); }
+.mini[data-contrast="true"][data-paused="true"] .ring .bar { stroke: color-mix(in srgb, var(--c-fg) 45%, transparent); }
+.mini[data-contrast="true"][data-paused="true"] .time { color: color-mix(in srgb, var(--c-fg) 70%, transparent); }
+.mini[data-contrast="true"][data-kind="await"] { background: var(--c-accent); color: var(--c-bg); }
+.mini[data-contrast="true"][data-kind="await"] .label { color: var(--c-bg); }
+.mini[data-contrast="true"][data-kind="await"] .main-btn { background: var(--c-bg); color: var(--c-accent); }
+.mini[data-contrast="true"][data-kind="await"] .tools .icon-btn { color: var(--c-bg); }

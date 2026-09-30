@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
-use clockmanage_core::config::{EditContext, SchemeVariant, ThemeMode};
+use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
 use clockmanage_core::day::{Event, PlanBlock, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
@@ -71,6 +71,7 @@ pub struct Meta {
     pub seed: String,
     pub theme_mode: ThemeMode,
     pub variant: SchemeVariant,
+    pub mini_contrast: bool,
     pub data_dir: String,
 }
 
@@ -104,6 +105,7 @@ impl Shared {
                 seed: g.cfg.appearance.seed.clone(),
                 theme_mode: g.cfg.appearance.mode,
                 variant: g.cfg.appearance.variant,
+                mini_contrast: g.cfg.appearance.mini_contrast,
                 data_dir: self.store.dir.display().to_string(),
             },
         }
@@ -172,7 +174,7 @@ impl Shared {
     pub fn nope(&self, text: &str) {
         self.play(Sound::Nope);
         self.show_overlay(json!({
-            "kind": "nope", "passive": true, "auto_hide_ms": 2600,
+            "kind": "nope", "passive": true, "auto_hide_ms": 3000,
             "title": "Не-не-не", "text": text,
         }));
     }
@@ -569,6 +571,7 @@ impl McpHost for McpBridge {
             "date": v.date,
             "day": if v.completed { "completed" } else if v.started { "started" } else { "not_started" },
             "study_day": v.study_day,
+            "profile": v.kind,
             "mode": v.mode,
             "phase": v.phase.kind,
             "title": v.phase.title,
@@ -608,7 +611,12 @@ impl McpHost for McpBridge {
 
     fn get_plan(&self) -> Value {
         let g = self.0.lock();
-        json!({ "today": g.day.plan, "template": g.cfg.plan_template, "started": g.day.started_at.is_some() })
+        json!({
+            "today": g.day.plan,
+            "profile": g.day.kind,
+            "template": g.cfg.profile(g.day.kind).plan,
+            "started": g.day.started_at.is_some()
+        })
     }
 
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String> {
@@ -617,7 +625,8 @@ impl McpHost for McpBridge {
             let locked = g.day.plan_lock(now, &g.cfg);
             g.day.set_plan(now, plan.clone(), locked)?;
             if save_as_template {
-                g.cfg.plan_template = g.day.plan.clone();
+                let kind = g.day.kind;
+                g.cfg.profiles.get_mut(kind).plan = g.day.plan.clone();
                 shared.store.save_config(&g.cfg);
             }
             Ok(json!({ "ok": true, "plan": g.day.plan, "locked": locked }))
@@ -650,10 +659,35 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
         g.cfg.check_update(&cfg, ctx)?;
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
-        g.cfg = cfg.clone();
+        let old = std::mem::replace(&mut g.cfg, cfg.clone());
         if g.day.started_at.is_none() {
-            g.day.study_day = g.cfg.study_days[clock::weekday_index(now, g.cfg.tz_offset_min)];
+            let wd = clock::weekday_index(now, g.cfg.tz_offset_min);
+            let kind = g.day.kind;
+            if old.week[wd] != g.cfg.week[wd] {
+                // Today was re-assigned in the week schedule: follow it.
+                // (The config is already accepted; syncing today is best effort.)
+                let (cfg, day) = (&g.cfg, &mut g.day);
+                let _ = day.set_kind(now, cfg, cfg.week[wd], false);
+            } else if g.day.plan == old.profile(kind).plan && old.profile(kind).plan != g.cfg.profile(kind).plan {
+                // Today's plan was still the untouched template: take the new one.
+                let plan = g.cfg.profile(kind).plan.clone();
+                let _ = g.day.set_plan(now, plan, false);
+            }
+            g.day.study_day = g.cfg.profile(g.day.kind).block;
             g.day.timing = g.cfg.timing.clone();
+        } else {
+            // A running day takes shorter breaks at once; longer ones only outside the lock.
+            let locked = ctx.locked;
+            let (t, n) = (&mut g.day.timing, &cfg.timing);
+            for (cur, new) in [
+                (&mut t.short_break_min, n.short_break_min),
+                (&mut t.between_blocks_min, n.between_blocks_min),
+                (&mut t.lunch_min, n.lunch_min),
+            ] {
+                if new < *cur || !locked {
+                    *cur = new;
+                }
+            }
         }
         shared.store.save_config(&g.cfg);
         Ok((autostart_changed, mcp_changed, g.cfg.clone()))
@@ -692,6 +726,23 @@ pub fn regenerate_port(s: S) -> Result<u16, String> {
 #[tauri::command]
 pub fn start_day(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.start_day(now, &g.cfg))
+}
+
+#[tauri::command]
+pub fn set_day_kind(s: S, kind: DayKind) -> Result<(), String> {
+    s.mutate(|g, now| {
+        let locked = g.day.plan_lock(now, &g.cfg);
+        let (cfg, day) = (&g.cfg, &mut g.day);
+        day.set_kind(now, cfg, kind, locked)
+    })
+}
+
+#[tauri::command]
+pub fn extend_day_end(s: S, minutes: u32) -> Result<(), String> {
+    s.mutate(|g, now| {
+        let (cfg, day) = (&g.cfg, &mut g.day);
+        day.extend_day_end(now, cfg, minutes)
+    })
 }
 
 #[tauri::command]
@@ -922,7 +973,7 @@ pub fn test_sound(kind: String) {
 pub fn preview_overlay(s: S, kind: String) {
     let p = match kind.as_str() {
         "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": "Перерыв", "text": "Математика: часть 1 из 2 готова. Перерыв 10 мин.", "preview": true}),
-        "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 2600, "title": "Не-не-не", "text": "Telegram — после учёбы", "preview": true}),
+        "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 3000, "title": "Не-не-не", "text": "Telegram — после учёбы", "preview": true}),
         "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.", "preview": true}),
         _ => json!({"kind": "await", "passive": false, "title": "Перерыв окончен", "text": "Математика · часть 2 из 2", "action": "Начать часть 2", "preview": true}),
     };

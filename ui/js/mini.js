@@ -27,6 +27,7 @@ function render(s) {
   const p = v.phase;
   applyTheme({ seed: s.meta.seed, mode: s.meta.theme_mode, variant: s.meta.variant });
   root.dataset.kind = p.kind;
+  root.dataset.contrast = String(!!s.meta.mini_contrast);
   root.dataset.paused = String(!!p.paused);
   let frac = 0;
   let label = p.title;

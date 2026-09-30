@@ -58,6 +58,13 @@ export function dialog(html, build) {
   });
 }
 
+/** Yes/no M3 dialog. Resolves true when confirmed. */
+export function ask(title, text, ok = 'Да', cancel = 'Отмена') {
+  return dialog(`<h2>${esc(title)}</h2><p class="body-m muted">${esc(text)}</p>
+    <div class="actions"><button class="btn text interactive" data-close>${esc(cancel)}</button><button class="btn filled interactive" data-ok autofocus>${esc(ok)}</button></div>`,
+  (d, close) => d.querySelector('[data-ok]').addEventListener('click', () => close(true))).then((v) => v === true);
+}
+
 export function hoursLabel(min) {
   const h = min / 60;
   if (min % 60 === 0) return `${h} ч`;
@@ -90,3 +97,99 @@ export function dateLabel(iso) {
 }
 
 export { esc };
+
+/**
+ * M3 menu anchored to `anchor`. items: [{ value, label, sub?, icon?, selected?, disabled?, tip? }]
+ * (or the string '-' for a divider). Resolves with the chosen value, or undefined when dismissed.
+ */
+export function menu(anchor, items, { title = '', note = '' } = {}) {
+  return new Promise((resolve) => {
+    // A second click on the anchor closes its menu (toggle).
+    if (anchor._menuClose) { anchor._menuClose(); resolve(undefined); return; }
+    document.querySelector('.menu:not(.closing)')?._close?.();
+    const m = document.createElement('div');
+    m.className = 'menu';
+    m.setAttribute('role', 'menu');
+    m.innerHTML = (title ? `<div class="menu-title">${esc(title)}</div>` : '')
+      + items.map((it, i) => (it === '-' ? '<div class="menu-div" role="separator"></div>' : `
+        <button class="menu-item interactive" role="menuitemradio" aria-checked="${!!it.selected}" data-i="${i}"
+          ${it.disabled ? 'aria-disabled="true"' : ''} ${it.tip ? `data-tip="${esc(it.tip)}"` : ''} style="--n:${i}">
+          ${it.icon ? `<span class="lead">${it.icon}</span>` : ''}
+          <span class="txt"><span class="l">${esc(it.label)}</span>${it.sub ? `<span class="s">${esc(it.sub)}</span>` : ''}</span>
+          ${it.selected ? '<span class="trail"><svg class="ck" viewBox="0 0 24 24" aria-hidden="true"><path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>' : ''}
+        </button>`)).join('')
+      + (note ? `<div class="menu-note">${esc(note)}</div>` : '');
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const w = m.offsetWidth;
+    const h = m.offsetHeight;
+    const below = r.bottom + 4 + h < innerHeight - 8 || r.top - 4 - h < 8;
+    m.style.left = `${Math.round(Math.min(Math.max(8, r.left), innerWidth - w - 8))}px`;
+    m.style.top = `${Math.round(below ? r.bottom + 4 : r.top - 4 - h)}px`;
+    m.style.transformOrigin = below ? 'top left' : 'bottom left';
+    requestAnimationFrame(() => m.classList.add('open'));
+    anchor.setAttribute('aria-expanded', 'true');
+
+    let done = false;
+    const close = (value) => {
+      if (done) return;
+      done = true;
+      anchor._menuClose = null;
+      anchor.removeAttribute('aria-expanded');
+      document.removeEventListener('pointerdown', outside, true);
+      removeEventListener('blur', dismiss);
+      removeEventListener('resize', dismiss);
+      m.classList.remove('open');
+      m.classList.add('closing');
+      setTimeout(() => m.remove(), 160);
+      if (value === undefined) anchor.focus?.({ preventScroll: true });
+      resolve(value);
+    };
+    const dismiss = () => close(undefined);
+    const outside = (e) => { if (!m.contains(e.target) && !anchor.contains(e.target)) close(undefined); };
+    m._close = dismiss;
+    anchor._menuClose = dismiss;
+    document.addEventListener('pointerdown', outside, true);
+    addEventListener('blur', dismiss);
+    addEventListener('resize', dismiss);
+
+    const buttons = [...m.querySelectorAll('.menu-item')];
+    m.addEventListener('click', (e) => {
+      const b = e.target.closest('.menu-item');
+      if (!b || b.getAttribute('aria-disabled') === 'true') return;
+      b.classList.add('chosen');
+      setTimeout(() => close(items[Number(b.dataset.i)].value), 120);
+    });
+    m.addEventListener('keydown', (e) => {
+      const i = buttons.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); close(undefined); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const d = e.key === 'ArrowDown' ? 1 : -1;
+        buttons[(i + d + buttons.length) % buttons.length]?.focus();
+      } else if (e.key === 'Tab') close(undefined);
+    });
+    (buttons.find((b) => b.getAttribute('aria-checked') === 'true') || buttons[0])?.focus({ preventScroll: true });
+  });
+}
+
+export const KINDS = [
+  { id: 'full', label: 'Полный', icon: 'bolt', hint: 'Полный учебный день' },
+  { id: 'light', label: 'Лёгкий', icon: 'eco', hint: 'Облегчённый день — свой план' },
+  { id: 'off', label: 'Выходной', icon: 'weekend', hint: 'Отдых — по умолчанию без блокировки' },
+];
+export const KIND_RANK = { off: 0, light: 1, full: 2 };
+export const kindLabel = (id) => KINDS.find((k) => k.id === id)?.label || id;
+
+export function hm(min) {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+/** "Математика 1,5 ч · Словацкий 1 ч" / "5 ч 30 мин" summary of a plan. */
+export function planSummary(plan) {
+  if (!plan?.length) return 'Плана нет';
+  const total = plan.reduce((a, b) => a + b.minutes, 0);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h ? `${h} ч` : ''}${h && m ? ' ' : ''}${m ? `${m} мин` : ''} · ${plan.map((b) => b.name).join(', ')}`;
+}

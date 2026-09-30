@@ -6,15 +6,21 @@ const t0 = Date.now();
 const MIN = 60000;
 
 const cfg = {
-  study_days: [true, true, true, true, true, false, false], day_end_min: 1320, tz_offset_min: 180,
+  week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
+  profiles: {
+    full: { plan: [{ name: 'Математика', minutes: 90 }, { name: 'Словацкий', minutes: 90 }, { name: 'Экстернат', minutes: 150 }], block: true },
+    light: { plan: [{ name: 'Математика', minutes: 60 }, { name: 'Словацкий', minutes: 60 }], block: true },
+    off: { plan: [], block: false },
+  },
   timing: { work_segment_min: 45, short_break_min: 10, between_blocks_min: 20, lunch_min: 45 },
-  plan_template: [{ name: 'Математика', minutes: 90 }, { name: 'Словацкий', minutes: 90 }, { name: 'Экстернат', minutes: 150 }],
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
   pause_access: q.get('pa') === '1', pause_access_min: 10,
   emergency_phrase: 'Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе',
   emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
-  appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: 'fidelity' },
+  appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
+let kind = q.get('kind') || 'full';
+let dayEnd = 1320;
 
 function blocks(now) {
   const el = now - t0;
@@ -54,20 +60,23 @@ function snapshot() {
         : { blocked: true, base: true, reason: 'study', until: null };
   return {
     view: {
-      now, date: '2026-09-28', weekday: 0, study_day: true, started, completed: STATE === 'done', after_day_end: false, day_end: '22:00', mode: 'plan',
+      now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, mode: 'plan',
+      day_end: `${String(Math.floor(dayEnd / 60)).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
       pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN, access_enabled: cfg.pause_access, access_until: access ? t0 + 7 * MIN : null, access_left_ms: access ? t0 + 7 * MIN - now : 0, extensions: 0 } : null,
       emergency_count: 0, lunch_used: false, single: null,
       can: {
         start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
-        emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: false,
+        emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
+        extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1439, lighter_kind: !lock.base,
       },
     },
     meta: {
       admin: true, version: '0.1.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
       blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, pause_access: cfg.pause_access, pause_access_min: 10,
       emergency_min: 10, lunch_min: 45, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
+      mini_contrast: cfg.appearance.mini_contrast,
       data_dir: 'C:\\Users\\nik\\AppData\\Roaming\\com.nikgob.clockmanage',
     },
   };
@@ -92,6 +101,8 @@ export async function invoke(cmd, args) {
     case 'get_config': return structuredClone(cfg);
     case 'save_config': Object.assign(cfg, args.cfg); return structuredClone(cfg);
     case 'get_overlay': return null;
+    case 'set_day_kind': kind = args.kind; return null;
+    case 'extend_day_end': dayEnd = args.minutes; return null;
     case 'list_days': return q.get('empty') ? [] : days;
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
     case 'day_stats': return {

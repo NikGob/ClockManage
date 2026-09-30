@@ -1,6 +1,6 @@
 import { call, esc } from '../api.js';
-import { icon } from '../icons.js';
-import { run, snack, hoursLabel, partsPreview } from '../ui.js';
+import { icon, CHECK } from '../icons.js';
+import { run, snack, ask, hoursLabel, partsPreview, KINDS, kindLabel } from '../ui.js';
 
 const STEP = 15;
 
@@ -12,15 +12,26 @@ export function mountPlan(root, ctx) {
   let seg = 45;
   let dirty = false;
   let loadedFor = '';
+  // 'today' edits today's plan; a kind ('full' | 'light' | 'off') edits that kind's template.
+  let target = ctx.planTab || 'today';
+  let todayKind = 'full';
+  let cfg = null;
+  ctx.planTab = null;
 
   root.innerHTML = `
     <div class="readable">
+      <div class="plan-tabs">
+        <div class="segmented" role="tablist" id="tabs">
+          <button class="interactive" data-tab="today" role="tab" data-tip="План только на сегодня">${CHECK}Сегодня</button>
+          ${KINDS.map((k) => `<button class="interactive" data-tab="${k.id}" role="tab" data-tip="Шаблон: так начинается каждый ${k.label.toLowerCase()} день">${CHECK}${k.label}</button>`).join('')}
+        </div>
+      </div>
       <div id="lock-note"></div>
-      <p class="body-m muted" style="margin-bottom:16px">Каждый блок идёт отрезками по <b id="seg">45</b> мин с перерывами между ними. Перерывы не съедают учебное время.</p>
+      <p class="body-m muted" style="margin-bottom:16px" id="hint"></p>
       <div class="plan-editor" id="rows"></div>
       <button class="btn outlined interactive" id="add" style="margin-top:12px">${icon('add')}Добавить блок</button>
       <div class="plan-footer">
-        <label><input type="checkbox" class="check" id="tpl"> Сделать шаблоном для следующих дней</label>
+        <label id="tpl-wrap" data-tip="Следующие такие дни начнутся с этого плана"><input type="checkbox" class="check" id="tpl"> <span id="tpl-l">Сохранить и как шаблон</span></label>
         <span class="grow"></span>
         <button class="btn text interactive" id="reset">Сбросить</button>
         <button class="btn filled interactive" id="save" disabled>${icon('check')}Сохранить план</button>
@@ -29,14 +40,24 @@ export function mountPlan(root, ctx) {
   const $ = (id) => root.querySelector('#' + id);
 
   function render() {
-    $('seg').textContent = seg;
-    $('lock-note').innerHTML = locked
+    const tpl = target !== 'today';
+    root.querySelectorAll('[data-tab]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.tab === target));
+      b.setAttribute('aria-selected', String(b.dataset.tab === target));
+    });
+    $('hint').innerHTML = tpl
+      ? `Шаблон дня «${kindLabel(target)}»: с него начинается каждый такой день. Сегодняшний план он не меняет${target === todayKind && !started ? ' — кроме случая, когда сегодня ещё не начат и план не правился' : ''}.`
+      : `Каждый блок идёт отрезками по <b>${seg}</b> мин с перерывами между ними. Перерывы не съедают учебное время.`;
+    $('tpl-wrap').hidden = tpl;
+    $('tpl-l').textContent = `Сохранить и как шаблон «${kindLabel(todayKind)}»`;
+    $('save').lastChild.textContent = tpl ? 'Сохранить шаблон' : 'Сохранить план';
+    $('lock-note').innerHTML = locked && !tpl
       ? `<div class="lock-note">${icon('lock')}<div><div class="title-s">Идёт учебный день</div><div class="body-m">Блоки можно только добавлять и удлинять. Сократить или удалить — нельзя до конца дня.</div></div></div>`
       : '';
     $('rows').innerHTML = rows.map((r, i) => {
-      const o = r.orig;
+      const o = tpl ? null : r.orig;
       const minMinutes = locked && o ? o.minutes : STEP;
-      const canDelete = !(locked && o) && !(r.progress?.work_ms > 0);
+      const canDelete = tpl || (!(locked && o) && !(r.progress?.work_ms > 0));
       const parts = partsPreview(r.minutes, seg);
       const doneMin = r.progress ? Math.floor(r.progress.work_ms / 60000) : 0;
       const cls = r.fresh ? 'prow fresh' : 'prow';
@@ -48,37 +69,44 @@ export function mountPlan(root, ctx) {
           <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${STEP} мин" ${r.minutes + STEP > 480 ? 'disabled' : ''}>${icon('add')}</button>
         </div>
         <div class="tools">
-          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 || locked ? 'disabled' : ''}>${icon('up')}</button>
-          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 || locked ? 'disabled' : ''}>${icon('down')}</button>
+          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 || (locked && !tpl) ? 'disabled' : ''}>${icon('up')}</button>
+          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 || (locked && !tpl) ? 'disabled' : ''}>${icon('down')}</button>
           <button class="icon-btn interactive" data-a="del" aria-label="Удалить" ${canDelete ? '' : 'disabled'}>${icon('delete')}</button>
         </div>
         ${r.progress?.started ? `<div class="progress"><div class="linear" style="--v:${Math.min(1, doneMin / r.minutes)}"></div><span class="tnum">${doneMin} из ${r.minutes} мин${r.progress.done ? ' · готово' : ''}</span></div>` : ''}
       </div>`;
-    }).join('') || '<p class="body-m muted">Пусто. Добавь первый блок — например «Математика, 1,5 ч».</p>';
+    }).join('') || `<p class="body-m muted">${tpl && target === 'off' ? 'В выходной плана нет — и это нормально. Можно добавить что-то лёгкое.' : 'Пусто. Добавь первый блок — например «Математика, 1,5 ч».'}</p>`;
     rows.forEach((r) => { r.fresh = false; r.bump = false; });
     markDirty();
   }
 
   function markDirty() {
     const cur = JSON.stringify(rows.map((r) => ({ name: r.name.trim(), minutes: r.minutes })));
-    dirty = cur !== JSON.stringify(base) || $('tpl').checked;
-    $('save').disabled = !dirty || rows.some((r) => !r.name.trim());
+    dirty = cur !== JSON.stringify(base) || (target === 'today' && $('tpl').checked);
+    $('save').disabled = !dirty || rows.some((r) => !r.name.trim()) || (target === 'today' && started && !rows.length);
     $('reset').disabled = !dirty;
   }
 
   async function load(force = false) {
-    const [s, cfg] = await Promise.all([call('get_state'), call('get_config')]);
-    const key = s.view.date;
+    const [st, c] = await Promise.all([call('get_state'), call('get_config')]);
+    cfg = c;
+    const key = `${st.view.date}|${target}`;
     if (!force && dirty && loadedFor === key) return;
     loadedFor = key;
     seg = cfg.timing.work_segment_min;
-    locked = s.view.lock.base && s.view.started && s.view.mode === 'plan' && s.view.lock.reason !== 'single';
-    started = s.view.started;
-    base = s.view.blocks.map((b) => ({ name: b.name, minutes: b.minutes }));
-    rows = s.view.blocks.map((b) => ({
-      name: b.name, minutes: b.minutes, orig: { name: b.name, minutes: b.minutes },
-      progress: { work_ms: b.work_ms, started: b.started, done: b.done },
-    }));
+    todayKind = st.view.kind;
+    started = st.view.started;
+    locked = st.view.lock.base && st.view.started && st.view.mode === 'plan' && st.view.lock.reason !== 'single';
+    if (target === 'today') {
+      base = st.view.blocks.map((b) => ({ name: b.name, minutes: b.minutes }));
+      rows = st.view.blocks.map((b) => ({
+        name: b.name, minutes: b.minutes, orig: { name: b.name, minutes: b.minutes },
+        progress: { work_ms: b.work_ms, started: b.started, done: b.done },
+      }));
+    } else {
+      base = cfg.profiles[target].plan.map((b) => ({ name: b.name, minutes: b.minutes }));
+      rows = base.map((b) => ({ ...b }));
+    }
     $('tpl').checked = false;
     render();
   }
@@ -117,12 +145,30 @@ export function mountPlan(root, ctx) {
   $('reset').addEventListener('click', () => load(true));
   $('save').addEventListener('click', async (e) => {
     const blocks = rows.map((r) => ({ name: r.name.trim(), minutes: r.minutes }));
-    const ok = await run(() => call('set_plan', { blocks, saveTemplate: $('tpl').checked }).then(() => true), e.currentTarget);
+    let ok;
+    if (target === 'today') {
+      ok = await run(() => call('set_plan', { blocks, saveTemplate: $('tpl').checked }).then(() => true), e.currentTarget);
+      if (ok) snack($('tpl').checked ? `План сохранён и стал шаблоном «${kindLabel(todayKind)}»` : 'План на сегодня сохранён');
+    } else {
+      const next = structuredClone(cfg);
+      next.profiles[target].plan = blocks;
+      ok = await run(() => call('save_config', { cfg: next }).then(() => true), e.currentTarget);
+      if (ok) snack(`Шаблон «${kindLabel(target)}» сохранён`);
+    }
     if (ok) {
-      snack($('tpl').checked ? 'План сохранён и стал шаблоном' : 'План на сегодня сохранён');
       dirty = false;
       await load(true);
     }
+  });
+  $('tabs').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (!b || b.dataset.tab === target) return;
+    if (dirty && !(await ask('Не сохранено', 'Изменения в этом плане пропадут.', 'Переключиться'))) return;
+    target = b.dataset.tab;
+    b.classList.add('just');
+    setTimeout(() => b.classList.remove('just'), 600);
+    dirty = false;
+    load(true);
   });
 
   return {

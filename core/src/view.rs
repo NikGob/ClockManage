@@ -3,7 +3,8 @@
 use serde::Serialize;
 
 use crate::clock::{self, Ts};
-use crate::config::{fmt_hm, Config};
+use crate::config::{fmt_hm, Config, DayKind};
+use crate::day::LAST_MINUTE;
 use crate::day::{BreakKind, DayState, LockState, Mode, Phase};
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,6 +58,10 @@ pub struct Can {
     pub extend_access: bool,
     pub end_access: bool,
     pub edit_pause_access: bool,
+    /// Today's day end can still move later.
+    pub extend_day_end: bool,
+    /// Today may switch to a lighter kind (outside of the lock).
+    pub lighter_kind: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,10 +70,16 @@ pub struct View {
     pub date: String,
     pub weekday: usize,
     pub study_day: bool,
+    pub kind: DayKind,
     pub started: bool,
     pub completed: bool,
     pub after_day_end: bool,
     pub day_end: String,
+    /// Effective day end and the current time, minutes after local midnight.
+    pub day_end_min: u32,
+    pub now_min: u32,
+    /// Day end from the settings (without today's extension).
+    pub day_end_base: String,
     pub mode: Mode,
     pub phase: PhaseView,
     pub blocks: Vec<BlockView>,
@@ -216,6 +227,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
     let lunch_break = matches!(d.phase, Phase::Break { brk: BreakKind::Lunch { .. }, .. });
     let access_open = matches!(lock.reason.as_str(), "emergency" | "pause_access");
     let after_day_end = d.after_day_end(now, cfg);
+    let day_end = d.day_end(cfg);
     let can = Can {
         start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.plan.iter().any(|b| b.minutes > 0),
         pause: running && !lunch_break,
@@ -228,6 +240,12 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         extend_access: cfg.pause_access && paused && lock.base,
         end_access: access_open,
         edit_pause_access: !lock.base,
+        extend_day_end: d.study_day
+            && d.mode == Mode::Plan
+            && d.completed_at.is_none()
+            && clock::local_date(now, cfg.tz_offset_min) == d.date
+            && day_end < LAST_MINUTE,
+        lighter_kind: !d.plan_lock(now, cfg),
     };
 
     View {
@@ -235,10 +253,14 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         date: d.date.format("%Y-%m-%d").to_string(),
         weekday: clock::weekday_index(now, cfg.tz_offset_min),
         study_day: d.study_day,
+        kind: d.kind,
         started: d.started_at.is_some(),
         completed: d.completed_at.is_some(),
         after_day_end,
-        day_end: fmt_hm(cfg.day_end_min),
+        day_end: fmt_hm(day_end),
+        day_end_min: day_end,
+        now_min: clock::minute_of_day(now, cfg.tz_offset_min),
+        day_end_base: fmt_hm(cfg.day_end_min),
         mode: d.mode,
         planned_ms: d.plan.iter().map(|b| b.total_ms()).sum(),
         work_ms: blocks.iter().map(|b| b.work_ms).sum(),
