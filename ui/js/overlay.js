@@ -9,6 +9,10 @@ let hideTimer = 0;
 let stopBoil = () => {};
 let current = null;
 let lastView = null;
+// The alarm pops up over whatever the user is doing: a click or Enter that was meant for the
+// window underneath must not press "Начать часть" the instant it appears.
+const ARM_MS = 900;
+let armedAt = 0;
 
 installRipples();
 
@@ -46,8 +50,9 @@ function render(p) {
   requestAnimationFrame(() => card.classList.add('in'));
   stopBoil = play(stage, { extraMs: { await: 3600, break: 1800 }[p.kind] ?? 1200, jitter: p.kind !== 'nope' });
   updateWaiting();
+  armedAt = performance.now() + ARM_MS;
   const primary = stage.querySelector('[data-act="start"]') || stage.querySelector('[data-act="hide"]');
-  if (primary && !passive) setTimeout(() => primary.focus({ preventScroll: true }), 350);
+  if (primary && !passive) setTimeout(() => primary.focus({ preventScroll: true }), ARM_MS);
   if (passive) hideTimer = setTimeout(hide, p.auto_hide_ms || 5000);
 }
 
@@ -77,6 +82,7 @@ function updateWaiting() {
 stage.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
+  if (performance.now() < armedAt) return;
   if (b.dataset.act === 'start') {
     b.setAttribute('aria-busy', 'true');
     try {

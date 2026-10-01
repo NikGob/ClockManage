@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::clock::{self, MIN};
+use crate::config::DayKind;
 use crate::day::DayState;
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +41,7 @@ pub struct EmergencyStats {
 #[derive(Debug, Clone, Serialize)]
 pub struct DayStats {
     pub date: String,
+    pub kind: DayKind,
     pub study_day: bool,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
@@ -119,6 +121,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
     let pauses_ms: i64 = d.pauses.iter().map(|r| r.end - r.start).sum::<i64>() + d.pause.as_ref().map(|p| now - p.since).unwrap_or(0);
     DayStats {
         date: d.date.format("%Y-%m-%d").to_string(),
+        kind: d.kind,
         study_day: d.study_day,
         started_at: d.started_at.map(iso),
         completed_at: d.completed_at.map(iso),

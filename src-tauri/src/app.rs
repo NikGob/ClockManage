@@ -889,6 +889,7 @@ pub struct DaySummary {
     pauses_min: f64,
     emergencies: usize,
     pause_access_min: f64,
+    kind: DayKind,
     study_day: bool,
     started: bool,
 }
@@ -920,6 +921,7 @@ pub fn list_days(s: S) -> Vec<DaySummary> {
             pauses_min: st.pauses_min,
             emergencies: st.emergency_count,
             pause_access_min: st.pause_access_min,
+            kind: st.kind,
             study_day: st.study_day,
             started: st.started_at.is_some(),
         });

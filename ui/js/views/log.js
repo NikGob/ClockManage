@@ -1,7 +1,7 @@
 import { call, esc, minutes } from '../api.js';
 import { icon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
-import { run, snack, dateLabel } from '../ui.js';
+import { run, snack, dateLabel, kindLabel } from '../ui.js';
 
 const fmtMin = (m) => minutes(Math.round(m));
 const hmOf = (iso) => (iso && iso.length >= 16 ? iso.slice(11, 16) : '—');
@@ -31,6 +31,7 @@ export function mountLog(root, ctx) {
     $('days').innerHTML = days.map((d) => {
       const frac = d.planned_min ? Math.min(1, d.actual_min / d.planned_min) : 0;
       const flags = [
+        d.kind && d.kind !== 'full' ? kindLabel(d.kind).toLowerCase() : '',
         d.emergencies ? `<span class="flag">аварийно ×${d.emergencies}</span>` : '',
         d.pauses ? `пауз ${d.pauses}` : '',
       ].filter(Boolean).join(' · ');
@@ -59,6 +60,7 @@ export function mountLog(root, ctx) {
     el.innerHTML = `
       <button class="btn text interactive back" data-back>${icon('up')}Все дни</button>
       <h2>${esc(dateLabel(st.date))}</h2>
+      ${st.kind ? `<p class="body-m muted" style="margin-top:-12px">${esc(kindLabel(st.kind))} день${st.study_day ? '' : ' · без блокировки'}</p>` : ''}
       <div class="facts">
         <div class="fact"><div class="v tnum">${fmtMin(st.actual_min)}</div><div class="k">ФАКТ ИЗ ${fmtMin(st.planned_min).toUpperCase()}</div></div>
         <div class="fact"><div class="v tnum">${st.pauses_count}</div><div class="k">ПАУЗ · ${fmtMin(st.pauses_min).toUpperCase()}</div></div>

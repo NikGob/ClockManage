@@ -65,9 +65,9 @@ export function mountSettings(root, ctx) {
     const down = snap(v, -1, step);
     const up = snap(v, 1, step);
     return `<div class="num-step" role="group" aria-label="${esc(label)}">
-      <button class="icon-btn interactive" data-step="${path}" data-d="-1" data-to="${down}" aria-label="Меньше: ${down} ${unit}" ${disabled || down < min ? 'disabled' : ''}>${icon('remove')}</button>
+      <button class="icon-btn interactive" data-step="${path}" data-d="-1" data-sz="${step}" data-lo="${min}" data-hi="${Math.min(max, ceil)}" aria-label="Меньше: ${down} ${unit}" ${disabled || down < min ? 'disabled' : ''}>${icon('remove')}</button>
       <span class="v tnum">${v}<small> ${unit}</small></span>
-      <button class="icon-btn interactive" data-step="${path}" data-d="1" data-to="${up}" aria-label="Больше: ${up} ${unit}" ${disabled || up > Math.min(max, ceil) ? 'disabled' : ''}>${icon('add')}</button>
+      <button class="icon-btn interactive" data-step="${path}" data-d="1" data-sz="${step}" data-lo="${min}" data-hi="${Math.min(max, ceil)}" aria-label="Больше: ${up} ${unit}" ${disabled || up > Math.min(max, ceil) ? 'disabled' : ''}>${icon('add')}</button>
     </div>`;
   };
 
@@ -222,13 +222,20 @@ export function mountSettings(root, ctx) {
     return el.id ? `#${el.id}` : null;
   }
 
-  async function save(mut, okText) {
-    const next = structuredClone(cfg);
-    mut(next);
-    const saved = await run(() => call('save_config', { cfg: next }));
-    if (saved) { cfg = saved; if (okText) snack(okText); }
-    render();
-    return !!saved;
+  // Saves run one after another, each on top of the result of the previous one, so two quick
+  // changes never overwrite each other.
+  let queue = Promise.resolve();
+  function save(mut, okText) {
+    const job = queue.then(async () => {
+      const next = structuredClone(cfg);
+      mut(next);
+      const saved = await run(() => call('save_config', { cfg: next }));
+      if (saved) { cfg = saved; if (okText) snack(okText); }
+      render();
+      return !!saved;
+    });
+    queue = job.catch(() => {});
+    return job;
   }
 
   // Theme changes spread as a circle from the pressed control (View Transitions API).
@@ -290,7 +297,12 @@ export function mountSettings(root, ctx) {
     else if (t.dataset.step) {
       const path = t.dataset.step;
       pulse = `[data-step="${path}"][data-d="${t.dataset.d}"]`;
-      save((c) => setPath(c, path, Number(t.dataset.to)));
+      const { d, sz, lo, hi } = t.dataset;
+      // Step from the value the save actually applies to (several quick clicks add up).
+      save((c) => {
+        const v = path.split('.').reduce((o, k) => o[k], c);
+        setPath(c, path, Math.min(Number(hi), Math.max(Number(lo), snap(v, Number(d), Number(sz)))));
+      });
     } else if (t.dataset.tpl) {
       ctx.planTab = t.dataset.tpl;
       ctx.navigate('plan');

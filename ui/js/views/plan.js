@@ -150,7 +150,8 @@ export function mountPlan(root, ctx) {
       ok = await run(() => call('set_plan', { blocks, saveTemplate: $('tpl').checked }).then(() => true), e.currentTarget);
       if (ok) snack($('tpl').checked ? `План сохранён и стал шаблоном «${kindLabel(todayKind)}»` : 'План на сегодня сохранён');
     } else {
-      const next = structuredClone(cfg);
+      // Fresh config: the one loaded with this screen may be stale (MCP, another save).
+      const next = await call('get_config');
       next.profiles[target].plan = blocks;
       ok = await run(() => call('save_config', { cfg: next }).then(() => true), e.currentTarget);
       if (ok) snack(`Шаблон «${kindLabel(target)}» сохранён`);
