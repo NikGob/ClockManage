@@ -176,6 +176,12 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .plan-card .head .row1 { display: flex; align-items: center; gap: 8px; }
 .plan-card .head .row1 h2 { font: 400 22px/28px var(--font-display); flex: 1; }
 .plan-card .total { font: 600 14px/20px var(--font); color: var(--md-sys-color-on-surface-variant); }
+.plan-card .dayend { display: flex; align-items: center; gap: 8px; margin-top: 4px; font: 400 14px/20px var(--font); color: var(--md-sys-color-on-surface-variant); }
+.plan-card .dayend .grow { flex: 1; min-width: 0; }
+.plan-card .dayend b { font-weight: 600; color: var(--md-sys-color-on-surface); }
+.plan-card .dayend .bad, .error-text { color: var(--md-sys-color-error); }
+.plan-card .dayend .ok { color: var(--md-sys-color-primary); }
+.dlg .actions .grow { flex: 1; }
 .blk { display: grid; grid-template-columns: 24px 1fr auto; gap: 4px 16px; align-items: center; padding: 12px 16px; border-radius: var(--shape-l); transition: background-color var(--dur-m1) var(--ease); }
 .blk.current { background: var(--tint-strong); color: var(--md-sys-color-on-surface); }
 .blk .st { width: 24px; height: 24px; display: grid; place-items: center; color: var(--md-sys-color-on-surface-variant); }

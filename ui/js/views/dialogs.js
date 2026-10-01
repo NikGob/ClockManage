@@ -1,4 +1,4 @@
-import { call, esc } from '../api.js';
+import { call, esc, dur } from '../api.js';
 import { icon } from '../icons.js';
 import { dialog, run, snack } from '../ui.js';
 
@@ -177,5 +177,59 @@ export function captchaDialog(minutes) {
 
     await load();
     refresh();
+  });
+}
+
+/** One-off day end for today only: later when there is no time, earlier to finish sooner. */
+export function dayEndDialog(v) {
+  const midnight = v.day_end_at - v.day_end_min * 60000;
+  return dialog(`
+    <h2>Конец дня</h2>
+    <p class="body-m muted">Только на сегодня — в настройках останется ${esc(v.day_end_base)}. Блокировка, таймеры и уведомление «день закончен» сразу пойдут от нового времени.</p>
+    <div class="inline-form">
+      <div class="field"><label for="de-time">Конец дня, МСК</label><input id="de-time" type="time" value="${esc(v.day_end)}" required autofocus>
+        <span class="support">Позже текущего времени и не позже 02:00 ночи</span></div>
+    </div>
+    <div class="field"><label for="de-reason">Причина — в лог, необязательно</label><input id="de-reason" maxlength="200" autocomplete="off"></div>
+    <p class="body-m" id="de-fit" aria-live="polite"></p>
+    <div class="actions">
+      ${v.day_end_changed ? `<button class="btn text interactive" data-reset>Вернуть ${esc(v.day_end_base)}</button><span class="grow"></span>` : ''}
+      <button class="btn text interactive" data-close>Отмена</button>
+      <button class="btn filled interactive" data-ok>${icon('check')}Сохранить</button>
+    </div>`, (d, close) => {
+    const time = d.querySelector('#de-time');
+    const fit = d.querySelector('#de-fit');
+    const ok = d.querySelector('[data-ok]');
+    const target = (hm) => {
+      const [h, m] = hm.split(':').map(Number);
+      if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+      const min = h * 60 + m;
+      return midnight + (min <= 120 ? min + 1440 : min) * 60000;
+    };
+    const preview = () => {
+      const ts = target(time.value);
+      const f = v.forecast;
+      let text = '';
+      let bad = false;
+      if (ts === null) { text = 'Укажи время'; bad = true; }
+      else if (ts <= Date.now()) { text = 'Это время уже прошло'; bad = true; }
+      else if (f.work_left_ms <= 0) text = 'План на сегодня уже закрыт';
+      else {
+        const margin = ts - f.finish_at;
+        text = `Осталось ${dur(f.work_left_ms)} учёбы + ${dur(f.breaks_left_ms)} перерывов: ${margin >= 0 ? `влезает, запас ${dur(margin)}` : `не влезает на ${dur(-margin)}`}`;
+      }
+      fit.textContent = text;
+      fit.classList.toggle('error-text', bad);
+      ok.disabled = bad;
+    };
+    time.addEventListener('input', preview);
+    preview();
+    const submit = async (hm, btn) => {
+      const reason = d.querySelector('#de-reason').value.trim() || null;
+      const r = await run(() => call('set_day_end', { time: hm, reason }), btn);
+      if (r) close(r);
+    };
+    ok.addEventListener('click', (e) => submit(time.value, e.currentTarget));
+    d.querySelector('[data-reset]')?.addEventListener('click', (e) => { e.preventDefault(); submit(v.day_end_base, e.currentTarget); });
   });
 }

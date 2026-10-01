@@ -1,4 +1,5 @@
 import { call, on, installRipples, esc } from './api.js';
+import { snack } from './ui.js';
 import { applyTheme } from './theme.js';
 import { installTooltips, hideTip } from './tooltip.js';
 import { icon } from './icons.js';
@@ -98,6 +99,8 @@ function render(s) {
 on('state', render);
 on('config', () => screen?.config?.());
 on('navigate', (id) => go(id));
+// Changes made by the agent through MCP, so it is clear they were not mine.
+on('agent', (p) => snack(`${p.title}: ${p.text}`, 7000));
 
 (async () => {
   let start = 'today';

@@ -12,7 +12,7 @@ const SWATCHES = [
 const TIP = {
   block: 'В такой день «Начать день» закрывает сайты и приложения из списка — до конца дня или пока не закроешь весь план.',
   plan: 'С этого плана начинается каждый такой день. Сегодняшний план правится на экране «План».',
-  dayEnd: 'Во сколько блокировка снимается сама, даже если план не закрыт. Во время учёбы время можно только сдвинуть позже.\nПродлить только сегодняшний день — нажми на время на экране «Сегодня».',
+  dayEnd: 'Во сколько блокировка снимается сама, даже если план не закрыт. Во время учёбы это значение по умолчанию можно только сдвинуть позже.\nСдвинуть только сегодняшний день (позже или раньше, до 02:00 ночи) — нажми на время на экране «Сегодня».',
   seg: 'Блок режется на отрезки такой длины. Хвост короче 15 мин приклеивается к последнему отрезку: 50 мин — это один отрезок.',
   short: 'Отдых между отрезками одного блока. Не съедает учебное время. Во время учёбы его можно только сократить.',
   between: 'Отдых после закрытого блока, перед следующим. Во время учёбы — только короче.',
@@ -120,7 +120,7 @@ export function mountSettings(root, ctx) {
         <h2>Учебный день</h2>
         <div class="surface">
           <div class="setting">
-            <div class="grow"><div class="t">Конец дня${info('dayEnd')}</div><div class="d">Блокировка снимается в это время (МСК)${v.day_end !== v.day_end_base ? ` · сегодня продлено до ${esc(v.day_end)}` : ''}</div></div>
+            <div class="grow"><div class="t">Конец дня${info('dayEnd')}</div><div class="d">Блокировка снимается в это время (МСК)${v.day_end_changed ? ` · сегодня — до ${esc(v.day_end)}${v.day_end_next_day ? ' ночи' : ''}` : ''}</div></div>
             <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" ${locked ? `min="${hm(cfg.day_end_min)}"` : ''} aria-label="Конец дня" ${tipAttr('dayEnd')}></div>
           </div>
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">Отрезок работы${info('seg')}</div><div class="d">1,5 ч = 45 + 45</div></div>
@@ -180,7 +180,7 @@ export function mountSettings(root, ctx) {
         <h2>MCP для Claude</h2>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">Локальный MCP-сервер</div>
-            <div class="d">${m.mcp.running ? `Работает на 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `Не запущен${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : 'Выключен'}</div></div>${sw('mcp_enabled', cfg.mcp_enabled, 'MCP-сервер', 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `Работает на 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `Не запущен${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : 'Выключен'}. Инструменты: set_plan, set_day_end, get_plan, get_session_state, get_today_stats.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, 'MCP-сервер', 'mcp')}</div>
           <div class="setting col">
             <div class="t">Адрес</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="Скопировать адрес">${icon('copy')}</button></div>

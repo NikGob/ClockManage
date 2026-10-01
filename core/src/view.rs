@@ -2,10 +2,9 @@
 
 use serde::Serialize;
 
-use crate::clock::{self, Ts};
+use crate::clock::{Ts, MIN};
 use crate::config::{fmt_hm, Config, DayKind};
-use crate::day::LAST_MINUTE;
-use crate::day::{BreakKind, DayState, LockState, Mode, Phase};
+use crate::day::{fmt_day_min, BreakKind, DayState, Forecast, LockState, Mode, Phase, MAX_DAY_END_MIN};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PhaseView {
@@ -58,8 +57,10 @@ pub struct Can {
     pub extend_access: bool,
     pub end_access: bool,
     pub edit_pause_access: bool,
-    /// Today's day end can still move later.
+    /// Today's day end can still move later (quick "+30 мин / +1 ч" buttons).
     pub extend_day_end: bool,
+    /// Today's day end can be set to any time (later or earlier) for today.
+    pub set_day_end: bool,
     /// Today may switch to a lighter kind (outside of the lock).
     pub lighter_kind: bool,
 }
@@ -74,12 +75,19 @@ pub struct View {
     pub started: bool,
     pub completed: bool,
     pub after_day_end: bool,
+    /// Today's day end ("23:00"); may differ from the template after a one-off shift.
     pub day_end: String,
-    /// Effective day end and the current time, minutes after local midnight.
+    /// Effective day end and the current time, minutes after the day's own midnight
+    /// (both may run past 1440 when the day end was moved into the night).
     pub day_end_min: u32,
     pub now_min: u32,
-    /// Day end from the settings (without today's extension).
+    /// Day end from the settings (without today's shift).
     pub day_end_base: String,
+    pub day_end_at: Ts,
+    pub day_end_next_day: bool,
+    pub day_end_changed: bool,
+    /// Does the rest of the plan fit before today's day end?
+    pub forecast: Forecast,
     pub mode: Mode,
     pub phase: PhaseView,
     pub blocks: Vec<BlockView>,
@@ -243,24 +251,29 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         extend_day_end: d.study_day
             && d.mode == Mode::Plan
             && d.completed_at.is_none()
-            && clock::local_date(now, cfg.tz_offset_min) == d.date
-            && day_end < LAST_MINUTE,
+            && d.is_live(now, cfg)
+            && day_end < MAX_DAY_END_MIN,
         lighter_kind: !d.plan_lock(now, cfg),
+        set_day_end: d.mode == Mode::Plan && d.is_live(now, cfg),
     };
 
     View {
         now,
         date: d.date.format("%Y-%m-%d").to_string(),
-        weekday: clock::weekday_index(now, cfg.tz_offset_min),
+        weekday: d.weekday(),
         study_day: d.study_day,
         kind: d.kind,
         started: d.started_at.is_some(),
         completed: d.completed_at.is_some(),
         after_day_end,
-        day_end: fmt_hm(day_end),
+        day_end: fmt_day_min(day_end),
         day_end_min: day_end,
-        now_min: clock::minute_of_day(now, cfg.tz_offset_min),
+        now_min: ((now - d.day_end_at(cfg)) / MIN + day_end as i64).max(0) as u32,
         day_end_base: fmt_hm(cfg.day_end_min),
+        day_end_at: d.day_end_at(cfg),
+        day_end_next_day: day_end >= 24 * 60,
+        day_end_changed: day_end != cfg.day_end_min,
+        forecast: d.forecast(now, cfg),
         mode: d.mode,
         planned_ms: d.plan.iter().map(|b| b.total_ms()).sum(),
         work_ms: blocks.iter().map(|b| b.work_ms).sum(),

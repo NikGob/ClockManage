@@ -36,9 +36,20 @@ pub fn weekday_index(ts: Ts, tz_offset_min: i32) -> usize {
 
 /// Timestamp of `minute` on the local date of `ts`.
 pub fn at_minute(ts: Ts, tz_offset_min: i32, minute: u32) -> Ts {
-    let d = local_date(ts, tz_offset_min);
-    let naive = d.and_hms_opt(minute / 60, minute % 60, 0).unwrap_or_default();
-    naive.and_utc().timestamp_millis() - tz_offset_min as i64 * MIN
+    date_minute(local_date(ts, tz_offset_min), tz_offset_min, minute)
+}
+
+/// Timestamp of `minute` after local midnight of `date`; may run past 24:00 into the next day.
+pub fn date_minute(date: NaiveDate, tz_offset_min: i32, minute: u32) -> Ts {
+    let midnight = date.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp_millis();
+    midnight + minute as i64 * MIN - tz_offset_min as i64 * MIN
+}
+
+/// "23:00", "7:05" -> minutes after midnight.
+pub fn parse_hm(s: &str) -> Option<u32> {
+    let (h, m) = s.trim().split_once(':')?;
+    let (h, m): (u32, u32) = (h.trim().parse().ok()?, m.trim().parse().ok()?);
+    (h < 24 && m < 60 && s.trim().len() <= 5).then_some(h * 60 + m)
 }
 
 pub fn hm(ts: Ts, tz_offset_min: i32) -> String {
@@ -60,5 +71,17 @@ mod tests {
         assert_eq!(minute_of_day(ts, 180), 22 * 60);
         assert_eq!(at_minute(ts, 180, 22 * 60), ts);
         assert_eq!(weekday_index(ts, 180), 0);
+        // 01:00 MSK of the next day counted from 2026-09-28
+        let next = DateTime::parse_from_rfc3339("2026-09-28T22:00:00Z").unwrap().timestamp_millis();
+        assert_eq!(date_minute(local_date(ts, 180), 180, 25 * 60), next);
+    }
+
+    #[test]
+    fn hm_parsing() {
+        assert_eq!(parse_hm("23:00"), Some(1380));
+        assert_eq!(parse_hm("7:05"), Some(425));
+        assert_eq!(parse_hm("24:00"), None);
+        assert_eq!(parse_hm("12:60"), None);
+        assert_eq!(parse_hm("2300"), None);
     }
 }

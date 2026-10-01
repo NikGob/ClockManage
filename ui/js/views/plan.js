@@ -52,19 +52,20 @@ export function mountPlan(root, ctx) {
     $('tpl-l').textContent = `Сохранить и как шаблон «${kindLabel(todayKind)}»`;
     $('save').lastChild.textContent = tpl ? 'Сохранить шаблон' : 'Сохранить план';
     $('lock-note').innerHTML = locked && !tpl
-      ? `<div class="lock-note">${icon('lock')}<div><div class="title-s">Идёт учебный день</div><div class="body-m">Блоки можно только добавлять и удлинять. Сократить или удалить — нельзя до конца дня.</div></div></div>`
+      ? `<div class="lock-note">${icon('lock')}<div><div class="title-s">Идёт учебный день</div><div class="body-m">Не начатые блоки можно урезать и удалять, начатый — урезать не меньше уже отработанного. Отработанное время не стирается.</div></div></div>`
       : '';
     $('rows').innerHTML = rows.map((r, i) => {
       const o = tpl ? null : r.orig;
-      const minMinutes = locked && o ? o.minutes : STEP;
-      const canDelete = tpl || (!(locked && o) && !(r.progress?.work_ms > 0));
+      // Started block during the lock: not below the time already worked; never deleted.
+      const minMinutes = o ? minFor(r) : STEP;
+      const canDelete = tpl || !(r.progress?.started || r.progress?.work_ms > 0);
       const parts = partsPreview(r.minutes, seg);
       const doneMin = r.progress ? Math.floor(r.progress.work_ms / 60000) : 0;
       const cls = r.fresh ? 'prow fresh' : 'prow';
       return `<div class="${cls}" data-i="${i}">
         <input class="name" value="${esc(r.name)}" aria-label="Название блока ${i + 1}" maxlength="40" ${locked && o && r.progress?.started ? 'disabled' : ''}>
         <div class="stepper" role="group" aria-label="Длительность">
-          <button class="icon-btn interactive" data-a="minus" aria-label="Меньше на ${STEP} мин" ${r.minutes - STEP < minMinutes ? 'disabled' : ''}>${icon('remove')}</button>
+          <button class="icon-btn interactive" data-a="minus" aria-label="Меньше на ${STEP} мин" ${r.minutes <= minMinutes ? 'disabled' : ''}>${icon('remove')}</button>
           <div class="val tnum${r.bump ? ' bump' : ''}">${hoursLabel(r.minutes)}<small>${parts.join(' + ')} мин</small></div>
           <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${STEP} мин" ${r.minutes + STEP > 480 ? 'disabled' : ''}>${icon('add')}</button>
         </div>
@@ -78,6 +79,11 @@ export function mountPlan(root, ctx) {
     }).join('') || `<p class="body-m muted">${tpl && target === 'off' ? 'В выходной плана нет — и это нормально. Можно добавить что-то лёгкое.' : 'Пусто. Добавь первый блок — например «Математика, 1,5 ч».'}</p>`;
     rows.forEach((r) => { r.fresh = false; r.bump = false; });
     markDirty();
+  }
+
+  function minFor(r) {
+    const touched = !!(r.progress?.started || r.progress?.work_ms > 0);
+    return locked && touched ? Math.max(1, Math.ceil(r.progress.work_ms / 60000)) : STEP;
   }
 
   function markDirty() {
@@ -118,7 +124,7 @@ export function mountPlan(root, ctx) {
     const r = rows[i];
     switch (b.dataset.a) {
       case 'plus': r.minutes = Math.min(480, r.minutes + STEP); r.bump = true; break;
-      case 'minus': r.minutes = Math.max(STEP, r.minutes - STEP); r.bump = true; break;
+      case 'minus': r.minutes = Math.max(minFor(r), r.minutes - STEP); r.bump = true; break;
       case 'up': [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; break;
       case 'down': [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; break;
       case 'del': {
