@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
-use clockmanage_core::day::{Event, PlanBlock, SingleCfg};
+use clockmanage_core::day::{fmt_change, fmt_day_min, Event, Forecast, PlanBlock, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
 use clockmanage_core::{mcp::McpHost, Config, DayState};
@@ -74,6 +74,7 @@ pub struct Meta {
     pub variant: SchemeVariant,
     pub mini_contrast: bool,
     pub data_dir: String,
+    pub tz_offset_min: i32,
 }
 
 #[derive(Serialize, Clone)]
@@ -108,6 +109,7 @@ impl Shared {
                 variant: g.cfg.appearance.variant,
                 mini_contrast: g.cfg.appearance.mini_contrast,
                 data_dir: self.store.dir.display().to_string(),
+                tz_offset_min: g.cfg.tz_offset_min,
             },
         }
     }
@@ -178,6 +180,12 @@ impl Shared {
             "kind": "nope", "passive": true, "auto_hide_ms": 3000,
             "title": "Не-не-не", "text": text,
         }));
+    }
+
+    /// Something was changed by the agent through MCP, not by the user: say so in the UI.
+    fn agent_notice(&self, title: &str, text: &str) {
+        let _ = self.app.emit("agent", json!({ "title": title, "text": text }));
+        self.notify(title, text);
     }
 
     pub fn update_tray(&self, v: &View) {
@@ -378,6 +386,11 @@ fn today_str(now: Ts, cfg: &Config) -> String {
 pub fn load_today(store: &Store, cfg: &Config, now: Ts) -> DayState {
     let today = today_str(now, cfg);
     if let Some(mut old) = store.last_other_day(&today) {
+        // Yesterday's day end was moved past midnight and is still ahead: it is still "today".
+        if old.is_live(now, cfg) {
+            old.restore(now, cfg);
+            return old;
+        }
         if old.pause.is_some() || !matches!(old.phase, clockmanage_core::day::Phase::Idle | clockmanage_core::day::Phase::Done) {
             let end = old.saved_at;
             old.finalize(end);
@@ -417,7 +430,7 @@ fn ticker(shared: Arc<Shared>) {
         let (events, snap, emit, blocked, sites, apps, killed_note, restart_ff) = {
             let mut g = shared.lock();
             let g = &mut *g;
-            if clock::local_date(now, g.cfg.tz_offset_min) != g.day.date {
+            if !g.day.is_live(now, &g.cfg) {
                 g.day.finalize(now);
                 shared.store.save_day(&g.day);
                 g.day = DayState::new(now, &g.cfg);
@@ -593,6 +606,9 @@ impl McpHost for McpBridge {
             "planned": fmt_dur(v.planned_ms),
             "blocking": { "active": v.lock.blocked, "day_lock": v.lock.base, "reason": v.lock.reason },
             "day_end": v.day_end,
+            "day_end_default": v.day_end_base,
+            "day_end_next_day": v.day_end_next_day,
+            "plan_forecast": forecast_json(&v.forecast, s.meta.tz_offset_min),
         })
     }
 
@@ -618,25 +634,91 @@ impl McpHost for McpBridge {
             "today": g.day.plan,
             "profile": g.day.kind,
             "template": g.cfg.profile(g.day.kind).plan,
-            "started": g.day.started_at.is_some()
+            "started": g.day.started_at.is_some(),
+            "day_end": fmt_day_min(g.day.day_end(&g.cfg)),
+            "day_end_default": clockmanage_core::config::fmt_hm(g.cfg.day_end_min),
         })
     }
 
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String> {
-        let shared = &self.0;
-        let res = shared.mutate(|g, now| {
-            let locked = g.day.plan_lock(now, &g.cfg);
-            g.day.set_plan(now, plan.clone(), locked)?;
-            if save_as_template {
-                let kind = g.day.kind;
-                g.cfg.profiles.get_mut(kind).plan = g.day.plan.clone();
-                shared.store.save_config(&g.cfg);
-            }
-            Ok(json!({ "ok": true, "plan": g.day.plan, "locked": locked }))
-        })?;
-        let _ = shared.app.emit("config", ());
-        Ok(res)
+        apply_plan(&self.0, plan, save_as_template, "mcp")
     }
+
+    fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String> {
+        apply_day_end(&self.0, time, reason, "mcp")
+    }
+}
+
+fn forecast_json(f: &Forecast, tz: i32) -> Value {
+    json!({
+        "plan_left_min": (f.work_left_ms + MIN - 1) / MIN,
+        "breaks_left_min": f.breaks_left_ms / MIN,
+        "finish_estimate": clock::hm(f.finish_at, tz),
+        "fits": f.fits,
+        "margin_min": f.margin_ms.div_euclid(MIN),
+        "note": "Если продолжать прямо сейчас без пауз; обед не учтён.",
+    })
+}
+
+/// Set today's plan from the UI (`by = "ui"`) or the agent (`"mcp"`).
+pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, save_as_template: bool, by: &str) -> Result<Value, String> {
+    let (res, changes) = shared.mutate(|g, now| {
+        let locked = g.day.plan_lock(now, &g.cfg);
+        let changes = g.day.set_plan(now, plan.clone(), locked)?;
+        if save_as_template {
+            let kind = g.day.kind;
+            g.cfg.profiles.get_mut(kind).plan = g.day.plan.clone();
+            shared.store.save_config(&g.cfg);
+        }
+        let res = json!({
+            "ok": true,
+            "plan": g.day.plan,
+            "locked": locked,
+            "changes": changes,
+            "changed": changes.iter().map(fmt_change).collect::<Vec<_>>(),
+            "plan_forecast": forecast_json(&g.day.forecast(now, &g.cfg), g.cfg.tz_offset_min),
+        });
+        Ok((res, changes))
+    })?;
+    let _ = shared.app.emit("config", ());
+    if by == "mcp" && !changes.is_empty() {
+        shared.agent_notice("Агент изменил план", &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
+    }
+    Ok(res)
+}
+
+/// One-off shift of today's day end from the UI or the agent.
+pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by: &str) -> Result<Value, String> {
+    let (res, notice) = shared.mutate(|g, now| {
+        let c = g.day.set_day_end(now, &g.cfg, time, reason, by)?;
+        let tz = g.cfg.tz_offset_min;
+        let changed = c.from_min != c.to_min;
+        let lock = g.day.lock_state(now, &g.cfg);
+        let res = json!({
+            "ok": true,
+            "changed": changed,
+            "old": fmt_day_min(c.from_min),
+            "new": fmt_day_min(c.to_min),
+            "new_is_next_day": c.to_min >= 24 * 60,
+            "day_end_default": clockmanage_core::config::fmt_hm(g.cfg.day_end_min),
+            "reason": c.reason,
+            "plan": forecast_json(&g.day.forecast(now, &g.cfg), tz),
+            "blocking": { "active": lock.blocked, "day_lock": lock.base, "reason": lock.reason },
+        });
+        let notice = changed.then(|| {
+            format!(
+                "{} → {}{}",
+                fmt_day_min(c.from_min),
+                fmt_day_min(c.to_min),
+                c.reason.as_ref().map(|r| format!(" ({r})")).unwrap_or_default()
+            )
+        });
+        Ok((res, notice))
+    })?;
+    if let (Some(text), "mcp") = (notice, by) {
+        shared.agent_notice("Агент изменил конец дня", &text);
+    }
+    Ok(res)
 }
 
 // ---------------- commands ----------------
@@ -664,7 +746,7 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
         let old = std::mem::replace(&mut g.cfg, cfg.clone());
         if g.day.started_at.is_none() {
-            let wd = clock::weekday_index(now, g.cfg.tz_offset_min);
+            let wd = g.day.weekday();
             let kind = g.day.kind;
             if old.week[wd] != g.cfg.week[wd] {
                 // Today was re-assigned in the week schedule: follow it.
@@ -816,7 +898,12 @@ pub fn stop_single(s: S) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(), String> {
-    McpBridge(s.inner().clone()).set_plan(blocks, save_template).map(|_| ())
+    apply_plan(s.inner(), blocks, save_template, "ui").map(|_| ())
+}
+
+#[tauri::command]
+pub fn set_day_end(s: S, time: String, reason: Option<String>) -> Result<Value, String> {
+    apply_day_end(s.inner(), &time, reason.as_deref(), "ui")
 }
 
 #[tauri::command]

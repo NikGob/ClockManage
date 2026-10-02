@@ -118,6 +118,7 @@ fn main() {
             app::start_single,
             app::stop_single,
             app::set_plan,
+            app::set_day_end,
             app::emergency,
             app::end_access,
             app::captcha_new,

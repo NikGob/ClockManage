@@ -14,6 +14,7 @@ pub trait McpHost {
     fn day_stats(&self, date: Option<&str>) -> Result<Value, String>;
     fn get_plan(&self) -> Value;
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String>;
+    fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String>;
 }
 
 fn tools() -> Value {
@@ -28,7 +29,7 @@ fn tools() -> Value {
         {
             "name": "get_today_stats",
             "title": "Статистика дня",
-            "description": "Фактическое время по каждому блоку, паузы (сколько и сколько длились), доступ к заблокированному на паузе, аварийные доступы, обед. Без аргумента — сегодня.",
+            "description": "Фактическое время по каждому блоку, паузы (сколько и сколько длились), доступ к заблокированному на паузе, аварийные доступы, обед, разовые сдвиги конца дня (day_end_changes). Без аргумента — сегодня.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, по умолчанию сегодня (МСК)" } },
@@ -39,14 +40,14 @@ fn tools() -> Value {
         {
             "name": "get_plan",
             "title": "План дня",
-            "description": "План сегодняшнего дня и шаблон по умолчанию.",
+            "description": "План сегодняшнего дня и шаблон по умолчанию, конец дня на сегодня (day_end) и из шаблона (day_end_default).",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "set_plan",
             "title": "Задать план дня",
-            "description": "Заменяет план сегодняшнего дня списком блоков. Пока действует блокировка, блоки можно только добавлять или удлинять — сокращение будет отклонено.",
+            "description": "Заменяет план сегодняшнего дня списком блоков (блоки сопоставляются со старыми по имени). Можно добавлять, удлинять, урезать и удалять ещё не начатые блоки. Начатый блок нельзя удалить или переименовать, а пока действует блокировка — урезать меньше уже отработанного. Отработанное время не стирается. В ответе changes — что изменилось.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -66,6 +67,21 @@ fn tools() -> Value {
                     "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном профиля сегодняшнего дня (Полный/Лёгкий/Выходной)" }
                 },
                 "required": ["blocks"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_day_end",
+            "title": "Сдвинуть конец дня",
+            "description": "Разово меняет время конца учебного дня только на сегодня (шаблон в настройках не трогается). Блокировка, таймеры и уведомление «день закончен» сразу считаются от нового времени. Время — МСК, позже текущего момента и не позже 02:00 следующих суток (00:00–02:00 = ночь после сегодняшнего дня). В ответе: старое и новое время, сколько плана осталось и влезает ли он до нового конца. Каждое изменение пишется в лог дня.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "time": { "type": "string", "pattern": "^\\d{1,2}:\\d{2}$", "description": "ЧЧ:ММ по Москве, например 23:00" },
+                    "reason": { "type": "string", "description": "Почему сдвигаем — попадёт в лог и в уведомление" }
+                },
+                "required": ["time"],
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
@@ -134,7 +150,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. Используй get_session_state, чтобы узнать, что идёт сейчас, get_today_stats — фактические часы за день, set_plan — задать план дня (часы по предметам)."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. Используй get_session_state, чтобы узнать, что идёт сейчас, get_today_stats — фактические часы за день, set_plan — задать план дня (часы по предметам), set_day_end — разово сдвинуть конец сегодняшнего дня."
                 }),
             )
         }
@@ -148,6 +164,10 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
                 "get_plan" => Ok(host.get_plan()),
                 "set_plan" => parse_plan(&args).and_then(|(p, s)| host.set_plan(p, s)),
+                "set_day_end" => match args.get("time").and_then(Value::as_str) {
+                    Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
+                    None => Err("Нужен time в формате ЧЧ:ММ.".into()),
+                },
                 _ => return Some(err(&id, -32602, &format!("Unknown tool: {name}"))),
             };
             ok(&id, tool_result(res))
@@ -193,6 +213,9 @@ mod tests {
             *self.0.borrow_mut() = p;
             Ok(json!({"ok": true}))
         }
+        fn set_day_end(&self, t: &str, r: Option<&str>) -> Result<Value, String> {
+            Ok(json!({"new": t, "reason": r}))
+        }
     }
 
     #[test]
@@ -211,6 +234,12 @@ mod tests {
         assert!(r.contains("\"isError\":false"));
         assert_eq!(h.0.borrow()[0].minutes, 90);
         let r = handle(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"set_plan","arguments":{"blocks":[{"name":"X"}]}}}"#, &h).unwrap();
+        assert!(r.contains("\"isError\":true"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":5,"method":"tools/list"}"#, &h).unwrap();
+        assert!(r.contains("set_day_end"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"set_day_end","arguments":{"time":"23:00","reason":"разовый сдвиг"}}}"#, &h).unwrap();
+        assert!(r.contains("\"isError\":false") && r.contains("разовый сдвиг"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"set_day_end","arguments":{}}}"#, &h).unwrap();
         assert!(r.contains("\"isError\":true"));
     }
 }

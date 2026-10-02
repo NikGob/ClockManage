@@ -51,6 +51,17 @@ function phase(now) {
   }
 }
 
+// Day end: midnight of the mock day is "today" in local time — good enough for previews.
+const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+const dayEndAt = () => midnight.getTime() + dayEnd * MIN;
+
+function forecast(now, b) {
+  const work = b.reduce((a, x) => a + Math.max(0, x.minutes * MIN - x.work_ms), 0);
+  const breaks = work > 0 ? 60 * MIN : 0;
+  const finish = now + work + breaks;
+  return { work_left_ms: work, breaks_left_ms: breaks, finish_at: finish, day_end_at: dayEndAt(), fits: finish <= dayEndAt(), margin_ms: dayEndAt() - finish };
+}
+
 function snapshot() {
   const now = Date.now();
   const b = blocks(now);
@@ -65,7 +76,8 @@ function snapshot() {
   return {
     view: {
       now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, mode: 'plan',
-      day_end: `${String(Math.floor(dayEnd / 60)).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
+      day_end: `${String(Math.floor(dayEnd / 60) % 24).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
+      day_end_at: dayEndAt(), day_end_next_day: dayEnd >= 1440, day_end_changed: dayEnd !== 1320, forecast: forecast(now, b),
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
       pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN, access_enabled: cfg.pause_access, access_until: access ? t0 + 7 * MIN : null, access_left_ms: access ? t0 + 7 * MIN - now : 0, extensions: 0 } : null,
       emergency_count: 0, lunch_used: false, single: null,
@@ -73,7 +85,7 @@ function snapshot() {
         start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
-        extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1439, lighter_kind: !lock.base,
+        extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1560, lighter_kind: !lock.base, set_day_end: true,
       },
     },
     meta: {
@@ -108,6 +120,14 @@ export async function invoke(cmd, args) {
     case 'set_day_kind': kind = args.kind; return null;
     case 'extend_day_end': dayEnd = args.minutes; return null;
     case 'list_days': return q.get('empty') ? [] : days;
+    case 'set_day_end': {
+      const [h, m] = args.time.split(':').map(Number);
+      const fmt = (x) => `${String(Math.floor(x / 60) % 24).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+      const old = dayEnd;
+      dayEnd = h * 60 + m <= 120 ? h * 60 + m + 1440 : h * 60 + m;
+      setTimeout(() => (listeners.agent || []).forEach((cb) => cb({ title: 'Агент изменил конец дня', text: `${fmt(old)} → ${fmt(dayEnd)} (превью)` })), 1500);
+      return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
+    }
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
     case 'day_stats': return {
       date: args.date, study_day: true, started_at: '2026-09-28T13:12:00+03:00', completed_at: null, planned_min: 330, actual_min: 148,

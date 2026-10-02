@@ -3,7 +3,14 @@ import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack, menu, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
-import { lunchDialog, singleDialog, emergencyDialog, captchaDialog } from './dialogs.js';
+import { lunchDialog, singleDialog, emergencyDialog, captchaDialog, dayEndDialog } from './dialogs.js';
+
+export function endLabel(v) {
+  return v.day_end + (v.day_end_next_day ? ' ночи' : '');
+}
+
+/** Minutes after the day's midnight (may run past 24:00) -> "01:00". */
+const dayHm = (m) => hm(m % 1440);
 
 export function mountToday(root, ctx) {
   root.innerHTML = `
@@ -31,6 +38,7 @@ export function mountToday(root, ctx) {
           <div class="row1"><h2 id="plan-h">План дня</h2><button class="kind-chip interactive" id="kind" data-act="kind" aria-haspopup="menu"></button><button class="btn text interactive" id="edit-plan">Изменить</button></div>
           <div class="total tnum" id="total"></div>
           <div class="linear" id="total-bar"></div>
+          <div class="dayend" id="dayend"></div>
         </div>
         <ol class="list" id="blocks"></ol>
       </section>
@@ -87,24 +95,24 @@ export function mountToday(root, ctx) {
     const L = v.lock;
     let ic = 'lock_open', text = '', when = '', cls = '', action = '';
     const left = L.until ? mmss(L.until - v.now) : '';
-    // The day end is a quiet button: click → move it later for today.
-    const endBtn = (label) => (v.can.extend_day_end
-      ? `<button class="when-btn interactive" data-act="dayend" aria-haspopup="menu" data-tip="Продлить учёбу сегодня — только позже">${esc(label)}${icon('expand')}</button>`
+    // The day end is a quiet button: click → move it for today (later, or earlier via "другое время").
+    const endBtn = (label) => (v.can.set_day_end
+      ? `<button class="when-btn interactive" data-act="dayend" aria-haspopup="menu" data-tip="Конец дня на сегодня — позже или раньше">${esc(label)}${icon('expand')}</button>`
       : esc(label));
     const offText = v.kind === 'off' ? 'Выходной — без блокировки' : `${kindLabel(v.kind)} день без блокировки`;
     switch (L.reason) {
-      case 'study': ic = 'lock'; text = 'Блокировка включена'; when = `${endBtn(`до ${v.day_end}`)} или до конца плана`; break;
+      case 'study': ic = 'lock'; text = 'Блокировка включена'; when = `${endBtn(`до ${endLabel(v)}`)} или до конца плана`; break;
       case 'single': ic = 'lock'; text = 'Блокировка на время таймера'; break;
       case 'pause_access': text = 'Доступ открыт на паузе'; when = left; cls = 'open'; action = 'end'; break;
       case 'emergency': text = 'Аварийный доступ'; when = left; cls = 'open'; action = 'end'; break;
       case 'lunch_at_pc': text = 'Обед за ПК — доступ открыт'; when = left; cls = 'open'; break;
       case 'not_started':
         text = v.study_day ? 'Блокировка включится по кнопке «Начать день»' : offText;
-        if (v.study_day) when = `и продержится ${endBtn(`до ${v.day_end}`)}`;
+        if (v.study_day) when = `и продержится ${endBtn(`до ${endLabel(v)}`)}`;
         break;
       case 'completed': text = 'Все блоки отсижены — блокировка снята'; break;
       case 'day_end':
-        text = `После ${v.day_end} блокировки нет`;
+        text = `После ${endLabel(v)} блокировки нет`;
         if (v.started && v.can.extend_day_end) when = endBtn('Вернуть блокировку');
         break;
       case 'not_study_day': text = offText; break;
@@ -166,21 +174,30 @@ export function mountToday(root, ctx) {
 
   async function extendDayEnd(b) {
     const v = last.view;
-    const base = Math.max(v.day_end_min, v.now_min);
-    const LAST = 23 * 60 + 59;
+    const MAX = 26 * 60; // 02:00 of the night after
     const opts = [];
-    for (const add of [30, 60, 120]) {
-      const m = Math.ceil((base + add) / 5) * 5;
-      if (m <= LAST && m > v.day_end_min && !opts.includes(m)) opts.push(m);
+    if (v.can.extend_day_end) {
+      const base = Math.max(v.day_end_min, v.now_min);
+      for (const add of [30, 60, 120]) {
+        const m = Math.ceil((base + add) / 5) * 5;
+        if (m <= MAX && m > v.day_end_min && !opts.includes(m)) opts.push(m);
+      }
     }
-    if (!opts.includes(LAST) && LAST > v.day_end_min) opts.push(LAST);
-    const minutes = await menu(b, opts.map((m) => ({
-      value: m, label: `до ${hm(m)}`, icon: icon('schedule'),
-      sub: m === LAST ? 'до конца суток' : `+${m - v.day_end_min >= 60 ? `${Math.floor((m - v.day_end_min) / 60)} ч ` : ''}${(m - v.day_end_min) % 60 ? `${(m - v.day_end_min) % 60} мин` : ''}`.trim(),
-    })), { title: v.after_day_end ? 'Вернуть блокировку до' : 'Продлить учёбу сегодня', note: 'Только на сегодня. Сдвинуть обратно на раньше нельзя.' });
-    if (!minutes) return;
-    const ok = await run(() => call('extend_day_end', { minutes }).then(() => true), b);
-    if (ok) snack(`Учёба сегодня — до ${hm(minutes)}`);
+    const plus = (d) => `+${d >= 60 ? `${Math.floor(d / 60)} ч ` : ''}${d % 60 ? `${d % 60} мин` : ''}`.trim();
+    const items = opts.map((m) => ({ value: m, label: `до ${dayHm(m)}${m >= 1440 ? ' ночи' : ''}`, icon: icon('schedule'), sub: plus(m - v.day_end_min) }));
+    items.push({ value: 'custom', label: 'Другое время…', icon: icon('edit'), sub: 'Позже или раньше, до 02:00 ночи, с причиной' });
+    const choice = await menu(b, items, {
+      title: v.after_day_end ? 'Вернуть блокировку до' : 'Конец дня сегодня',
+      note: `Только на сегодня — в настройках остаётся ${v.day_end_base}. Каждый сдвиг пишется в лог.`,
+    });
+    if (!choice) return;
+    if (choice === 'custom') {
+      const r = await dayEndDialog(v);
+      if (r) snack(r.changed ? `Конец дня сегодня: ${r.new}${r.new_is_next_day ? ' ночи' : ''}. Настройки не тронуты.` : 'Конец дня не изменился');
+      return;
+    }
+    const ok = await run(() => call('extend_day_end', { minutes: choice }).then(() => true), b);
+    if (ok) snack(`Учёба сегодня — до ${dayHm(choice)}${choice >= 1440 ? ' ночи' : ''}`);
   }
 
   function controls(v) {
@@ -298,6 +315,23 @@ export function mountToday(root, ctx) {
     }
   }
 
+  // Today's day end: one-off shift, and whether the rest of the plan fits before it.
+  function dayEnd(v) {
+    const el = $('dayend');
+    const f = v.forecast;
+    let fit = '';
+    if (v.mode === 'plan' && !v.completed && f.work_left_ms > 0) {
+      fit = v.after_day_end
+        ? ''
+        : f.fits
+          ? `<span class="ok">План влезает, запас ${dur(f.margin_ms)}</span>`
+          : `<span class="bad">План не влезает на ${dur(-f.margin_ms)}</span>`;
+    }
+    const html = `${icon('alarm')}<span class="grow">Конец дня <b class="tnum">${esc(endLabel(v))}</b>${v.day_end_changed ? ` <span class="was">· обычно ${esc(v.day_end_base)}</span>` : ''}${fit ? `<br>${fit}` : ''}</span>
+      ${v.can.set_day_end ? '<button class="btn text interactive" data-act="dayend" aria-haspopup="menu">Изменить</button>' : ''}`;
+    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  }
+
   function blocks(v) {
     const ol = $('blocks');
     $('total').textContent = v.blocks.length ? `${dur(v.work_ms)} из ${dur(v.planned_ms)}` : '';
@@ -378,6 +412,7 @@ export function mountToday(root, ctx) {
     controls(v);
     access(v, s.meta);
     blocks(v);
+    dayEnd(v);
   }
 
   root.addEventListener('click', async (e) => {

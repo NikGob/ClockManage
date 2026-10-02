@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::clock::{self, MIN};
 use crate::config::DayKind;
-use crate::day::DayState;
+use crate::day::{fmt_day_min, DayState};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockStats {
@@ -39,6 +39,18 @@ pub struct EmergencyStats {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct DayEndChangeStats {
+    pub at: String,
+    pub from: String,
+    pub to: String,
+    /// The new end is after midnight (night of the next date).
+    pub to_next_day: bool,
+    pub reason: Option<String>,
+    /// ui | mcp
+    pub by: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DayStats {
     pub date: String,
     pub kind: DayKind,
@@ -57,6 +69,8 @@ pub struct DayStats {
     pub emergencies: Vec<EmergencyStats>,
     pub lunch: Option<String>,
     pub single_timer_min: f64,
+    /// One-off shifts of this day's end, oldest first.
+    pub day_end_changes: Vec<DayEndChangeStats>,
 }
 
 fn m(ms: i64) -> f64 {
@@ -153,6 +167,18 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
             }
         }),
         single_timer_min: m(d.singles.iter().map(|s| s.work_ms).sum()),
+        day_end_changes: d
+            .day_end_changes
+            .iter()
+            .map(|c| DayEndChangeStats {
+                at: iso(c.ts),
+                from: fmt_day_min(c.from_min),
+                to: fmt_day_min(c.to_min),
+                to_next_day: c.to_min >= 24 * 60,
+                reason: c.reason.clone(),
+                by: c.by.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -184,6 +210,9 @@ pub fn to_csv(days: &[DayStats]) -> String {
         }
         if let Some(l) = &d.lunch {
             row([&d.date, "lunch", "", "", "", "", "", l]);
+        }
+        for c in &d.day_end_changes {
+            row([&d.date, "day_end_change", "", &c.at, "", "", "", &format!("{}->{} by={} reason={}", c.from, c.to, c.by, c.reason.as_deref().unwrap_or(""))]);
         }
         if d.single_timer_min > 0.0 {
             row([&d.date, "single_timer", "", "", "", "", &d.single_timer_min.to_string(), ""]);
