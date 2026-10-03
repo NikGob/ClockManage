@@ -79,6 +79,7 @@ fn main() {
                 admin: system::is_admin(),
                 overlay: Mutex::new(None),
                 tray: Mutex::new(None),
+                finish_token: Mutex::new(None),
             });
             tauri_app.manage(shared.clone());
 
@@ -143,6 +144,7 @@ fn main() {
             app::restart_firefox,
             app::phone_pin,
             app::phone_forget,
+            app::finish_block,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

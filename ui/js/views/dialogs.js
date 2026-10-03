@@ -1,6 +1,6 @@
 import { call, esc, dur } from '../api.js';
 import { icon } from '../icons.js';
-import { dialog, run, snack } from '../ui.js';
+import { dialog, run, snack, holdButton } from '../ui.js';
 
 export function lunchDialog(lunchMin) {
   return dialog(`
@@ -177,6 +177,33 @@ export function captchaDialog(minutes) {
 
     await load();
     refresh();
+  });
+}
+
+/**
+ * "Close the block now" — deliberately slow: the numbers first, then a 3-second hold.
+ * A habit click or a stray Enter never closes a block.
+ */
+export function finishDialog(v) {
+  const i = v.phase.block;
+  const b = v.blocks[i];
+  if (!b) return Promise.resolve(false);
+  const worked = b.work_ms / 60000;
+  const workedTxt = String(Math.round(worked * 10) / 10).replace('.', ',');
+  const to = Math.max(1, Math.round(worked));
+  const cut = Math.max(0, b.minutes - to);
+  return dialog(`
+    <h2>Закрыть «${esc(b.name)}» сейчас?</h2>
+    <p class="body-l">Отработано <b>${workedTxt} из ${b.minutes} мин</b>.</p>
+    <p class="body-m muted">План блока станет ${to} мин${cut ? ` — <b>${cut} мин</b> недоработки уйдут из плана` : ''}. Дальше — перерыв между блоками${v.blocks.filter((x) => !x.done).length <= 1 ? ' и конец дня' : ''}. Это попадёт в лог.</p>
+    <div class="actions">
+      <button class="btn text interactive" data-close autofocus>Нет, работаю дальше</button>
+      <button class="btn tonal interactive hold" data-ok><span class="fillbar"></span>${icon('check')}Удерживай 3 сек — закрыть</button>
+    </div>`, (d, close) => {
+    holdButton(d.querySelector('[data-ok]'), 3000, async () => {
+      const r = await run(() => call('finish_block', { name: b.name }));
+      if (r) close(true);
+    });
   });
 }
 

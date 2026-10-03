@@ -3,7 +3,7 @@ import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack, menu, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
-import { lunchDialog, singleDialog, emergencyDialog, captchaDialog, dayEndDialog } from './dialogs.js';
+import { lunchDialog, singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog } from './dialogs.js';
 
 export function endLabel(v) {
   return v.day_end + (v.day_end_next_day ? ' ночи' : '');
@@ -234,6 +234,8 @@ export function mountToday(root, ctx) {
         if (c.single) B('single', 'Один таймер', 'outlined lg', 'timer');
         break;
     }
+    // Quiet on purpose: a text button after the main ones, behind a hold-to-confirm dialog.
+    if (c.finish_block) B('finish', 'Закрыть блок…', 'text lg', 'check');
     if (c.stop_single) B('stop_single', 'Стоп', 'outlined lg', 'stop');
     const sig = items.map((i) => i.act + i.label + i.cls).join('|');
     if (sig === ctrlSig) return;
@@ -441,6 +443,11 @@ export function mountToday(root, ctx) {
       case 'dayend': await extendDayEnd(b); break;
       case 'lunch': await lunchDialog(last.meta.lunch_min); break;
       case 'single': await singleDialog(); break;
+      case 'finish': {
+        const ok = await finishDialog(v);
+        if (ok) snack('Блок закрыт на отработанном — записано в лог');
+        break;
+      }
       case 'emergency': {
         const cfg = await call('get_config');
         const ok = await emergencyDialog(cfg, v.emergency_count);

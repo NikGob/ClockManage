@@ -15,6 +15,8 @@ pub trait McpHost {
     fn get_plan(&self) -> Value;
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String>;
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String>;
+    /// Without a token: preview + one-time token. With the token: close the block.
+    fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String>;
 }
 
 fn tools() -> Value {
@@ -85,6 +87,20 @@ fn tools() -> Value {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "finish_block",
+            "title": "Закрыть блок сейчас",
+            "description": "Закрывает начатый блок прямо сейчас на фактически отработанных минутах: planned_min блока становится равным actual_min (с округлением до минуты), день идёт дальше как после обычного конца блока (перерыв между блоками или конец дня), всё пишется в лог. Убирает гонку «урезать set_plan, пока таймер идёт». ДВА ШАГА. Первый вызов (без confirm_token) ничего не меняет: возвращает предпросмотр (сколько отработано, сколько уйдёт из плана) и одноразовый confirm_token на 2 минуты. Перед вторым вызовом ОБЯЗАТЕЛЬНО задай пользователю прямой вопрос из поля ask_user и дождись явного «да». Только потом вызови finish_block с confirm_token. Не подтверждай за пользователя, не делай второй вызов по своей инициативе и не трактуй общие фразы («давай дальше», «ок») как согласие.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Какой блок закрыть; по умолчанию текущий" },
+                    "confirm_token": { "type": "string", "description": "Токен из первого вызова — только после явного «да» пользователя" }
+                },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false }
         }
     ])
 }
@@ -150,7 +166,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. Используй get_session_state, чтобы узнать, что идёт сейчас, get_today_stats — фактические часы за день, set_plan — задать план дня (часы по предметам), set_day_end — разово сдвинуть конец сегодняшнего дня."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. Используй get_session_state, чтобы узнать, что идёт сейчас, get_today_stats — фактические часы за день, set_plan — задать план дня (часы по предметам), set_day_end — разово сдвинуть конец сегодняшнего дня, finish_block — закрыть начатый блок на отработанном (только после явного «да» пользователя)."
                 }),
             )
         }
@@ -164,6 +180,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
                 "get_plan" => Ok(host.get_plan()),
                 "set_plan" => parse_plan(&args).and_then(|(p, s)| host.set_plan(p, s)),
+                "finish_block" => host.finish_block(args.get("name").and_then(Value::as_str), args.get("confirm_token").and_then(Value::as_str)),
                 "set_day_end" => match args.get("time").and_then(Value::as_str) {
                     Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
                     None => Err("Нужен time в формате ЧЧ:ММ.".into()),
@@ -216,6 +233,12 @@ mod tests {
         fn set_day_end(&self, t: &str, r: Option<&str>) -> Result<Value, String> {
             Ok(json!({"new": t, "reason": r}))
         }
+        fn finish_block(&self, n: Option<&str>, t: Option<&str>) -> Result<Value, String> {
+            Ok(match t {
+                None => json!({"needs_confirmation": true, "block": n, "confirm_token": "abc"}),
+                Some(t) => json!({"ok": true, "token": t}),
+            })
+        }
     }
 
     #[test]
@@ -241,5 +264,9 @@ mod tests {
         assert!(r.contains("\"isError\":false") && r.contains("разовый сдвиг"));
         let r = handle(r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"set_day_end","arguments":{}}}"#, &h).unwrap();
         assert!(r.contains("\"isError\":true"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"finish_block","arguments":{"name":"Математика"}}}"#, &h).unwrap();
+        assert!(r.contains("needs_confirmation") && r.contains("Математика"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"finish_block","arguments":{"confirm_token":"abc"}}}"#, &h).unwrap();
+        assert!(r.contains("\"isError\":false") && r.contains("abc"));
     }
 }

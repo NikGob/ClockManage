@@ -46,6 +46,9 @@ pub struct BlockProgress {
     pub parts_done: u32,
     pub started_at: Option<Ts>,
     pub completed_at: Option<Ts>,
+    /// Closed early by "finish block": done on the minutes actually worked.
+    #[serde(default)]
+    pub closed: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -188,6 +191,15 @@ pub struct PlanChange {
     pub to_min: Option<u32>,
 }
 
+/// What "finish block" did.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FinishedBlock {
+    pub block: String,
+    pub worked_ms: i64,
+    pub from_min: u32,
+    pub to_min: u32,
+}
+
 /// Does the rest of the plan fit before today's day end?
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Forecast {
@@ -302,6 +314,16 @@ pub fn fmt_change(c: &PlanChange) -> String {
         "removed" => format!("удалён «{}»", c.block),
         "added" => format!("добавлен «{}» {} мин", c.block, c.to_min.unwrap_or(0)),
         _ => format!("{} {}→{} мин", c.block, c.from_min.unwrap_or(0), c.to_min.unwrap_or(0)),
+    }
+}
+
+/// Minutes with one decimal: "84,6", "90".
+pub fn fmt_min(ms: i64) -> String {
+    let tenths = (ms * 10 + MIN / 2) / MIN;
+    if tenths % 10 == 0 {
+        format!("{}", tenths / 10)
+    } else {
+        format!("{},{}", tenths / 10, tenths % 10)
     }
 }
 
@@ -856,6 +878,107 @@ impl DayState {
         Ok(())
     }
 
+    /// The block "finish block" would close: `name` (any started, open block) or the current one.
+    pub fn finish_target(&self, name: Option<&str>) -> Result<usize, String> {
+        if self.mode != Mode::Plan || self.started_at.is_none() {
+            return Err("Закрыть блок можно только во время учебного дня.".into());
+        }
+        let i = match name.map(str::trim).filter(|n| !n.is_empty()) {
+            Some(n) => (0..self.plan.len())
+                .find(|&i| self.plan[i].name.eq_ignore_ascii_case(n))
+                .ok_or(format!("В плане нет блока «{n}»."))?,
+            None => self.current_block().ok_or("Сейчас нет текущего блока.")?,
+        };
+        let name = &self.plan[i].name;
+        if self.is_block_done(i) {
+            return Err(format!("«{name}» уже закрыт."));
+        }
+        let p = &self.progress[i];
+        if p.started_at.is_none() && p.work_ms == 0 {
+            return Err(format!("«{name}» ещё не начат — если он сегодня не нужен, убери его из плана."));
+        }
+        Ok(i)
+    }
+
+    /// Close a started block right now on the minutes actually worked: its plan becomes the
+    /// fact (rounded to a minute) and the day moves on as if the block had just ended.
+    pub fn finish_block(&mut self, now: Ts, name: Option<&str>, by: &str) -> Result<(FinishedBlock, Vec<Event>), String> {
+        let i = self.finish_target(name)?;
+        let worked = self.block_work_live(i, now);
+        if worked < 30 * crate::clock::SEC {
+            return Err(format!("По «{}» ещё ничего не отработано — нечего закрывать.", self.plan[i].name));
+        }
+        let running_here = matches!(self.phase, Phase::Work { block, .. } if block == i);
+        let next_here = matches!(self.phase, Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } if next == i);
+        if running_here {
+            if let Some(p) = self.pause.take() {
+                self.close_pause(p, now);
+            }
+            let elapsed = self.phase_elapsed(now);
+            let p = &mut self.progress[i];
+            p.work_ms += elapsed;
+            if elapsed > 0 {
+                p.parts_done += 1;
+            }
+        }
+        let name = self.plan[i].name.clone();
+        let from_min = self.plan[i].minutes;
+        let to_min = (((worked + MIN / 2) / MIN) as u32).max(1);
+        self.plan[i].minutes = to_min;
+        let p = &mut self.progress[i];
+        p.closed = true;
+        p.completed_at = Some(now);
+        let mut ev = vec![];
+        let (pauses, pause_ms) = self
+            .pauses
+            .iter()
+            .filter(|r| r.block == Some(i))
+            .fold((0u32, 0i64), |(n, ms), r| (n + 1, ms + (r.end - r.start)));
+        self.log(
+            now,
+            "block_finish",
+            format!(
+                "Блок «{name}» закрыт досрочно: {} из {from_min} мин, план {from_min}→{to_min} мин{}",
+                fmt_min(worked),
+                if by == "mcp" { " — агент" } else { "" }
+            ),
+        );
+        ev.push(Event::BlockCompleted { block_name: name.clone(), work_ms: worked, pauses, pause_ms });
+        if running_here || next_here {
+            match self.first_open_block() {
+                Some(next) if running_here || matches!(self.phase, Phase::Break { .. }) => {
+                    let dur_ms = self.timing.between_blocks_min as i64 * MIN;
+                    if let Some(p) = self.pause.take() {
+                        self.close_pause(p, now);
+                    }
+                    self.phase = Phase::Break { brk: BreakKind::Between, dur_ms, elapsed_ms: 0, since: Some(now), next };
+                }
+                Some(n) => {
+                    if let Phase::Await { next, .. } | Phase::Lunch { next, .. } = &mut self.phase {
+                        *next = n;
+                    }
+                }
+                None => {
+                    if let Some(p) = self.pause.take() {
+                        self.close_pause(p, now);
+                    }
+                    self.finish_lunch_record(now);
+                    self.phase = Phase::Done;
+                    self.completed_at = Some(now);
+                    self.log(now, "day_done", "Все блоки дня закрыты — блокировка снята");
+                    let total = self.progress.iter().map(|p| p.work_ms).sum();
+                    ev.push(Event::DayCompleted { work_ms: total });
+                }
+            }
+        } else if self.first_open_block().is_none() && matches!(self.phase, Phase::Break { .. } | Phase::Await { .. } | Phase::Lunch { .. }) {
+            self.phase = Phase::Done;
+            self.completed_at = Some(now);
+            let total = self.progress.iter().map(|p| p.work_ms).sum();
+            ev.push(Event::DayCompleted { work_ms: total });
+        }
+        Ok((FinishedBlock { block: name, worked_ms: worked, from_min, to_min }, ev))
+    }
+
     /// Quick "+30 мин / +1 ч / …" buttons: move today's day end later.
     /// After the old end has passed this turns the lock back on until the new end.
     pub fn extend_day_end(&mut self, now: Ts, cfg: &Config, new_end: u32) -> Result<(), String> {
@@ -1022,6 +1145,10 @@ impl DayState {
         for (i, m) in map.iter().enumerate() {
             if let Some(j) = m {
                 progress[*j] = self.progress[i].clone();
+                // Lengthening a block closed early opens it again.
+                if progress[*j].closed && plan[*j].minutes > self.plan[i].minutes {
+                    progress[*j].closed = false;
+                }
             }
         }
         let remap = |b: Option<usize>| b.and_then(|i| map.get(i).copied().flatten());
@@ -1065,7 +1192,7 @@ impl DayState {
             }
             let total = self.plan[i].total_ms();
             let p = &mut self.progress[i];
-            if p.completed_at.is_some() && p.work_ms < total {
+            if p.completed_at.is_some() && p.work_ms < total && !p.closed {
                 p.completed_at = None;
             }
             if p.completed_at.is_none() && p.work_ms >= total && p.started_at.is_some() {
@@ -1616,6 +1743,50 @@ mod tests {
         assert_eq!(d.plan[0], PlanBlock::new("Математика", 90));
         assert_eq!(d.plan[1], PlanBlock::new("Экстернат", 150));
         assert!(d.study_day);
+    }
+
+    #[test]
+    fn finish_block_closes_on_worked_minutes() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        // 45 min part 1, break, 39.6 min of part 2 -> 84.6 min worked
+        d.tick(start() + 45 * MIN, &c);
+        d.tick(start() + 55 * MIN, &c);
+        d.start_next(start() + 55 * MIN).unwrap();
+        let now = start() + 55 * MIN + 39 * MIN + 36 * crate::clock::SEC;
+        let (f, ev) = d.finish_block(now, None, "ui").unwrap();
+        assert_eq!((f.from_min, f.to_min), (90, 85));
+        assert_eq!(f.worked_ms, 84 * MIN + 36 * crate::clock::SEC);
+        assert!(ev.iter().any(|e| matches!(e, Event::BlockCompleted { .. })));
+        assert!(d.is_block_done(0));
+        assert_eq!(d.plan[0].minutes, 85);
+        assert_eq!(d.progress[0].parts_done, 2);
+        assert!(matches!(d.phase, Phase::Break { brk: BreakKind::Between, next: 1, .. }));
+        assert!(d.events.iter().any(|e| e.kind == "block_finish" && e.text.contains("84,6 из 90 мин")));
+        // a later plan edit does not reopen it; lengthening does
+        d.set_plan(now + MIN, vec![PlanBlock::new("Математика", 85), PlanBlock::new("Экстернат", 120)], true).unwrap();
+        assert!(d.is_block_done(0));
+        d.set_plan(now + MIN, vec![PlanBlock::new("Математика", 100), PlanBlock::new("Экстернат", 120)], true).unwrap();
+        assert!(!d.is_block_done(0));
+    }
+
+    #[test]
+    fn finish_block_rules_and_last_block() {
+        let mut c = cfg();
+        c.profiles.full.plan = vec![PlanBlock::new("A", 90)];
+        let mut d = DayState::new(start(), &c);
+        assert!(d.finish_block(start(), None, "ui").is_err());
+        d.start_day(start(), &c).unwrap();
+        assert!(d.finish_block(start() + 10 * crate::clock::SEC, None, "ui").is_err());
+        assert!(d.finish_block(start() + MIN, Some("Б"), "ui").is_err());
+        d.pause(start() + 20 * MIN, &c).unwrap();
+        let (f, ev) = d.finish_block(start() + 30 * MIN, Some("a"), "mcp").unwrap();
+        assert_eq!(f.to_min, 20);
+        assert!(ev.iter().any(|e| matches!(e, Event::DayCompleted { .. })));
+        assert_eq!(d.phase, Phase::Done);
+        assert!(d.pause.is_none());
+        assert!(!d.lock_state(start() + 31 * MIN, &c).blocked);
     }
 
     #[test]

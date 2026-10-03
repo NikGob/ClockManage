@@ -88,6 +88,7 @@ function snapshot() {
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
         extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1560, lighter_kind: !lock.base, set_day_end: true,
+        finish_block: ['work', 'paused', 'break', 'await'].includes(STATE),
       },
     },
     meta: {
@@ -132,6 +133,7 @@ export async function invoke(cmd, args) {
       setTimeout(() => (listeners.agent || []).forEach((cb) => cb({ title: 'Агент изменил конец дня', text: `${fmt(old)} → ${fmt(dayEnd)} (превью)` })), 1500);
       return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
     }
+    case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
     case 'day_stats': return {

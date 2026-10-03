@@ -75,6 +75,38 @@ export function ask(title, text, ok = 'Да', cancel = 'Отмена') {
   (d, close) => d.querySelector('[data-ok]').addEventListener('click', () => close(true))).then((v) => v === true);
 }
 
+/**
+ * Press-and-hold confirmation: `onDone` runs only after holding `btn` for `ms` (pointer or
+ * Space/Enter). A `.fillbar` child shows the progress. A plain click does nothing.
+ */
+export function holdButton(btn, ms, onDone) {
+  const bar = btn.querySelector('.fillbar');
+  let start = 0;
+  let raf = 0;
+  const stop = () => {
+    cancelAnimationFrame(raf);
+    start = 0;
+    if (bar) { bar.style.transition = 'transform 200ms'; bar.style.transform = 'scaleX(0)'; }
+  };
+  const frame = () => {
+    const t = Math.min(1, (Date.now() - start) / ms);
+    if (bar) { bar.style.transition = 'none'; bar.style.transform = `scaleX(${t})`; }
+    if (t < 1) { raf = requestAnimationFrame(frame); return; }
+    stop();
+    onDone();
+  };
+  const begin = (e) => {
+    if (btn.disabled || start) return;
+    e.preventDefault();
+    start = Date.now();
+    raf = requestAnimationFrame(frame);
+  };
+  btn.addEventListener('pointerdown', begin);
+  btn.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) begin(e); });
+  ['pointerup', 'pointerleave', 'keyup', 'blur'].forEach((ev) => btn.addEventListener(ev, () => { if (start) stop(); }));
+  btn.addEventListener('click', (e) => e.preventDefault());
+}
+
 export function hoursLabel(min) {
   const h = min / 60;
   if (min % 60 === 0) return `${h} ч`;

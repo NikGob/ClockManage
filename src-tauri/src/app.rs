@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
-use clockmanage_core::day::{fmt_change, fmt_day_min, Event, Forecast, PlanBlock, SingleCfg};
+use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, Event, Forecast, PlanBlock, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
 use clockmanage_core::{mcp::McpHost, Config, DayState};
@@ -29,6 +29,14 @@ pub struct Captcha {
 }
 
 pub const CAPTCHA_WAIT_MS: i64 = 15_000;
+/// The agent's "finish block" confirmation lives this long.
+const FINISH_TOKEN_MS: i64 = 120_000;
+
+pub struct FinishToken {
+    token: String,
+    block: String,
+    until: Ts,
+}
 
 pub struct Inner {
     pub cfg: Config,
@@ -56,6 +64,7 @@ pub struct Shared {
     pub admin: bool,
     pub overlay: Mutex<Option<Value>>,
     pub tray: Mutex<Option<TrayItems>>,
+    pub finish_token: Mutex<Option<FinishToken>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -652,6 +661,74 @@ impl McpHost for McpBridge {
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String> {
         apply_day_end(&self.0, time, reason, "mcp")
     }
+
+    fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
+        let now = clock::now_ts();
+        let Some(typed) = confirm_token else {
+            // Step 1: nothing changes, the agent has to ask the user first.
+            let g = self.0.lock();
+            let i = g.day.finish_target(name)?;
+            let worked = g.day.block_work_live(i, now);
+            let b = g.day.plan[i].clone();
+            drop(g);
+            let to_min = (((worked + MIN / 2) / MIN) as u32).max(1);
+            let token = {
+                use rand::Rng;
+                format!("{:08x}", rand::thread_rng().gen::<u32>())
+            };
+            *self.0.finish_token.lock().unwrap() = Some(FinishToken { token: token.clone(), block: b.name.clone(), until: now + FINISH_TOKEN_MS });
+            let cut = b.minutes.saturating_sub(to_min);
+            return Ok(json!({
+                "needs_confirmation": true,
+                "block": b.name,
+                "worked_min": fmt_min(worked).replace(',', ".").parse::<f64>().unwrap_or(0.0),
+                "planned_min": b.minutes,
+                "new_planned_min": to_min,
+                "cut_min": cut,
+                "confirm_token": token,
+                "expires_in_s": FINISH_TOKEN_MS / 1000,
+                "ask_user": format!(
+                    "Закрыть «{}» сейчас на {} мин из {}?{} Это попадёт в лог.",
+                    b.name, fmt_min(worked), b.minutes,
+                    if cut > 0 { format!(" {cut} мин уйдут из плана.") } else { String::new() }
+                ),
+                "next_step": "Задай пользователю вопрос из ask_user. Только после явного «да» вызови finish_block с этим confirm_token.",
+            }));
+        };
+        // Step 2: one-time token for the block shown in step 1.
+        let t = self.0.finish_token.lock().unwrap().take();
+        let t = t.ok_or("Нет открытого подтверждения: сначала вызови finish_block без confirm_token и спроси пользователя.")?;
+        if t.token != typed.trim() || now > t.until {
+            return Err("confirm_token не подходит или истёк — вызови finish_block без токена и снова спроси пользователя.".into());
+        }
+        apply_finish(&self.0, Some(&t.block), "mcp")
+    }
+}
+
+/// "Finish block" from the UI (`by = "ui"`) or the agent (`"mcp"`).
+pub fn apply_finish(shared: &Arc<Shared>, name: Option<&str>, by: &str) -> Result<Value, String> {
+    let (res, events) = shared.mutate(|g, now| {
+        let (f, events) = g.day.finish_block(now, name, by)?;
+        let v = view::build(&g.day, &g.cfg, now);
+        let res = json!({
+            "ok": true,
+            "block": f.block,
+            "worked_min": fmt_min(f.worked_ms).replace(',', ".").parse::<f64>().unwrap_or(0.0),
+            "planned_min_before": f.from_min,
+            "planned_min": f.to_min,
+            "now": v.phase.title,
+            "phase": v.phase.kind,
+            "plan_forecast": forecast_json(&g.day.forecast(now, &g.cfg), g.cfg.tz_offset_min),
+        });
+        Ok((res, events))
+    })?;
+    let snap = shared.snapshot();
+    shared.react(&events, &snap);
+    if by == "mcp" {
+        let text = format!("«{}»: {} из {} мин", res["block"].as_str().unwrap_or(""), res["worked_min"], res["planned_min_before"]);
+        shared.notice("Агент закрыл блок", &text);
+    }
+    Ok(res)
 }
 
 fn forecast_json(f: &Forecast, tz: i32) -> Value {
@@ -946,6 +1023,11 @@ pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(),
 #[tauri::command]
 pub fn set_day_end(s: S, time: String, reason: Option<String>) -> Result<Value, String> {
     apply_day_end(s.inner(), &time, reason.as_deref(), "ui")
+}
+
+#[tauri::command]
+pub fn finish_block(s: S, name: Option<String>) -> Result<Value, String> {
+    apply_finish(s.inner(), name.as_deref(), "ui")
 }
 
 #[tauri::command]

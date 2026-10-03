@@ -63,6 +63,8 @@ pub struct Can {
     pub set_day_end: bool,
     /// Today may switch to a lighter kind (outside of the lock).
     pub lighter_kind: bool,
+    /// The current block was started and can be closed on the minutes worked.
+    pub finish_block: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -255,6 +257,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             && day_end < MAX_DAY_END_MIN,
         lighter_kind: !d.plan_lock(now, cfg),
         set_day_end: d.mode == Mode::Plan && d.is_live(now, cfg),
+        finish_block: d.finish_target(None).is_ok_and(|i| d.block_work_live(i, now) >= 30 * crate::clock::SEC),
     };
 
     View {
