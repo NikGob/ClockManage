@@ -34,6 +34,21 @@ pub struct PauseStats {
     pub extensions: u32,
 }
 
+/// A non-study segment as it ran: lunch, a nap, a walk…
+#[derive(Debug, Clone, Serialize)]
+pub struct BreakStats {
+    /// The segment type ("Обед", "Сон", "Прогулка" or your own).
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub planned_min: u32,
+    pub actual_min: f64,
+    /// Minutes over the planned length (0 when it ended in time).
+    pub overrun_min: f64,
+    pub start: String,
+    /// `None` while it is still running.
+    pub end: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EmergencyStats {
     pub at: String,
@@ -73,7 +88,8 @@ pub struct DayStats {
     pub pause_access_extensions: u32,
     pub emergency_count: usize,
     pub emergencies: Vec<EmergencyStats>,
-    pub lunch: Option<String>,
+    /// Non-study segments (lunch, nap, walk…) in order. They are not study time.
+    pub breaks: Vec<BreakStats>,
     pub single_timer_min: f64,
     /// One-off shifts of this day's end, oldest first.
     pub day_end_changes: Vec<DayEndChangeStats>,
@@ -96,6 +112,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
         .plan
         .iter()
         .enumerate()
+        .filter(|(_, b)| !b.is_break())
         .map(|(i, b)| {
             let p = &d.progress[i];
             let (n, ms) = d
@@ -157,7 +174,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
         study_day: d.study_day,
         started_at: d.started_at.map(iso),
         completed_at: d.completed_at.map(iso),
-        planned_min: d.plan.iter().map(|b| b.minutes).sum(),
+        planned_min: d.plan.iter().filter(|b| !b.is_break()).map(|b| b.minutes).sum(),
         actual_min: m((0..d.plan.len()).map(|i| d.block_work_live(i, now)).sum()),
         journal_total: blocks.iter().map(|b| b.journal_hours).sum(),
         blocks,
@@ -172,19 +189,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
             .iter()
             .map(|e| EmergencyStats { at: iso(e.at), until: iso(e.until), minutes: m(e.until - e.at), ended_early: e.ended_early })
             .collect(),
-        lunch: d.lunch.as_ref().map(|l| {
-            let kind = if !l.with_timer {
-                "без таймера"
-            } else if l.at_pc {
-                "с таймером, за ПК"
-            } else {
-                "с таймером"
-            };
-            match l.end {
-                Some(e) => format!("{kind}, {}–{}", clock::hm(l.start, tz), clock::hm(e, tz)),
-                None => format!("{kind}, с {}", clock::hm(l.start, tz)),
-            }
-        }),
+        breaks: breaks(d, now, tz),
         single_timer_min: m(d.singles.iter().map(|s| s.work_ms).sum()),
         day_end_changes: d
             .day_end_changes
@@ -201,6 +206,35 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
     }
 }
 
+fn breaks(d: &DayState, now: clock::Ts, tz: i32) -> Vec<BreakStats> {
+    let iso = |t: clock::Ts| clock::iso(t, tz);
+    // A lunch from before 0.3 shows up as an "Обед" segment.
+    let legacy = d.lunch.iter().map(|l| {
+        let end = l.end.unwrap_or(now);
+        let planned = if l.with_timer { d.timing.lunch_min } else { 0 };
+        BreakStats {
+            kind: "Обед".into(),
+            planned_min: planned,
+            actual_min: m(end - l.start),
+            overrun_min: if l.with_timer { m((end - l.start - planned as i64 * MIN).max(0)) } else { 0.0 },
+            start: iso(l.start),
+            end: l.end.map(iso),
+        }
+    });
+    let segs = d.segments.iter().map(|s| {
+        let end = s.end.unwrap_or(now);
+        BreakStats {
+            kind: s.name.clone(),
+            planned_min: s.planned_min,
+            actual_min: m(end - s.start),
+            overrun_min: m((end - s.start - s.planned_ms()).max(0)),
+            start: iso(s.start),
+            end: s.end.map(iso),
+        }
+    });
+    legacy.chain(segs).collect()
+}
+
 fn csv_field(s: &str) -> String {
     if s.contains([',', '"', '\n', ';']) {
         format!("\"{}\"", s.replace('"', "\"\""))
@@ -209,7 +243,7 @@ fn csv_field(s: &str) -> String {
     }
 }
 
-/// One flat CSV with a row per block, pause, emergency and lunch.
+/// One flat CSV with a row per block, pause, emergency and segment.
 pub fn to_csv(days: &[DayStats]) -> String {
     let mut out = String::from("\u{feff}date,type,name,start,end,planned_min,actual_min,details\n");
     let mut row = |cols: [&str; 8]| {
@@ -227,8 +261,8 @@ pub fn to_csv(days: &[DayStats]) -> String {
         for e in &d.emergencies {
             row([&d.date, "emergency", "", &e.at, &e.until, "", &e.minutes.to_string(), if e.ended_early { "ended_early" } else { "" }]);
         }
-        if let Some(l) = &d.lunch {
-            row([&d.date, "lunch", "", "", "", "", "", l]);
+        for b in &d.breaks {
+            row([&d.date, "break", &b.kind, &b.start, b.end.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &format!("overrun_min={}", b.overrun_min)]);
         }
         for c in &d.day_end_changes {
             row([&d.date, "day_end_change", "", &c.at, "", "", "", &format!("{}->{} by={} reason={}", c.from, c.to, c.by, c.reason.as_deref().unwrap_or(""))]);

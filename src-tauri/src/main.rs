@@ -147,6 +147,9 @@ fn main() {
             app::finish_block,
             app::undo_skip,
             app::set_block_note,
+            app::start_segments,
+            app::end_segment,
+            app::drop_queued,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

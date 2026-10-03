@@ -195,6 +195,12 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .blk .linear { grid-column: 2 / 4; }
 .empty-plan { padding: 8px 16px 12px; }
 
+.seg-type .seg-name { font: 400 16px/24px var(--font); border: 0; background: transparent; color: inherit; width: 100%; padding: 4px 0; border-bottom: 1px solid transparent; }
+.seg-type .seg-name:hover, .seg-type .seg-name:focus { border-bottom-color: var(--md-sys-color-outline); outline: none; }
+.seg-type .sw-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.seg-type .sw-label { font: 600 12px/16px var(--font); color: var(--md-sys-color-on-surface-variant); }
+.prow.seg { background: color-mix(in srgb, var(--md-sys-color-tertiary-container) 28%, transparent); }
+.prow.seg .name { font-style: italic; }
 .note-card { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .access { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .access .row1 { display: flex; gap: 12px; align-items: center; }
@@ -443,3 +449,16 @@ table.t tr:last-child td { border-bottom: 0; }
 .btn.tonal.hold .fillbar { background: var(--md-sys-color-primary); }
 .t td.r, .t th.r { white-space: nowrap; }
 table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
+
+/* Non-study segments */
+.hero[data-kind="segment"] { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.hero[data-kind="segment"] .dial .wave { stroke: currentColor; }
+.hero[data-kind="segment"] .dial .track { stroke: color-mix(in srgb, currentColor 16%, transparent); }
+.hero[data-kind="segment"] .lockline.open { color: inherit; }
+.hero[data-over="true"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.hero[data-over="true"] .big { color: var(--md-sys-color-error); }
+.blk.seg .name, .blk.seg .meta { color: var(--md-sys-color-on-surface-variant); }
+.blk.seg .st .icon { color: var(--md-sys-color-tertiary); }
+.seg-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.seg-queue { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 40px; }
+.seg-queue .arrow { color: var(--md-sys-color-on-surface-variant); }

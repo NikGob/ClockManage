@@ -172,6 +172,34 @@ impl Profiles {
     }
 }
 
+/// A non-study stretch with its own countdown: lunch, a nap, a walk…
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SegmentType {
+    pub name: String,
+    pub minutes: u32,
+    /// The end is a loud alarm that rings until "Встал" (a nap). No 5-minute warning.
+    pub alarm: bool,
+    /// Blocked sites/apps open while it runs (until its planned end), like the old "ем за ПК".
+    pub open_access: bool,
+}
+
+impl Default for SegmentType {
+    fn default() -> Self {
+        Self { name: "Отрезок".into(), minutes: 15, alarm: false, open_access: false }
+    }
+}
+
+pub fn default_segments(lunch_min: u32) -> Vec<SegmentType> {
+    vec![
+        SegmentType { name: "Обед".into(), minutes: lunch_min, alarm: false, open_access: false },
+        SegmentType { name: "Сон".into(), minutes: 20, alarm: true, open_access: false },
+        SegmentType { name: "Прогулка".into(), minutes: 15, alarm: false, open_access: false },
+    ]
+}
+
+pub const MAX_SEGMENT_MIN: u32 = 240;
+
 /// A phone paired over the local network.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
@@ -248,6 +276,10 @@ pub struct Config {
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub appearance: Appearance,
+    /// Types of non-study segments ("Отрезок" button and `type: "break"` plan items).
+    /// Missing in an old config.json -> empty, and `normalize` fills it keeping the old lunch length.
+    #[serde(default = "Vec::new")]
+    pub segments: Vec<SegmentType>,
     pub phone: Phone,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
@@ -286,6 +318,7 @@ impl Default for Config {
             mcp_enabled: true,
             mcp_port: 0,
             appearance: Appearance::default(),
+            segments: default_segments(45),
             phone: Phone::default(),
             study_days: None,
             plan_template: None,
@@ -304,6 +337,12 @@ pub struct EditContext {
 impl Config {
     pub fn profile(&self, k: DayKind) -> &DayProfile {
         self.profiles.get(k)
+    }
+
+    /// The segment type called `name` (case-insensitive).
+    pub fn segment_type(&self, name: &str) -> Option<&SegmentType> {
+        let n = name.trim();
+        self.segments.iter().find(|t| t.name.eq_ignore_ascii_case(n) || t.name.to_lowercase() == n.to_lowercase())
     }
 
     pub fn normalize(&mut self) {
@@ -334,6 +373,21 @@ impl Config {
             };
             (!is_protected_app(&exe)).then_some(exe)
         });
+        // Configs from before 0.3 have no segment types: start from the defaults, lunch keeps
+        // its old length.
+        if self.segments.is_empty() {
+            self.segments = default_segments(self.timing.lunch_min);
+        }
+        let mut segs: Vec<SegmentType> = vec![];
+        for t in &self.segments {
+            let name: String = t.name.trim().chars().take(24).collect();
+            if name.is_empty() || segs.iter().any(|s| s.name.to_lowercase() == name.to_lowercase()) {
+                continue;
+            }
+            segs.push(SegmentType { name, minutes: t.minutes.clamp(1, MAX_SEGMENT_MIN), ..t.clone() });
+        }
+        segs.truncate(10);
+        self.segments = segs;
         if self.phone.port < 1024 {
             self.phone.port = PHONE_PORT;
         }
@@ -392,6 +446,18 @@ impl Config {
             || t.0.lunch_min > t.1.lunch_min
         {
             return Err("Во время учёбы перерывы и обед можно только сократить.".into());
+        }
+        for t in &new.segments {
+            match self.segment_type(&t.name) {
+                Some(old) if t.minutes > old.minutes => {
+                    return Err(format!("Во время учёбы отрезок «{}» можно только сократить.", old.name));
+                }
+                Some(old) if t.open_access && !old.open_access => {
+                    return Err("Доступ на время отрезка включается только вне блокировки.".into());
+                }
+                None if t.open_access => return Err("Доступ на время отрезка включается только вне блокировки.".into()),
+                _ => {}
+            }
         }
         if new.emergency_min > self.emergency_min || new.emergency_phrase != self.emergency_phrase {
             return Err("Аварийный доступ настраивается только вне блокировки.".into());
@@ -550,6 +616,27 @@ mod tests {
         n.phone.apps.push("com.zhiliaoapp.musically".into());
         assert!(c.check_update(&n, ctx).is_ok());
         n.phone.apps.clear();
+        assert!(c.check_update(&n, ctx).is_err());
+        assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
+    }
+
+    #[test]
+    fn segment_types_migrate_and_only_tighten() {
+        let mut c: Config = serde_json::from_str(r#"{"timing":{"lunch_min":60}}"#).unwrap();
+        c.normalize();
+        assert_eq!(c.segments.len(), 3);
+        assert_eq!(c.segment_type("обед").unwrap().minutes, 60);
+        assert!(c.segment_type("Сон").unwrap().alarm);
+        let ctx = EditContext { locked: true };
+        let mut n = c.clone();
+        n.segments[0].minutes = 30;
+        n.segments.push(SegmentType { name: "Душ".into(), minutes: 10, ..Default::default() });
+        assert!(c.check_update(&n, ctx).is_ok());
+        let mut n = c.clone();
+        n.segments[1].minutes = 90;
+        assert!(c.check_update(&n, ctx).is_err());
+        let mut n = c.clone();
+        n.segments[0].open_access = true;
         assert!(c.check_update(&n, ctx).is_err());
         assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
     }

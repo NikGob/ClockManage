@@ -56,6 +56,8 @@ export function mountLog(root, ctx) {
     const pauses = st.pauses.map((p) => `<tr><td class="tnum">${hmOf(p.start)}–${p.end === 'идёт' ? 'идёт' : hmOf(p.end)}</td>
         <td>${esc(p.block || '—')} · ${{ work: 'работа', break: 'перерыв', lunch: 'обед' }[p.during] || p.during}</td>
         <td class="r tnum">${fmtMin(p.minutes)}</td><td class="r tnum">${p.access_min ? fmtMin(p.access_min) + (p.extensions ? ` · +${p.extensions}` : '') : '—'}</td></tr>`).join('');
+    const brk = (st.breaks || []).map((b) => `<tr><td>${esc(b.type)}</td><td class="tnum">${hmOf(b.start)}–${b.end ? hmOf(b.end) : 'идёт'}</td>
+        <td class="r tnum">${fmtMin(b.planned_min)}</td><td class="r tnum">${fmtMin(b.actual_min)}</td><td class="r tnum">${b.overrun_min >= 1 ? '+' + fmtMin(b.overrun_min) : '—'}</td></tr>`).join('');
     const em = st.emergencies.map((e) => `<tr><td class="tnum">${hmOf(e.at)}–${hmOf(e.until)}</td><td class="r tnum">${fmtMin(e.minutes)}${e.ended_early ? ' · закрыт раньше' : ''}</td></tr>`).join('');
     el.innerHTML = `
       <button class="btn text interactive back" data-back>${icon('up')}Все дни</button>
@@ -71,7 +73,7 @@ export function mountLog(root, ctx) {
         <tfoot><tr><td>Итого в журнал</td><td></td><td></td><td class="r tnum"><b>${String(st.journal_total ?? 0).replace('.', ',')}</b></td><td></td></tr></tfoot></table>` : ''}
       ${st.pauses.length ? `<div><h3 class="title-m" style="margin-bottom:8px">Паузы</h3><table class="t"><thead><tr><th>Время</th><th>Где</th><th class="r">Длилась</th><th class="r">Доступ</th></tr></thead><tbody>${pauses}</tbody></table></div>` : ''}
       ${st.emergencies.length ? `<div><h3 class="title-m" style="margin-bottom:8px">Аварийные доступы</h3><table class="t"><thead><tr><th>Время</th><th class="r">Длительность</th></tr></thead><tbody>${em}</tbody></table></div>` : ''}
-      ${st.lunch ? `<p class="body-m"><b>Обед:</b> ${esc(st.lunch)}</p>` : ''}
+      ${brk ? `<div><h3 class="title-m" style="margin-bottom:8px">Отрезки</h3><table class="t"><thead><tr><th>Что</th><th>Время</th><th class="r">План</th><th class="r">Факт</th><th class="r">Сверх</th></tr></thead><tbody>${brk}</tbody></table></div>` : ''}
       ${st.single_timer_min ? `<p class="body-m"><b>Одиночный таймер:</b> ${fmtMin(st.single_timer_min)}</p>` : ''}
       <p class="body-s muted">Начат: ${hmOf(st.started_at)} · Закрыт: ${hmOf(st.completed_at)}</p>`;
   }

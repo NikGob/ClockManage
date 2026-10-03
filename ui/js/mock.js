@@ -20,6 +20,7 @@ const cfg = {
   pause_access: q.get('pa') === '1', pause_access_min: 10,
   emergency_phrase: 'Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе',
   emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
+  segments: [{ name: 'Обед', minutes: 45, alarm: false, open_access: false }, { name: 'Сон', minutes: 20, alarm: true, open_access: false }, { name: 'Прогулка', minutes: 15, alarm: false, open_access: false }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
@@ -33,6 +34,7 @@ function blocks(now) {
   const b = [
     { name: 'Математика', minutes: 90, work_ms: 90 * MIN, parts: 2, parts_done: 2, done: true, current: false, started: true },
     { name: 'Словацкий', minutes: 90, work_ms: 45 * MIN, parts: 2, parts_done: 1, done: false, current: true, started: true },
+    { name: 'Обед', minutes: 45, work_ms: 0, parts: 0, parts_done: 0, done: false, current: false, started: false, kind: 'break' },
     { name: 'Экстернат', minutes: 150, work_ms: 0, parts: 4, parts_done: 0, done: false, current: false, started: false },
   ];
   if (STATE === 'work') b[1].work_ms = 45 * MIN + 13 * MIN + el;
@@ -48,6 +50,7 @@ function phase(now) {
     case 'paused': { const dur = 45 * MIN, e = 21 * MIN; return { kind: 'work', title: 'Словацкий', subtitle: 'Часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: false, paused: true, waiting_ms: 0 }; }
     case 'lunch_break': { const dur = 45 * MIN, e = el; return { kind: 'lunch_break', title: 'Обед', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
     case 'break': { const dur = 10 * MIN, e = 3 * MIN + el; return { kind: 'break', title: 'Перерыв', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
+    case 'segment': { const dur = 20 * MIN, e = (q.get('over') ? 27 * MIN : 6 * MIN) + el; return { kind: 'segment', title: 'Сон', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0, alarm: true, queue: [] }; }
     case 'await': return { kind: 'await', title: 'Перерыв окончен', subtitle: 'Словацкий · часть 2 из 2', block: 1, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 74000 + el };
     case 'done': return { kind: 'done', title: 'День закрыт', subtitle: 'Все блоки отсижены', block: null, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 0 };
     default: return { kind: 'idle', title: 'День не начат', subtitle: '', block: null, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 0 };
@@ -91,6 +94,7 @@ function snapshot() {
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
         extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1560, lighter_kind: !lock.base, set_day_end: true,
         finish_block: ['work', 'paused', 'break', 'await'].includes(STATE),
+        segment: ['break', 'await', 'segment'].includes(STATE), end_segment: STATE === 'segment',
       },
     },
     meta: {
@@ -136,6 +140,8 @@ export async function invoke(cmd, args) {
       return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
     }
     case 'start_next': STATE = 'work'; return null;
+    case 'start_segments': STATE = 'segment'; return null;
+    case 'end_segment': STATE = 'await'; return null;
     case 'undo_skip': STATE = 'break'; return null;
     case 'set_block_note': noteDone = true; return null;
     case 'finish_block': return { ok: true, block: args.name };
@@ -153,7 +159,7 @@ export async function invoke(cmd, args) {
         { start: '2026-09-28T13:40:00+03:00', end: '2026-09-28T13:46:00+03:00', minutes: 6, during: 'work', block: 'Математика', access_min: 0, extensions: 0 },
         { start: '2026-09-28T15:02:00+03:00', end: '2026-09-28T15:07:00+03:00', minutes: 5, during: 'break', block: 'Словацкий', access_min: 0, extensions: 0 },
       ],
-      pause_access_min: 0, pause_access_extensions: 0, emergency_count: 0, emergencies: [], lunch: 'с таймером, 14:40–15:25', single_timer_min: 0,
+      pause_access_min: 0, pause_access_extensions: 0, emergency_count: 0, emergencies: [], breaks: [{ type: 'Обед', planned_min: 45, actual_min: 52, overrun_min: 7, start: '2026-09-28T14:40:00+03:00', end: '2026-09-28T15:32:00+03:00' }, { type: 'Сон', planned_min: 20, actual_min: 20.5, overrun_min: 0.5, start: '2026-09-28T15:32:00+03:00', end: '2026-09-28T15:52:30+03:00' }], single_timer_min: 0,
     };
     default: console.log('[mock]', cmd, args); return null;
   }
@@ -165,6 +171,9 @@ export function overlayDemo(kind) {
     break: { kind: 'break', passive: true, auto_hide_ms: 600000, title: 'Перерыв', text: 'Математика: часть 1 из 2 готова. Перерыв 10 мин.' },
     block: { kind: 'block', passive: false, title: '«Математика» закрыт', text: '1 ч 30 мин работы · пауз: 1 (6 мин)', ask_note: true, block: 0 },
     day: { kind: 'day', passive: false, title: 'День закрыт', text: '5 ч 30 мин учёбы. Блокировка снята.' },
+    wake: { kind: 'wake', passive: false, force: true, title: 'Вставай!', text: 'Сон окончен 5 мин назад', action: 'Встал' },
+    segment: { kind: 'segment', passive: false, title: 'Обед окончен', text: 'Дальше: Словацкий, часть 2 из 2', action: 'Закончил обед' },
+    ask: { kind: 'ask', passive: false, title: 'Что сейчас?', text: 'Блок закрыт 10 минут назад. Запусти таймер того, чем занят:', types: [{ name: 'Обед', minutes: 45 }, { name: 'Сон', minutes: 20 }, { name: 'Прогулка', minutes: 15 }] },
     nope: { kind: 'nope', passive: true, auto_hide_ms: 600000, title: 'Не-не-не', text: 'Telegram — после учёбы' },
     access: { kind: 'access', passive: true, auto_hide_ms: 600000, title: 'Доступ закрыт', text: 'Блокировка снова включена' },
   }[kind];

@@ -16,7 +16,7 @@ let armedAt = 0;
 
 installRipples();
 
-const ART_CLASS = { await: 'ringing', break: 'steaming', access: 'locking', nope: 'wagging' };
+const ART_CLASS = { await: 'ringing', wake: 'ringing', break: 'steaming', segment: 'steaming', access: 'locking', nope: 'wagging' };
 
 function render(p) {
   current = p;
@@ -29,7 +29,16 @@ function render(p) {
   requestAnimationFrame(() => scrim.classList.add('show'));
 
   const actions = [];
-  if (p.ask_note) {
+  if (p.kind === 'wake') {
+    // Only "Встал" stops the alarm: no "hide", no Escape.
+    actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('alarm')}${esc(p.action || 'Встал')}</button>`);
+  } else if (p.kind === 'segment') {
+    actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('check')}${esc(p.action || 'Закончил')}</button>`);
+    actions.push('<button class="btn text lg interactive" data-act="hide">Ещё немного</button>');
+  } else if (p.kind === 'ask') {
+    (p.types || []).forEach((t) => actions.push(`<button class="btn tonal lg interactive" data-act="seg" data-name="${esc(t.name)}">${esc(t.name)} · ${t.minutes} мин</button>`));
+    actions.push('<button class="btn text lg interactive" data-act="hide">Перерыв</button>');
+  } else if (p.ask_note) {
     actions.push(`<button class="btn filled lg interactive" data-act="note">${icon('check')}Сохранить</button>`);
     actions.push('<button class="btn text lg interactive" data-act="skip">Пропустить</button>');
   } else if (p.kind === 'await') {
@@ -88,7 +97,18 @@ stage.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   if (performance.now() < armedAt) return;
-  if (b.dataset.act === 'note' || b.dataset.act === 'skip') {
+  if (b.dataset.act === 'end_segment' || b.dataset.act === 'seg') {
+    b.setAttribute('aria-busy', 'true');
+    try {
+      if (!current?.preview && !current?.demo) {
+        if (b.dataset.act === 'seg') await call('start_segments', { items: [{ name: b.dataset.name }] });
+        else await call('end_segment');
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+    hide();
+  } else if (b.dataset.act === 'note' || b.dataset.act === 'skip') {
     await saveNote(b.dataset.act === 'note' ? document.getElementById('ov-note')?.value : null);
   } else if (b.dataset.act === 'start') {
     b.setAttribute('aria-busy', 'true');
@@ -118,7 +138,7 @@ window.addEventListener('keydown', (e) => {
   if (!current || current.passive) return;
   if (e.key === 'Enter' && e.target.id === 'ov-note' && performance.now() >= armedAt) { e.preventDefault(); saveNote(e.target.value); return; }
   // Escape only hides the card: the line still waits on the "Сегодня" screen.
-  if (e.key === 'Escape') hide();
+  if (e.key === 'Escape' && current.kind !== 'wake') hide();
 });
 
 on('overlay', (p) => render(p));
@@ -128,6 +148,7 @@ on('state', (s) => {
   updateWaiting();
   // Started from elsewhere (tray, mini window) — the alarm is no longer relevant.
   if (current?.kind === 'await' && !current.preview && !current.demo && s.view.phase.kind !== 'await') hide();
+  if (['wake', 'segment'].includes(current?.kind) && !current.preview && !current.demo && s.view.phase.kind !== 'segment') hide();
 });
 
 (async () => {

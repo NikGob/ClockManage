@@ -13,7 +13,7 @@ use crate::config::{fmt_hm, Config, DayKind, Timing};
 const MERGE_TAIL_MS: i64 = 15 * MIN;
 const PAUSE_REMINDER_MS: i64 = 5 * MIN;
 const ACCESS_WARNING_MS: i64 = 2 * MIN;
-const MAX_PLAN_BLOCKS: usize = 12;
+const MAX_PLAN_BLOCKS: usize = 16;
 /// A skipped break can be taken back this long (misclick protection).
 pub const SKIP_UNDO_MS: i64 = 10 * crate::clock::SEC;
 /// Pauses shorter than this are noise (a misclick, pause/resume to check something): they are
@@ -25,20 +25,51 @@ pub const MAX_DAY_END_MIN: u32 = 26 * 60;
 /// "00:00".."02:00" typed as a day end mean the night after the study day.
 const NEXT_DAY_UNTIL_MIN: u32 = 2 * 60;
 
+/// A plan item is a study block or a planned non-study segment (lunch, nap…).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemKind {
+    #[default]
+    Study,
+    Break,
+}
+
+impl ItemKind {
+    pub fn is_study(&self) -> bool {
+        *self == ItemKind::Study
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlanBlock {
     pub name: String,
     pub minutes: u32,
+    /// `"break"` for a planned segment; study blocks leave it out.
+    #[serde(default, rename = "type", skip_serializing_if = "ItemKind::is_study")]
+    pub kind: ItemKind,
 }
 
 impl PlanBlock {
     pub fn new(name: &str, minutes: u32) -> Self {
-        Self { name: name.into(), minutes }
+        Self { name: name.into(), minutes, kind: ItemKind::Study }
+    }
+    /// A planned segment ("Обед", 45).
+    pub fn brk(name: &str, minutes: u32) -> Self {
+        Self { name: name.into(), minutes, kind: ItemKind::Break }
+    }
+    pub fn is_break(&self) -> bool {
+        self.kind == ItemKind::Break
     }
     pub fn normalize(&mut self) {
         let name: String = self.name.trim().chars().take(40).collect();
-        self.name = if name.is_empty() { "Блок".into() } else { name };
-        self.minutes = self.minutes.min(MAX_BLOCK_MIN);
+        self.name = if !name.is_empty() {
+            name
+        } else if self.is_break() {
+            "Отрезок".into()
+        } else {
+            "Блок".into()
+        };
+        self.minutes = self.minutes.min(if self.is_break() { crate::config::MAX_SEGMENT_MIN } else { MAX_BLOCK_MIN });
     }
     pub fn total_ms(&self) -> i64 {
         self.minutes as i64 * MIN
@@ -88,8 +119,11 @@ pub enum Phase {
     Break { brk: BreakKind, dur_ms: i64, elapsed_ms: i64, since: Option<Ts>, next: usize },
     /// Break is over, waiting for the user to press "start".
     Await { next: usize, since: Ts, reminded_at: Ts },
-    /// Lunch without a timer ("just ate"); blocking stays on.
+    /// Lunch without a timer ("just ate"); blocking stays on. Before 0.3 only.
     Lunch { since: Ts, next: usize },
+    /// A non-study segment (`segments[rec]`): wall-clock countdown, then overrun until the user
+    /// ends it. `next` is the block whose part starts afterwards.
+    Segment { rec: usize, next: usize },
     /// All blocks of the plan are done.
     Done,
 }
@@ -179,6 +213,63 @@ pub struct LunchRecord {
     pub end: Option<Ts>,
 }
 
+/// A segment as it ran (or runs: `end` is `None`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SegmentRecord {
+    pub name: String,
+    pub planned_min: u32,
+    pub alarm: bool,
+    #[serde(default)]
+    pub open_access: bool,
+    pub start: Ts,
+    pub end: Option<Ts>,
+    /// The plan item it comes from.
+    #[serde(default)]
+    pub plan_item: Option<usize>,
+    #[serde(default)]
+    pub warned: bool,
+    #[serde(default)]
+    pub ended_notified: bool,
+    #[serde(default)]
+    pub reminded_at: Ts,
+}
+
+impl SegmentRecord {
+    pub fn planned_ms(&self) -> i64 {
+        self.planned_min as i64 * MIN
+    }
+    pub fn planned_end(&self) -> Ts {
+        self.start + self.planned_ms()
+    }
+}
+
+/// A segment waiting its turn (lunch → nap).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QueuedSegment {
+    pub name: String,
+    pub minutes: u32,
+    #[serde(default)]
+    pub alarm: bool,
+    #[serde(default)]
+    pub open_access: bool,
+    #[serde(default)]
+    pub plan_item: Option<usize>,
+}
+
+impl QueuedSegment {
+    /// A segment of the type called `name` (alarm / access flags from the settings).
+    pub fn of(cfg: &Config, name: &str, minutes: Option<u32>) -> Self {
+        let t = cfg.segment_type(name);
+        Self {
+            name: t.map(|t| t.name.clone()).unwrap_or_else(|| name.trim().chars().take(24).collect()),
+            minutes: minutes.or(t.map(|t| t.minutes)).unwrap_or(15).clamp(1, crate::config::MAX_SEGMENT_MIN),
+            alarm: t.is_some_and(|t| t.alarm),
+            open_access: t.is_some_and(|t| t.open_access),
+            plan_item: None,
+        }
+    }
+}
+
 /// Everything needed to take a skipped break back.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SkipUndo {
@@ -232,8 +323,10 @@ pub struct FinishedBlock {
 pub struct Forecast {
     /// Work still to do in the plan.
     pub work_left_ms: i64,
-    /// Breaks between the remaining parts and blocks (lunch is not included).
+    /// Breaks between the remaining parts and blocks.
     pub breaks_left_ms: i64,
+    /// Non-study segments still ahead: the running one, the queue and planned ones not yet taken.
+    pub segments_left_ms: i64,
     /// If you go on right now without pauses.
     pub finish_at: Ts,
     pub day_end_at: Ts,
@@ -263,6 +356,14 @@ pub enum Event {
     PauseAccessExpired,
     EmergencyEnded,
     DayEndReached,
+    /// Five minutes before the planned end of a segment (not for alarm segments).
+    SegmentWarning { name: String, left_ms: i64 },
+    /// The planned end of a segment: a notice, or the loud alarm for a nap.
+    SegmentEnded { name: String, alarm: bool },
+    /// Every 5 minutes after the planned end until the segment is ended.
+    SegmentOverrun { name: String, alarm: bool, over_ms: i64 },
+    /// A block closed 10 minutes ago and nothing started since: "что сейчас?"
+    AskWhatNow,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,6 +406,14 @@ pub struct DayState {
     /// The last skipped break, for "Отменить" within [`SKIP_UNDO_MS`].
     #[serde(default)]
     pub skip_undo: Option<SkipUndo>,
+    /// Non-study segments of the day, in order (the running one has no end).
+    #[serde(default)]
+    pub segments: Vec<SegmentRecord>,
+    #[serde(default)]
+    pub segment_queue: Vec<QueuedSegment>,
+    /// "Что сейчас?" was asked for the block closed at this time.
+    #[serde(default)]
+    pub what_now_for: Option<Ts>,
 }
 
 pub fn next_segment_ms(total_ms: i64, done_ms: i64, seg_ms: i64) -> i64 {
@@ -387,6 +496,9 @@ impl DayState {
             day_end_changes: vec![],
             saved_at: now,
             skip_undo: None,
+            segments: vec![],
+            segment_queue: vec![],
+            what_now_for: None,
         }
     }
 
@@ -459,6 +571,12 @@ impl DayState {
         if let Some(l) = &mut self.lunch {
             l.end.get_or_insert(end);
         }
+        if let Phase::Segment { rec, .. } = self.phase {
+            if let Some(r) = self.segments.get_mut(rec) {
+                r.end.get_or_insert(end.max(r.start));
+            }
+        }
+        self.segment_queue.clear();
         if !matches!(self.phase, Phase::Idle | Phase::Done) {
             self.phase = Phase::Idle;
             self.log(end, "day_close", "День закрыт при смене даты");
@@ -482,7 +600,7 @@ impl DayState {
         }
         match self.phase {
             Phase::Work { block, .. } => Some(block),
-            Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } => Some(next),
+            Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } => Some(next),
             _ => None,
         }
     }
@@ -515,15 +633,30 @@ impl DayState {
     }
 
     pub fn block_parts(&self, i: usize) -> u32 {
-        self.plan.get(i).map(|b| count_segments(b.total_ms(), self.seg_ms())).unwrap_or(0)
+        self.plan.get(i).filter(|b| !b.is_break()).map(|b| count_segments(b.total_ms(), self.seg_ms())).unwrap_or(0)
+    }
+
+    pub fn is_study(&self, i: usize) -> bool {
+        self.plan.get(i).is_some_and(|b| !b.is_break())
+    }
+
+    /// A planned segment that was not taken yet.
+    pub fn is_open_break(&self, i: usize) -> bool {
+        self.plan.get(i).is_some_and(|b| b.is_break() && b.minutes > 0) && self.progress[i].started_at.is_none()
+    }
+
+    /// Planned segments not taken yet that stand before study block `next` in the day's order.
+    pub fn planned_breaks_before(&self, next: usize) -> Vec<usize> {
+        (0..next.min(self.plan.len())).filter(|&i| self.is_open_break(i)).collect()
     }
 
     pub fn is_block_done(&self, i: usize) -> bool {
         self.progress.get(i).is_some_and(|p| p.completed_at.is_some())
     }
 
-    fn first_open_block(&self) -> Option<usize> {
-        (0..self.plan.len()).find(|&i| !self.is_block_done(i) && self.plan[i].minutes > 0)
+    /// The first study block not closed yet (planned segments are not blocks).
+    pub fn first_open_block(&self) -> Option<usize> {
+        (0..self.plan.len()).find(|&i| self.is_study(i) && !self.is_block_done(i) && self.plan[i].minutes > 0)
     }
 
     /// Today's day end in minutes after the day's midnight (may exceed 24:00).
@@ -544,15 +677,31 @@ impl DayState {
         let seg = self.seg_ms();
         let short = self.timing.short_break_min as i64 * MIN;
         let between = self.timing.between_blocks_min as i64 * MIN;
-        let (mut work, mut breaks) = (0i64, 0i64);
+        let (mut work, mut breaks, mut segs) = (0i64, 0i64, 0i64);
         let plan_mode = self.mode == Mode::Plan;
         if plan_mode {
-            if let Phase::Break { dur_ms, .. } = self.phase {
-                breaks += (dur_ms - self.phase_elapsed(now)).max(0);
+            match self.phase {
+                Phase::Break { dur_ms, .. } => breaks += (dur_ms - self.phase_elapsed(now)).max(0),
+                Phase::Segment { rec, .. } => {
+                    if let Some(r) = self.segments.get(rec) {
+                        segs += (r.planned_end() - now).max(0);
+                    }
+                }
+                _ => {}
             }
+            segs += self.segment_queue.iter().map(|q| q.minutes as i64 * MIN).sum::<i64>();
         }
         let mut first = true;
+        // Planned segments stand between blocks instead of the usual break; ones after the
+        // last block never run (the day closes with it).
+        let mut pending = 0i64;
         for i in (0..self.plan.len()).filter(|&i| !self.is_block_done(i) && self.plan[i].minutes > 0) {
+            if self.plan[i].is_break() {
+                if self.is_open_break(i) {
+                    pending += self.plan[i].total_ms();
+                }
+                continue;
+            }
             let total = self.plan[i].total_ms();
             let mut done = self.progress[i].work_ms;
             let mut parts = 0;
@@ -573,16 +722,19 @@ impl DayState {
                 parts += 1;
             }
             breaks += (parts - 1).max(0) as i64 * short;
-            if !first {
+            if !first && pending == 0 {
                 breaks += between;
             }
+            segs += pending;
+            pending = 0;
             first = false;
         }
-        let finish_at = now + work + breaks;
+        let finish_at = now + work + breaks + segs;
         let day_end_at = self.day_end_at(cfg);
         Forecast {
             work_left_ms: work,
             breaks_left_ms: breaks,
+            segments_left_ms: segs,
             finish_at,
             day_end_at,
             fits: finish_at <= day_end_at,
@@ -637,6 +789,11 @@ impl DayState {
                 until: Some(s + (dur_ms - elapsed_ms)),
             };
         }
+        if let Phase::Segment { rec, .. } = self.phase {
+            if let Some(r) = self.segments.get(rec).filter(|r| r.open_access && now < r.planned_end()) {
+                return LockState { blocked: false, base: true, reason: "segment_access".into(), until: Some(r.planned_end()) };
+            }
+        }
         LockState { blocked: true, base: true, reason: if self.single_lock() { "single" } else { "study" }.into(), until: None }
     }
 
@@ -664,7 +821,13 @@ impl DayState {
         self.timing = cfg.timing.clone();
         self.study_day = cfg.profile(self.kind).block;
         self.started_at = Some(now);
-        self.start_work(now, first);
+        let leading = self.planned_breaks_before(first);
+        if leading.is_empty() {
+            self.start_work(now, first);
+        } else {
+            self.queue_planned(cfg, &leading);
+            self.start_queued(now, first);
+        }
         let msg = if self.plan_lock(now, cfg) { "День начат, блокировка включена" } else { "День начат (без блокировки)" };
         self.log(now, "day_start", msg);
         Ok(())
@@ -718,6 +881,10 @@ impl DayState {
             self.events.remove(i);
         }
         Ok(())
+    }
+
+    pub(crate) fn close_pause_pub(&mut self, p: ActivePause, now: Ts) -> bool {
+        self.close_pause(p, now)
     }
 
     /// Record a finished pause. Returns false for a pause shorter than [`MIN_PAUSE_MS`]
@@ -949,7 +1116,7 @@ impl DayState {
     /// The latest closed block that still waits for its end-of-block line.
     pub fn pending_note(&self) -> Option<usize> {
         (0..self.plan.len())
-            .filter(|&i| self.progress[i].completed_at.is_some() && self.progress[i].note.is_none() && !self.progress[i].note_skipped)
+            .filter(|&i| self.is_study(i) && self.progress[i].completed_at.is_some() && self.progress[i].note.is_none() && !self.progress[i].note_skipped)
             .max_by_key(|&i| self.progress[i].completed_at)
     }
 
@@ -989,6 +1156,9 @@ impl DayState {
             None => self.current_block().ok_or("Сейчас нет текущего блока.")?,
         };
         let name = &self.plan[i].name;
+        if self.plan[i].is_break() {
+            return Err(format!("«{name}» — отрезок, а не учебный блок."));
+        }
         if self.is_block_done(i) {
             return Err(format!("«{name}» уже закрыт."));
         }
@@ -1001,7 +1171,7 @@ impl DayState {
 
     /// Close a started block right now on the minutes actually worked: its plan becomes the
     /// fact (rounded to a minute) and the day moves on as if the block had just ended.
-    pub fn finish_block(&mut self, now: Ts, name: Option<&str>, by: &str) -> Result<(FinishedBlock, Vec<Event>), String> {
+    pub fn finish_block(&mut self, now: Ts, cfg: &Config, name: Option<&str>, by: &str) -> Result<(FinishedBlock, Vec<Event>), String> {
         let i = self.finish_target(name)?;
         let worked = self.block_work_live(i, now);
         if worked < 30 * crate::clock::SEC {
@@ -1043,31 +1213,26 @@ impl DayState {
             ),
         );
         ev.push(Event::BlockCompleted { block: i, block_name: name.clone(), work_ms: worked, pauses, pause_ms });
-        if running_here || next_here {
+        let in_segment = matches!(self.phase, Phase::Segment { .. });
+        if (running_here || next_here) && !in_segment {
             match self.first_open_block() {
-                Some(next) if running_here || matches!(self.phase, Phase::Break { .. }) => {
-                    let dur_ms = self.timing.between_blocks_min as i64 * MIN;
-                    if let Some(p) = self.pause.take() {
-                        self.close_pause(p, now);
-                    }
-                    self.phase = Phase::Break { brk: BreakKind::Between, dur_ms, elapsed_ms: 0, since: Some(now), next };
-                }
-                Some(n) => {
+                Some(n) if !running_here && !matches!(self.phase, Phase::Break { .. }) => {
                     if let Phase::Await { next, .. } | Phase::Lunch { next, .. } = &mut self.phase {
                         *next = n;
                     }
                 }
-                None => {
+                _ => {
                     if let Some(p) = self.pause.take() {
                         self.close_pause(p, now);
                     }
                     self.finish_lunch_record(now);
-                    self.phase = Phase::Done;
-                    self.completed_at = Some(now);
-                    self.log(now, "day_done", "Все блоки дня закрыты — блокировка снята");
-                    let total = self.progress.iter().map(|p| p.work_ms).sum();
-                    ev.push(Event::DayCompleted { work_ms: total });
+                    self.after_block(now, cfg, &mut ev);
                 }
+            }
+        } else if in_segment {
+            // The segment goes on; afterwards the next open block (or the day end).
+            if let (Some(n), Phase::Segment { next, .. }) = (self.first_open_block(), &mut self.phase) {
+                *next = n;
             }
         } else if self.first_open_block().is_none() && matches!(self.phase, Phase::Break { .. } | Phase::Await { .. } | Phase::Lunch { .. }) {
             self.phase = Phase::Done;
@@ -1173,14 +1338,14 @@ impl DayState {
             b.normalize();
         }
         if plan.len() > MAX_PLAN_BLOCKS {
-            return Err(format!("Не больше {MAX_PLAN_BLOCKS} блоков в день."));
+            return Err(format!("Не больше {MAX_PLAN_BLOCKS} пунктов плана в день."));
         }
         if plan.iter().any(|b| b.minutes == 0) {
             return Err("У каждого блока должна быть длительность.".into());
         }
         let started = self.started_at.is_some();
-        if started && plan.is_empty() {
-            return Err("План начатого дня не может быть пустым.".into());
+        if started && !plan.iter().any(|b| !b.is_break()) {
+            return Err("План начатого дня не может остаться без учебных блоков.".into());
         }
         let touched = |p: &BlockProgress| p.started_at.is_some() || p.work_ms > 0;
 
@@ -1193,7 +1358,7 @@ impl DayState {
                 continue;
             }
             let j = (cursor..plan.len())
-                .find(|&j| plan[j].name == old.name)
+                .find(|&j| plan[j].name == old.name && plan[j].kind == old.kind)
                 .ok_or(format!("«{}» уже начат — его нельзя удалить, переименовать или переставить.", old.name))?;
             map[i] = Some(j);
             used[j] = true;
@@ -1201,7 +1366,7 @@ impl DayState {
         }
         for (i, old) in self.plan.iter().enumerate() {
             if map[i].is_none() {
-                if let Some(j) = (0..plan.len()).find(|&j| !used[j] && plan[j].name == old.name) {
+                if let Some(j) = (0..plan.len()).find(|&j| !used[j] && plan[j].name == old.name && plan[j].kind == old.kind) {
                     map[i] = Some(j);
                     used[j] = true;
                 }
@@ -1257,13 +1422,19 @@ impl DayState {
         if let Some(p) = &mut self.pause {
             p.block = remap(p.block);
         }
+        for r in &mut self.segments {
+            r.plan_item = remap(r.plan_item);
+        }
+        for q in &mut self.segment_queue {
+            q.plan_item = remap(q.plan_item);
+        }
         let mut lost_next = false;
         if self.mode == Mode::Plan {
             match &mut self.phase {
                 Phase::Work { block, .. } => *block = remap(Some(*block)).unwrap_or(0),
                 // A started block stays next; otherwise the next one is simply the first open in the new order.
-                Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } => match remap(Some(*next)) {
-                    Some(j) if touched(&self.progress[*next]) => *next = j,
+                Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } => match remap(Some(*next)) {
+                    Some(j) if touched(&self.progress[*next]) && !self.plan[*next].is_break() => *next = j,
                     _ => lost_next = true,
                 },
                 _ => {}
@@ -1286,7 +1457,8 @@ impl DayState {
         }
         // Re-evaluate completion; the running block is closed by the timer itself.
         for i in 0..self.plan.len() {
-            if Some(i) == current_work {
+            // Planned segments are closed by ending the segment, never by work.
+            if Some(i) == current_work || self.plan[i].is_break() {
                 continue;
             }
             let total = self.plan[i].total_ms();
@@ -1301,7 +1473,7 @@ impl DayState {
         if self.mode == Mode::Plan {
             let open = self.first_open_block();
             if lost_next {
-                if let (Some(n), Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. }) = (open, &mut self.phase) {
+                if let (Some(n), Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. }) = (open, &mut self.phase) {
                     *next = n;
                 }
             }
@@ -1368,6 +1540,10 @@ impl DayState {
                 ev.push(Event::PauseReminder { paused_ms: now - p.since });
             }
         }
+        ev.extend(self.segment_events(now, quiet));
+        if !quiet {
+            ev.extend(self.ask_what_now(now));
+        }
         for e in &mut self.emergencies {
             if now >= e.until && !e.notified {
                 e.notified = true;
@@ -1398,14 +1574,14 @@ impl DayState {
         }
     }
 
-    fn advance(&mut self, now: Ts, _cfg: &Config, ev: &mut Vec<Event>) -> bool {
+    fn advance(&mut self, now: Ts, cfg: &Config, ev: &mut Vec<Event>) -> bool {
         match self.phase.clone() {
             Phase::Work { block, dur_ms, elapsed_ms, since: Some(s) } => {
                 let end = s + (dur_ms - elapsed_ms);
                 if now < end {
                     return false;
                 }
-                self.finish_work(end, block, dur_ms, ev);
+                self.finish_work(end, block, dur_ms, cfg, ev);
                 true
             }
             Phase::Break { brk, dur_ms, elapsed_ms, since: Some(s), next } => {
@@ -1427,7 +1603,7 @@ impl DayState {
         }
     }
 
-    fn finish_work(&mut self, end: Ts, block: usize, dur_ms: i64, ev: &mut Vec<Event>) {
+    fn finish_work(&mut self, end: Ts, block: usize, dur_ms: i64, cfg: &Config, ev: &mut Vec<Event>) {
         match self.mode {
             Mode::Single => {
                 let (brk_min, round) = {
@@ -1467,19 +1643,7 @@ impl DayState {
                         .fold((0u32, 0i64), |(n, ms), r| (n + 1, ms + (r.end - r.start)));
                     self.log(end, "block_done", format!("Блок «{name}» закрыт: {} мин работы", work_ms / MIN));
                     ev.push(Event::BlockCompleted { block, block_name: name, work_ms, pauses, pause_ms });
-                    match self.first_open_block() {
-                        Some(next) => {
-                            let dur_ms = self.timing.between_blocks_min as i64 * MIN;
-                            self.phase = Phase::Break { brk: BreakKind::Between, dur_ms, elapsed_ms: 0, since: Some(end), next };
-                        }
-                        None => {
-                            self.phase = Phase::Done;
-                            self.completed_at = Some(end);
-                            let total: i64 = self.progress.iter().map(|p| p.work_ms).sum();
-                            self.log(end, "day_done", "Все блоки дня закрыты — блокировка снята");
-                            ev.push(Event::DayCompleted { work_ms: total });
-                        }
-                    }
+                    self.after_block(end, cfg, ev);
                 } else {
                     let dur_ms = self.timing.short_break_min as i64 * MIN;
                     self.phase = Phase::Break { brk: BreakKind::Short, dur_ms, elapsed_ms: 0, since: Some(end), next: block };
@@ -1854,7 +2018,7 @@ mod tests {
         d.tick(start() + 55 * MIN, &c);
         d.start_next(start() + 55 * MIN).unwrap();
         let now = start() + 55 * MIN + 39 * MIN + 36 * crate::clock::SEC;
-        let (f, ev) = d.finish_block(now, None, "ui").unwrap();
+        let (f, ev) = d.finish_block(now, &c, None, "ui").unwrap();
         assert_eq!((f.from_min, f.to_min), (90, 85));
         assert_eq!(f.worked_ms, 84 * MIN + 36 * crate::clock::SEC);
         assert!(ev.iter().any(|e| matches!(e, Event::BlockCompleted { .. })));
@@ -1875,12 +2039,12 @@ mod tests {
         let mut c = cfg();
         c.profiles.full.plan = vec![PlanBlock::new("A", 90)];
         let mut d = DayState::new(start(), &c);
-        assert!(d.finish_block(start(), None, "ui").is_err());
+        assert!(d.finish_block(start(), &c, None, "ui").is_err());
         d.start_day(start(), &c).unwrap();
-        assert!(d.finish_block(start() + 10 * crate::clock::SEC, None, "ui").is_err());
-        assert!(d.finish_block(start() + MIN, Some("Б"), "ui").is_err());
+        assert!(d.finish_block(start() + 10 * crate::clock::SEC, &c, None, "ui").is_err());
+        assert!(d.finish_block(start() + MIN, &c, Some("Б"), "ui").is_err());
         d.pause(start() + 20 * MIN, &c).unwrap();
-        let (f, ev) = d.finish_block(start() + 30 * MIN, Some("a"), "mcp").unwrap();
+        let (f, ev) = d.finish_block(start() + 30 * MIN, &c, Some("a"), "mcp").unwrap();
         assert_eq!(f.to_min, 20);
         assert!(ev.iter().any(|e| matches!(e, Event::DayCompleted { .. })));
         assert_eq!(d.phase, Phase::Done);

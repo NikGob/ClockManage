@@ -15,12 +15,18 @@ class Entry(
     val elapsedMs: Long,
     val durMs: Long,
     val blocksWork: LongArray,
+    /** A segment whose end is a loud alarm (a nap). */
+    val alarm: Boolean,
 ) {
     val running get() = until != null && !paused
+    val segment get() = kind == "segment"
+    /** Planned end of a segment (it then runs over until the user ends it). */
+    val segmentEnd get() = from + durMs
 
     fun remaining(now: Long): Long = when {
         paused -> (durMs - elapsedMs).coerceAtLeast(0)
         until != null -> (until - now).coerceAtLeast(0)
+        segment -> segmentEnd - now // negative = over time
         else -> 0
     }
 
@@ -45,6 +51,7 @@ class Block(
     val parts: Int,
     val partsDone: Int,
     val minMinutes: Int,
+    val isBreak: Boolean,
 )
 
 class Snapshot(
@@ -68,6 +75,7 @@ class Snapshot(
     val canResume: Boolean,
     val canStartNext: Boolean,
     val canEditPlan: Boolean,
+    val canEndSegment: Boolean,
     val sites: List<String>,
     val apps: Set<String>,
 ) {
@@ -105,6 +113,7 @@ class Snapshot(
                     Block(
                         b.getString("name"), b.getInt("minutes"), b.getBoolean("done"), b.getBoolean("started"),
                         b.getInt("parts"), b.getInt("parts_done"), b.getInt("min_minutes"),
+                        b.optString("kind", "study") == "break",
                     )
                 }
             }
@@ -116,6 +125,7 @@ class Snapshot(
                         e.getLong("from"), e.longOrNull("until"), e.getString("kind"), e.getString("title"),
                         e.getString("subtitle"), e.intOrNull("block"), e.getBoolean("paused"),
                         e.getLong("elapsed_ms"), e.getLong("dur_ms"), LongArray(w.length()) { w.getLong(it) },
+                        e.optBoolean("alarm", false),
                     )
                 }
             }
@@ -140,6 +150,7 @@ class Snapshot(
                 canResume = can.getBoolean("resume"),
                 canStartNext = can.getBoolean("start_next"),
                 canEditPlan = can.getBoolean("edit_plan"),
+                canEndSegment = can.optBoolean("end_segment", false),
                 sites = o.getJSONArray("sites").strings(),
                 apps = o.getJSONArray("apps").strings().toSet(),
             )

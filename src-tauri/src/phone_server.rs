@@ -349,6 +349,7 @@ fn action(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
             "pause" => g.day.pause(now, &g.cfg),
             "resume" => g.day.resume(now),
             "start_next" => g.day.start_next(now),
+            "end_segment" => g.day.end_segment(now),
             _ => Err("Неизвестное действие.".into()),
         }
     });

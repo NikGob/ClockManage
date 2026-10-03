@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
-use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, Event, Forecast, PlanBlock, SingleCfg};
+use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, Event, Forecast, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
 use clockmanage_core::{mcp::McpHost, Config, DayState};
@@ -165,7 +165,9 @@ impl Shared {
     }
 
     pub fn show_overlay(&self, payload: Value) {
-        if !self.lock().cfg.overlay {
+        // The nap alarm shows even with cards turned off: it is the alarm clock.
+        let forced = payload.get("force").and_then(Value::as_bool).unwrap_or(false);
+        if !self.lock().cfg.overlay && !forced {
             return;
         }
         let passive = payload.get("passive").and_then(Value::as_bool).unwrap_or(false);
@@ -184,6 +186,26 @@ impl Shared {
         if !passive {
             let _ = w.set_focus();
         }
+    }
+
+    /// End of a nap: the overlay that only "Встал" closes (the ticker rings meanwhile).
+    fn wake_overlay(&self, name: &str, over_ms: i64) {
+        self.show_overlay(json!({
+            "kind": "wake", "passive": false, "force": true,
+            "title": "Вставай!",
+            "text": if over_ms > 0 { format!("{name} окончен {} назад", fmt_dur(over_ms)) } else { format!("{name} окончен") },
+            "action": "Встал",
+        }));
+    }
+
+    /// End of another segment: "Закончил" or keep going.
+    fn segment_overlay(&self, name: &str, over_ms: i64, v: &View) {
+        self.show_overlay(json!({
+            "kind": "segment", "passive": false,
+            "title": if over_ms > 0 { format!("{name}: +{}", fmt_dur(over_ms)) } else { format!("{name} окончен") },
+            "text": if v.phase.queue.is_empty() { v.phase.subtitle.clone() } else { format!("Потом: {}", v.phase.queue.join(" → ")) },
+            "action": format!("Закончил {}", name.to_lowercase()),
+        }));
     }
 
     /// Playful "no-no-no" finger wag over the screen when something blocked is opened.
@@ -214,6 +236,8 @@ impl Shared {
             ("Пауза", true)
         } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
             ("Начать следующую часть", true)
+        } else if v.can.end_segment {
+            (if v.phase.alarm { "Встал" } else { "Закончить отрезок" }, true)
         } else if v.can.start_day {
             ("Начать день", true)
         } else {
@@ -316,6 +340,43 @@ impl Shared {
                     self.play(Sound::Done);
                     self.notify(&format!("{} — блокировка снята", v.day_end), "Учебный день закончился по времени.");
                 }
+                Event::SegmentWarning { name, left_ms } => {
+                    self.play(Sound::Ping);
+                    let text = format!("{name}: осталось {}", fmt_dur(*left_ms));
+                    self.notify("Скоро конец", &text);
+                    self.show_overlay(json!({ "kind": "break", "passive": true, "auto_hide_ms": 4200, "title": "Скоро конец", "text": text }));
+                }
+                Event::SegmentEnded { name, alarm: true } => {
+                    // The nap alarm: the ticker keeps ringing until "Встал".
+                    self.notify(&format!("{name} окончен — вставай!"), "Будильник звонит, пока не нажмёшь «Встал».");
+                    self.wake_overlay(name, 0);
+                }
+                Event::SegmentEnded { name, alarm: false } => {
+                    self.play(Sound::Alarm);
+                    self.notify(&format!("{name} окончен"), "Нажми «Закончил», когда вернёшься. Напомню каждые 5 минут.");
+                    self.segment_overlay(name, 0, &snap.view);
+                }
+                Event::SegmentOverrun { name, alarm, over_ms } => {
+                    let title = format!("{name}: превышено на {}", fmt_dur(*over_ms));
+                    if *alarm {
+                        self.notify(&title, "Вставай — будильник не замолчит, пока не нажмёшь «Встал».");
+                        self.wake_overlay(name, *over_ms);
+                    } else {
+                        self.play(Sound::Alarm);
+                        self.notify(&title, "Нажми «Закончил», когда вернёшься.");
+                        self.segment_overlay(name, *over_ms, &snap.view);
+                    }
+                }
+                Event::AskWhatNow => {
+                    self.play(Sound::Ping);
+                    let types = self.lock().cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes })).collect::<Vec<_>>();
+                    self.notify("Что сейчас?", "Блок закрыт 10 минут назад, а дальше ничего не началось. Обед, сон, перерыв?");
+                    self.show_overlay(json!({
+                        "kind": "ask", "passive": false, "title": "Что сейчас?",
+                        "text": "Блок закрыт 10 минут назад. Запусти таймер того, чем занят:",
+                        "types": types,
+                    }));
+                }
             }
         }
     }
@@ -380,6 +441,8 @@ fn tray_tooltip(v: &View) -> String {
         "work" | "break" | "lunch_break" => {
             format!("{} — {}{}", p.title, mmss(p.remaining_ms), if p.paused { " (пауза)" } else { "" })
         }
+        "segment" if p.remaining_ms < 0 => format!("{} — превышено на {}", p.title, mmss(-p.remaining_ms)),
+        "segment" => format!("{} — {}", p.title, mmss(p.remaining_ms)),
         _ => p.title.clone(),
     };
     let lock = if v.lock.blocked { "блокировка включена" } else if v.lock.base { "доступ временно открыт" } else { "без блокировки" };
@@ -434,6 +497,7 @@ fn ticker(shared: Arc<Shared>) {
     let mut last_beat: Ts = 0;
     let mut last_beat_blocked = false;
     let mut last_attempts: Ts = 0;
+    let mut last_ring: Ts = 0;
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
@@ -462,6 +526,13 @@ fn ticker(shared: Arc<Shared>) {
 
         if !events.is_empty() {
             shared.react(&events, &snap);
+        }
+        // Nap over: the alarm rings back to back until "Встал" — even with sounds turned off,
+        // it is the alarm clock.
+        let p = &snap.view.phase;
+        if p.kind == "segment" && p.alarm && p.remaining_ms <= 0 && now - last_ring >= 3_400 {
+            last_ring = now;
+            sound::play(Sound::Alarm);
         }
 
         // Enforcement: apply on change, verify/repair every 30 s.
@@ -608,10 +679,14 @@ impl McpHost for McpBridge {
             "elapsed_ms": v.phase.elapsed_ms,
             "waiting_for_start_ms": v.phase.waiting_ms,
             "current_block": v.phase.block.and_then(|i| v.blocks.get(i)).map(|b| b.name.clone()),
-            "blocks": v.blocks.iter().map(|b| json!({
-                "name": b.name, "planned_min": b.minutes, "done_min": b.work_ms / MIN,
-                "parts": b.parts, "parts_done": b.parts_done, "done": b.done, "current": b.current
-            })).collect::<Vec<_>>(),
+            "blocks": v.blocks.iter().map(|b| if b.kind.is_study() {
+                json!({
+                    "name": b.name, "planned_min": b.minutes, "done_min": b.work_ms / MIN,
+                    "parts": b.parts, "parts_done": b.parts_done, "done": b.done, "current": b.current
+                })
+            } else {
+                json!({ "name": b.name, "type": "break", "planned_min": b.minutes, "done": b.done, "taken": b.started })
+            }).collect::<Vec<_>>(),
             "worked": fmt_dur(v.work_ms),
             "planned": fmt_dur(v.planned_ms),
             "blocking": { "active": v.lock.blocked, "day_lock": v.lock.base, "reason": v.lock.reason },
@@ -619,6 +694,14 @@ impl McpHost for McpBridge {
             "day_end_default": v.day_end_base,
             "day_end_next_day": v.day_end_next_day,
             "plan_forecast": forecast_json(&v.forecast, s.meta.tz_offset_min),
+            "segment": (v.phase.kind == "segment").then(|| json!({
+                "type": v.phase.title,
+                "planned_min": v.phase.dur_ms / MIN,
+                "elapsed_min": v.phase.elapsed_ms / MIN,
+                "overrun_min": (-v.phase.remaining_ms).max(0) / MIN,
+                "alarm": v.phase.alarm,
+                "queue": v.phase.queue,
+            })),
         })
     }
 
@@ -725,7 +808,8 @@ pub fn apply_block_note(shared: &Arc<Shared>, block: Option<usize>, name: Option
 /// "Finish block" from the UI (`by = "ui"`) or the agent (`"mcp"`).
 pub fn apply_finish(shared: &Arc<Shared>, name: Option<&str>, by: &str) -> Result<Value, String> {
     let (res, events) = shared.mutate(|g, now| {
-        let (f, events) = g.day.finish_block(now, name, by)?;
+        let (cfg, day) = (&g.cfg, &mut g.day);
+        let (f, events) = day.finish_block(now, cfg, name, by)?;
         let v = view::build(&g.day, &g.cfg, now);
         let res = json!({
             "ok": true,
@@ -753,9 +837,10 @@ fn forecast_json(f: &Forecast, tz: i32) -> Value {
         "plan_left_min": (f.work_left_ms + MIN - 1) / MIN,
         "breaks_left_min": f.breaks_left_ms / MIN,
         "finish_estimate": clock::hm(f.finish_at, tz),
+        "segments_left_min": (f.segments_left_ms + MIN - 1) / MIN,
         "fits": f.fits,
         "margin_min": f.margin_ms.div_euclid(MIN),
-        "note": "Если продолжать прямо сейчас без пауз; обед не учтён.",
+        "note": "Если продолжать прямо сейчас без пауз. Отрезки (обед, сон…) учтены: идущий, очередь и запланированные в плане.",
     })
 }
 
@@ -1000,6 +1085,39 @@ pub fn set_block_note(s: S, block: usize, note: Option<String>) -> Result<(), St
     apply_block_note(s.inner(), Some(block), None, note.as_deref(), "ui").map(|_| ())
 }
 
+#[derive(serde::Deserialize)]
+pub struct SegmentPick {
+    name: String,
+    minutes: Option<u32>,
+}
+
+/// Start segments now (or queue them behind the running one): lunch → nap.
+#[tauri::command]
+pub fn start_segments(s: S, items: Vec<SegmentPick>) -> Result<(), String> {
+    let r = s.mutate(|g, now| {
+        let items = items.iter().map(|i| QueuedSegment::of(&g.cfg, &i.name, i.minutes)).collect();
+        g.day.start_segments(now, items)
+    });
+    if r.is_ok() {
+        hide_overlay_window(&s.app);
+    }
+    r
+}
+
+#[tauri::command]
+pub fn end_segment(s: S) -> Result<(), String> {
+    let r = s.mutate(|g, now| g.day.end_segment(now));
+    if r.is_ok() {
+        hide_overlay_window(&s.app);
+    }
+    r
+}
+
+#[tauri::command]
+pub fn drop_queued(s: S, index: usize) -> Result<(), String> {
+    s.mutate(|g, now| g.day.drop_queued(now, index))
+}
+
 #[tauri::command]
 pub fn undo_skip(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.undo_skip(now))
@@ -1014,6 +1132,10 @@ pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
         shared.mutate(|g, now| g.day.pause(now, &g.cfg))
     } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
         let r = shared.mutate(|g, now| g.day.start_next(now));
+        hide_overlay_window(&shared.app);
+        r
+    } else if v.can.end_segment {
+        let r = shared.mutate(|g, now| g.day.end_segment(now));
         hide_overlay_window(&shared.app);
         r
     } else if v.can.start_day {

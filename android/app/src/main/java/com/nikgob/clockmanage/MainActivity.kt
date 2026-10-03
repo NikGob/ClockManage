@@ -331,14 +331,22 @@ class MainActivity : Activity() {
                 big.textSize = 72f
             }
             "await" -> { state.text = "ждём тебя"; big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
+            "segment" -> {
+                val left = e.remaining(now)
+                state.text = if (left < 0) "превышено" else if (e.alarm) "сон · будильник" else "отрезок"
+                big.text = if (left < 0) "+" + Fmt.mmss(-left) else Fmt.mmss(left)
+                big.setTextColor(if (left < 0) p.error else p.text)
+                big.textSize = 72f
+            }
             "lunch" -> { state.text = "обед"; big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
             "done" -> { state.text = "готово"; big.text = "✓"; big.textSize = 56f }
             else -> {
                 state.text = "в плане"
-                big.text = Fmt.dur(s.blocks.sumOf { it.minutes } * Snapshot.MIN)
+                big.text = Fmt.dur(s.blocks.filter { !it.isBreak }.sumOf { it.minutes } * Snapshot.MIN)
                 big.textSize = 44f
             }
         }
+        if (e?.kind != "segment") big.setTextColor(p.text)
         title.text = e?.title ?: ""
         sub.text = e?.subtitle ?: ""
 
@@ -349,6 +357,7 @@ class MainActivity : Activity() {
             e.paused -> wanted += Triple("Продолжить", "resume", null)
             e.kind == "work" || e.kind == "break" -> wanted += Triple("Пауза", "pause", null)
             e.kind == "await" || e.kind == "lunch" -> wanted += Triple("Начать", "start_next", e.kind)
+            e.segment -> wanted += Triple(if (e.alarm) "Встал" else "Закончил", "end_segment", "segment")
         }
         val sig = wanted.joinToString { it.second } + Sync.online
         if (actions.tag != sig) {
@@ -360,13 +369,17 @@ class MainActivity : Activity() {
         }
 
         val work = s.blocks.indices.sumOf { e?.work(it, now) ?: 0L }
-        total.text = "${Fmt.dur(work)} из ${Fmt.hours(s.blocks.sumOf { it.minutes })}"
+        total.text = "${Fmt.dur(work)} из ${Fmt.hours(s.blocks.filter { !it.isBreak }.sumOf { it.minutes })} учёбы"
         if (shownVersion != s.version + Sync.online) {
             shownVersion = s.version + Sync.online
             buildRows(s)
         }
         s.blocks.forEachIndexed { i, b ->
             val (meta, bar) = rowViews.getOrNull(i) ?: return@forEachIndexed
+            if (b.isBreak) {
+                meta.text = "${b.minutes} мин · " + when { b.done -> "прошёл"; b.started -> "идёт"; else -> "отрезок, не учёба" }
+                return@forEachIndexed
+            }
             val w = e?.work(i, now) ?: 0L
             meta.text = "${w / Snapshot.MIN} из ${b.minutes} мин" + if (b.done) " · готово" else ""
             bar.progress = ((w * 1000) / (b.minutes * Snapshot.MIN).coerceAtLeast(1)).toInt().coerceIn(0, 1000)
@@ -381,7 +394,7 @@ class MainActivity : Activity() {
         s.blocks.forEachIndexed { i, b ->
             val r = row()
             val text = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            text.addView(label((if (b.done) "✓ " else "") + b.name, 16f, p.text, bold = true))
+            text.addView(label((if (b.done) "✓ " else if (b.isBreak) "☕ " else "") + b.name, 16f, if (b.isBreak) p.muted else p.text, bold = !b.isBreak))
             val meta = label("", 13f, p.muted)
             text.addView(meta)
             r.addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -391,8 +404,9 @@ class MainActivity : Activity() {
             val toast: (String?) -> Unit = { err -> err?.let { Toast.makeText(this, it, Toast.LENGTH_SHORT).show() } }
             val minus = pill("−", p, "text") { Sync.setMinutes(this, i, lower, toast) }
             val plus = pill("+", p, "text") { Sync.setMinutes(this, i, higher, toast) }
-            minus.isEnabled = editable && !b.done && lower < b.minutes
-            plus.isEnabled = editable && higher > b.minutes
+            minus.isEnabled = editable && !b.done && !b.isBreak && lower < b.minutes
+            plus.isEnabled = editable && !b.isBreak && higher > b.minutes
+            if (b.isBreak) { minus.visibility = View.INVISIBLE; plus.visibility = View.INVISIBLE }
             minus.alpha = if (minus.isEnabled) 1f else 0.35f
             plus.alpha = if (plus.isEnabled) 1f else 0.35f
             r.addView(minus, LinearLayout.LayoutParams(dp(52), dp(48)))
@@ -404,6 +418,7 @@ class MainActivity : Activity() {
                 progressBackgroundTintList = android.content.res.ColorStateList.valueOf(p.outline)
             }
             rows.addWithMargins(bar, top = dp(2))
+            if (b.isBreak) bar.visibility = View.GONE
             rowViews += meta to bar
         }
     }

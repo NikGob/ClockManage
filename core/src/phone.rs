@@ -25,7 +25,7 @@ pub struct Entry {
     pub from: Ts,
     /// When this phase ends by itself; `None`: it waits for the user.
     pub until: Option<Ts>,
-    /// idle | work | break | lunch_break | await | lunch | done
+    /// idle | work | break | lunch_break | await | lunch | segment | done
     pub kind: String,
     pub title: String,
     pub subtitle: String,
@@ -36,6 +36,8 @@ pub struct Entry {
     pub dur_ms: i64,
     /// Work of every plan block at `from`; the running block adds `now - from`.
     pub blocks_work_ms: Vec<i64>,
+    /// Segment whose end is a loud alarm (a nap): the phone rings at `from + dur_ms`.
+    pub alarm: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -48,6 +50,8 @@ pub struct PhoneBlock {
     pub parts_done: u32,
     /// The "−" button may not go below this (during the lock: the time already worked).
     pub min_minutes: u32,
+    /// study | break
+    pub kind: crate::day::ItemKind,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -67,6 +71,8 @@ pub struct PhoneCan {
     pub resume: bool,
     pub start_next: bool,
     pub edit_plan: bool,
+    /// "Закончил" / "Встал" for the running segment.
+    pub end_segment: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -105,10 +111,13 @@ fn entry(d: &DayState, cfg: &Config, t: Ts) -> Entry {
             (d.pause.as_ref().map(|p| p.since).unwrap_or(t), None, true, *elapsed_ms, *dur_ms)
         }
         Phase::Await { since, .. } | Phase::Lunch { since, .. } => (*since, None, false, 0, 0),
+        // Waits for the user, but has a planned end: the phone counts down to `from + dur_ms`.
+        Phase::Segment { rec, .. } => (d.segments[*rec].start, None, false, 0, d.segments[*rec].planned_ms()),
         Phase::Done => (d.completed_at.unwrap_or(0), None, false, 0, 0),
         Phase::Idle => (0, None, false, 0, 0),
     };
     Entry {
+        alarm: v.alarm,
         from,
         until,
         kind: v.kind,
@@ -173,6 +182,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
                 started: p.started_at.is_some(),
                 parts: d.block_parts(i),
                 parts_done: p.parts_done,
+                kind: b.kind,
                 min_minutes: if locked && touched { ((d.block_work_live(i, now) + MIN - 1) / MIN).max(1) as u32 } else { 1 },
             }
         })
@@ -198,6 +208,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
             resume: v.can.resume,
             start_next: matches!(v.phase.kind.as_str(), "await" | "lunch"),
             edit_plan: d.mode == Mode::Plan,
+            end_segment: v.can.end_segment,
         },
         sites: cfg.blocklist.sites.clone(),
         apps: cfg.phone.apps.clone(),

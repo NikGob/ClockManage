@@ -207,6 +207,44 @@ export function finishDialog(v) {
   });
 }
 
+/**
+ * "Отрезок": pick one or several (lunch → nap); they run one after another. While a segment
+ * runs, the picks go to its queue.
+ */
+export function segmentDialog(types, running) {
+  const picked = [];
+  return dialog(`
+    <h2>${running ? 'Добавить в очередь' : 'Отрезок'}</h2>
+    <p class="body-m muted">${running ? 'Начнётся сразу после текущего.' : 'Обратный отсчёт; несколько подряд идут очередью. Блокировка — как на перерыве.'}</p>
+    <div class="seg-types">${types.map((t, i) => `<button class="btn tonal interactive" data-t="${i}">${icon(t.alarm ? 'alarm' : t.name.toLowerCase().startsWith('обед') ? 'restaurant' : 'coffee')}${esc(t.name)} · ${t.minutes} мин</button>`).join('')}</div>
+    <div class="seg-queue" id="sq" aria-live="polite"></div>
+    <div class="actions">
+      <button class="btn text interactive" data-close>Отмена</button>
+      <button class="btn filled interactive" data-ok disabled>${icon('play')}${running ? 'В очередь' : 'Начать'}</button>
+    </div>`, (d, close) => {
+    const sq = d.querySelector('#sq');
+    const ok = d.querySelector('[data-ok]');
+    const draw = () => {
+      sq.innerHTML = picked.length
+        ? picked.map((t, i) => `<span class="chip input removable">${esc(t.name)} ${t.minutes} мин<button class="x interactive" data-rm="${i}" aria-label="Убрать">${icon('close')}</button></span>`).join('<span class="arrow">→</span>')
+        : '<span class="body-m muted">Нажми на тип — можно несколько: обед → сон</span>';
+      ok.disabled = !picked.length;
+    };
+    draw();
+    d.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-t]');
+      const rm = e.target.closest('[data-rm]');
+      if (t) { picked.push(types[Number(t.dataset.t)]); draw(); }
+      if (rm) { picked.splice(Number(rm.dataset.rm), 1); draw(); }
+    });
+    ok.addEventListener('click', async (e) => {
+      const items = picked.map((t) => ({ name: t.name, minutes: t.minutes }));
+      const r = await run(() => call('start_segments', { items }).then(() => true), e.currentTarget);
+      if (r) close(picked);
+    });
+  });
+}
+
 /** One-off day end for today only: later when there is no time, earlier to finish sooner. */
 export function dayEndDialog(v) {
   const midnight = v.day_end_at - v.day_end_min * 60000;
