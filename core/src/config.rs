@@ -111,19 +111,13 @@ impl DayKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct DayProfile {
     /// Plan a new day of this kind starts with.
     pub plan: Vec<PlanBlock>,
     /// "Начать день" turns on blocking.
     pub block: bool,
-}
-
-impl Default for DayProfile {
-    fn default() -> Self {
-        Self { plan: vec![], block: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -172,6 +166,80 @@ impl Profiles {
     }
 }
 
+/// A non-study stretch with its own countdown: lunch, a nap, a walk…
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SegmentType {
+    pub name: String,
+    pub minutes: u32,
+    /// The end is a loud alarm that rings until "Встал" (a nap). No 5-minute warning.
+    pub alarm: bool,
+    /// Blocked sites/apps open while it runs (until its planned end), like the old "ем за ПК".
+    pub open_access: bool,
+}
+
+impl Default for SegmentType {
+    fn default() -> Self {
+        Self { name: "Отрезок".into(), minutes: 15, alarm: false, open_access: false }
+    }
+}
+
+pub fn default_segments(lunch_min: u32) -> Vec<SegmentType> {
+    vec![
+        SegmentType { name: "Обед".into(), minutes: lunch_min, alarm: false, open_access: false },
+        SegmentType { name: "Сон".into(), minutes: 20, alarm: true, open_access: false },
+        SegmentType { name: "Прогулка".into(), minutes: 15, alarm: false, open_access: false },
+    ]
+}
+
+pub const MAX_SEGMENT_MIN: u32 = 240;
+
+/// A phone paired over the local network.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct PhoneDevice {
+    pub id: String,
+    pub name: String,
+    /// Bearer token the phone sends with every request.
+    pub token: String,
+    pub paired_at: i64,
+}
+
+/// Phone sync over Wi-Fi: the PC serves the timer to the Android app in the same network.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Phone {
+    pub enabled: bool,
+    /// TCP port of the phone API (the discovery reply tells it to the phone).
+    pub port: u16,
+    /// Android package names blocked on the phone during the lock (sites come from `blocklist`).
+    pub apps: Vec<String>,
+    pub devices: Vec<PhoneDevice>,
+}
+
+pub const PHONE_PORT: u16 = 47811;
+/// UDP port the PC answers discovery broadcasts on.
+pub const PHONE_DISCOVERY_PORT: u16 = 47810;
+
+impl Default for Phone {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: PHONE_PORT,
+            apps: [
+                "org.telegram.messenger",
+                "com.discord",
+                "com.twitter.android",
+                "tv.twitch.android.app",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            devices: vec![],
+        }
+    }
+}
+
 pub const DEFAULT_PHRASE: &str =
     "Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе";
 
@@ -202,6 +270,11 @@ pub struct Config {
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub appearance: Appearance,
+    /// Types of non-study segments ("Отрезок" button and `type: "break"` plan items).
+    /// Missing in an old config.json -> empty, and `normalize` fills it keeping the old lunch length.
+    #[serde(default = "Vec::new")]
+    pub segments: Vec<SegmentType>,
+    pub phone: Phone,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
     pub study_days: Option<[bool; 7]>,
@@ -239,6 +312,8 @@ impl Default for Config {
             mcp_enabled: true,
             mcp_port: 0,
             appearance: Appearance::default(),
+            segments: default_segments(45),
+            phone: Phone::default(),
             study_days: None,
             plan_template: None,
         }
@@ -256,6 +331,12 @@ pub struct EditContext {
 impl Config {
     pub fn profile(&self, k: DayKind) -> &DayProfile {
         self.profiles.get(k)
+    }
+
+    /// The segment type called `name` (case-insensitive).
+    pub fn segment_type(&self, name: &str) -> Option<&SegmentType> {
+        let n = name.trim();
+        self.segments.iter().find(|t| t.name.eq_ignore_ascii_case(n) || t.name.to_lowercase() == n.to_lowercase())
     }
 
     pub fn normalize(&mut self) {
@@ -286,13 +367,33 @@ impl Config {
             };
             (!is_protected_app(&exe)).then_some(exe)
         });
+        // Configs from before 0.3 have no segment types: start from the defaults, lunch keeps
+        // its old length.
+        if self.segments.is_empty() {
+            self.segments = default_segments(self.timing.lunch_min);
+        }
+        let mut segs: Vec<SegmentType> = vec![];
+        for t in &self.segments {
+            let name: String = t.name.trim().chars().take(24).collect();
+            if name.is_empty() || segs.iter().any(|s| s.name.to_lowercase() == name.to_lowercase()) {
+                continue;
+            }
+            segs.push(SegmentType { name, minutes: t.minutes.clamp(1, MAX_SEGMENT_MIN), ..t.clone() });
+        }
+        segs.truncate(10);
+        self.segments = segs;
+        if self.phone.port < 1024 {
+            self.phone.port = PHONE_PORT;
+        }
+        self.phone.apps = normalize_list(&self.phone.apps, normalize_package);
+        self.phone.devices.retain(|d| d.token.len() >= 16);
         for k in [DayKind::Full, DayKind::Light, DayKind::Off] {
             let plan = &mut self.profiles.get_mut(k).plan;
             for b in plan.iter_mut() {
                 b.normalize();
             }
             plan.retain(|b| b.minutes > 0);
-            plan.truncate(12);
+            plan.truncate(16);
         }
         if self.emergency_phrase.trim().chars().count() < 30 {
             self.emergency_phrase = DEFAULT_PHRASE.into();
@@ -319,6 +420,10 @@ impl Config {
         if lower(&self.blocklist.apps).iter().any(|s| !new_apps.contains(s)) {
             return Err("Во время блокировки приложения можно только добавлять.".into());
         }
+        let new_phone = lower(&new.phone.apps);
+        if lower(&self.phone.apps).iter().any(|s| !new_phone.contains(s)) {
+            return Err("Во время блокировки приложения телефона можно только добавлять.".into());
+        }
         // Today is pinned in the day state, so the week and the profiles only shape future days.
         if new.day_end_min < self.day_end_min {
             return Err("Во время учёбы конец дня можно только сдвинуть позже.".into());
@@ -335,6 +440,18 @@ impl Config {
             || t.0.lunch_min > t.1.lunch_min
         {
             return Err("Во время учёбы перерывы и обед можно только сократить.".into());
+        }
+        for t in &new.segments {
+            match self.segment_type(&t.name) {
+                Some(old) if t.minutes > old.minutes => {
+                    return Err(format!("Во время учёбы отрезок «{}» можно только сократить.", old.name));
+                }
+                Some(old) if t.open_access && !old.open_access => {
+                    return Err("Доступ на время отрезка включается только вне блокировки.".into());
+                }
+                None if t.open_access => return Err("Доступ на время отрезка включается только вне блокировки.".into()),
+                _ => {}
+            }
         }
         if new.emergency_min > self.emergency_min || new.emergency_phrase != self.emergency_phrase {
             return Err("Аварийный доступ настраивается только вне блокировки.".into());
@@ -374,6 +491,24 @@ const PROTECTED_APPS: [&str; 22] = [
 pub fn is_protected_app(exe: &str) -> bool {
     let e = exe.to_ascii_lowercase();
     PROTECTED_APPS.contains(&e.as_str())
+}
+
+/// Phone apps that must stay usable: calls (emergency!), system UI, settings, launchers, ClockManage.
+pub fn is_protected_package(p: &str) -> bool {
+    let p = p.to_ascii_lowercase();
+    ["com.android.systemui", "com.android.settings", "com.nikgob.clockmanage", "android"].contains(&p.as_str())
+        || ["dialer", "launcher", "emergency", "incallui", ".phone", "telecom"].iter().any(|k| p.contains(k))
+}
+
+/// `org.telegram.messenger` (trimmed); anything that is not a package name is dropped.
+pub fn normalize_package(s: &str) -> Option<String> {
+    let s = s.trim();
+    let valid = s.contains('.')
+        && !s.starts_with('.')
+        && !s.ends_with('.')
+        && s.len() <= 120
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+    (valid && !is_protected_package(s)).then(|| s.to_string())
 }
 
 /// `https://www.YouTube.com/shorts/` -> `youtube.com/shorts`.
@@ -462,6 +597,42 @@ mod tests {
         assert_eq!(c.profiles.full.plan, vec![PlanBlock::new("X", 60)]);
         let out = serde_json::to_string(&c).unwrap();
         assert!(!out.contains("study_days") && !out.contains("plan_template"));
+    }
+
+    #[test]
+    fn phone_apps_normalize_and_only_grow() {
+        let mut c = Config::default();
+        c.phone.apps = vec![" com.discord ".into(), "com.google.android.dialer".into(), "nonsense".into(), "com.discord".into()];
+        c.normalize();
+        assert_eq!(c.phone.apps, vec!["com.discord".to_string()]);
+        let ctx = EditContext { locked: true };
+        let mut n = c.clone();
+        n.phone.apps.push("com.zhiliaoapp.musically".into());
+        assert!(c.check_update(&n, ctx).is_ok());
+        n.phone.apps.clear();
+        assert!(c.check_update(&n, ctx).is_err());
+        assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
+    }
+
+    #[test]
+    fn segment_types_migrate_and_only_tighten() {
+        let mut c: Config = serde_json::from_str(r#"{"timing":{"lunch_min":60}}"#).unwrap();
+        c.normalize();
+        assert_eq!(c.segments.len(), 3);
+        assert_eq!(c.segment_type("обед").unwrap().minutes, 60);
+        assert!(c.segment_type("Сон").unwrap().alarm);
+        let ctx = EditContext { locked: true };
+        let mut n = c.clone();
+        n.segments[0].minutes = 30;
+        n.segments.push(SegmentType { name: "Душ".into(), minutes: 10, ..Default::default() });
+        assert!(c.check_update(&n, ctx).is_ok());
+        let mut n = c.clone();
+        n.segments[1].minutes = 90;
+        assert!(c.check_update(&n, ctx).is_err());
+        let mut n = c.clone();
+        n.segments[0].open_access = true;
+        assert!(c.check_update(&n, ctx).is_err());
+        assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
     }
 
     #[test]

@@ -13,14 +13,17 @@ const TIP = {
   block: 'В такой день «Начать день» закрывает сайты и приложения из списка — до конца дня или пока не закроешь весь план.',
   plan: 'С этого плана начинается каждый такой день. Сегодняшний план правится на экране «План».',
   dayEnd: 'Во сколько блокировка снимается сама, даже если план не закрыт. Во время учёбы это значение по умолчанию можно только сдвинуть позже.\nСдвинуть только сегодняшний день (позже или раньше, до 02:00 ночи) — нажми на время на экране «Сегодня».',
-  seg: 'Блок режется на отрезки такой длины. Хвост короче 15 мин приклеивается к последнему отрезку: 50 мин — это один отрезок.',
-  short: 'Отдых между отрезками одного блока. Не съедает учебное время. Во время учёбы его можно только сократить.',
+  seg: 'Блок режется на части такой длины. Хвост короче 15 мин приклеивается к последней части: 50 мин — это одна часть.',
+  short: 'Отдых между частями одного блока. Не съедает учебное время. Во время учёбы его можно только сократить.',
   between: 'Отдых после закрытого блока, перед следующим. Во время учёбы — только короче.',
-  lunch: 'Обед берётся один раз за день кнопкой «Обед» в перерыве — с таймером или без. Во время учёбы — только короче.',
+  segments: 'Неучебные отрезки с обратным отсчётом: кнопка «Отрезок» в перерыве или пункт плана. За 5 минут и в конце — уведомление, потом каждые 5 минут — на сколько превышено. Блокировка — как на перерыве. Во время учёбы — только короче.',
+  segAlarm: 'Конец — громкий будильник, который звонит, пока не нажмёшь «Встал» (даже если звук выключен). Без предупреждения за 5 минут. Для сна.',
+  segAccess: 'На время отрезка (до его планового конца) заблокированное открыто — как «ем за ПК». Включается только вне учёбы.',
   sound: 'Звонок на конце перерыва, мягкий сигнал на конце работы и фанфары на закрытии блока.',
   overlay: 'Рисованная карточка поверх всех окон на каждом переходе: будильник, перерыв, закрытый блок, «Не-не-не».',
   reminder: 'Пока таймер ждёт «Начать часть», звонок повторяется с этим интервалом. После конца дня — молчит.',
   contrast: 'Инверсные цвета: тёмная плашка в светлой теме и светлая в тёмной. Не теряется ни на каком фоне.',
+  phone: 'Приложение ClockManage для Android видит таймер по Wi-Fi, может ставить паузу, начинать части и менять длину блоков. Без связи продолжает считать само. Сайты из блок-листа и выбранные приложения блокирует и на телефоне.',
   mcp: 'Локальный сервер для Claude: видит состояние таймера и статистику, может задать план. Слушает только 127.0.0.1.',
   autostart: 'Запуск при входе в Windows без окна UAC и перезапуск раз в 5 минут, если процесс убили. Во время учёбы выключить нельзя.',
 };
@@ -102,6 +105,37 @@ export function mountSettings(root, ctx) {
       </section>`;
   }
 
+  function ago(ts) {
+    if (!ts) return 'ещё не выходил на связь';
+    const min = Math.floor((Date.now() - ts) / 60000);
+    return min < 1 ? 'на связи' : min < 60 ? `был на связи ${min} мин назад` : `был на связи в ${new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  function phoneSection(ph) {
+    const on = cfg.phone.enabled;
+    const addr = ph.address ? `${ph.address}:${ph.port}` : '';
+    const state = !on ? 'Выключена' : ph.running ? `Работает${addr ? ` · ${esc(addr)}` : ''} · ПК «${esc(ph.pc_name)}»` : `Не запущена${ph.error ? ': ' + esc(ph.error) : ''}`;
+    const devices = ph.devices.map((d) => `<div class="setting">
+        <span class="badge">${icon('phone')}</span>
+        <div class="grow"><div class="t">${esc(d.name)}</div><div class="d">${ago(d.last_seen)}${d.blocker === true ? ' · блокировка на телефоне включена' : d.blocker === false ? ' · блокировка на телефоне <b>выключена</b>' : ''}</div></div>
+        <button class="btn text interactive" data-forget="${esc(d.id)}">Отключить</button></div>`).join('');
+    const pin = ph.pin ? `<div class="setting col pin-box">
+        <div class="t">PIN для телефона</div>
+        <div class="pin tnum" aria-live="polite">${esc(ph.pin.slice(0, 3))} ${esc(ph.pin.slice(3))}</div>
+        <div class="d">Открой ClockManage на телефоне в той же сети Wi-Fi, выбери этот ПК и введи PIN. Действует до ${new Date(ph.pin_until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.</div></div>` : '';
+    return `<section class="section">
+        <h2>Телефон</h2>
+        <div class="surface">
+          <div class="setting"><div class="grow"><div class="t">Синхронизация с Android${info('phone')}</div><div class="d">${state}</div></div>${sw('phone.enabled', on, 'Синхронизация с телефоном', 'phone')}</div>
+          ${devices}
+          ${pin}
+          ${on && ph.apk?.available ? `<div class="setting"><div class="grow"><div class="t">Приложение для телефона</div><div class="d">В этой сборке — версия ${esc(ph.apk.name)} (${(ph.apk.size / 1048576).toFixed(1).replace('.', ',')} МБ). Подключённый телефон предложит обновиться сам, по Wi-Fi.</div></div></div>` : ''}
+          ${on ? `<div class="setting"><div class="grow"><div class="d">Телефон и ПК должны быть в одной сети. Приложения, которые блокируются на телефоне, — на экране «Блокировка».</div></div>
+            <button class="btn tonal interactive" id="phone-pin">${icon('add')}Подключить телефон</button></div>` : ''}
+        </div>
+      </section>`;
+  }
+
   function render() {
     if (!cfg || !last) return;
     const v = last.view;
@@ -123,14 +157,28 @@ export function mountSettings(root, ctx) {
             <div class="grow"><div class="t">Конец дня${info('dayEnd')}</div><div class="d">Блокировка снимается в это время (МСК)${v.day_end_changed ? ` · сегодня — до ${esc(v.day_end)}${v.day_end_next_day ? ' ночи' : ''}` : ''}</div></div>
             <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" ${locked ? `min="${hm(cfg.day_end_min)}"` : ''} aria-label="Конец дня" ${tipAttr('dayEnd')}></div>
           </div>
-          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">Отрезок работы${info('seg')}</div><div class="d">1,5 ч = 45 + 45</div></div>
+          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">Часть работы${info('seg')}</div><div class="d">1,5 ч = 45 + 45</div></div>
             ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: 'мин', label: 'Минут работы в отрезке', disabled: locked })}</div>
-          <div class="setting"><div class="grow"><div class="t">Перерыв между отрезками${info('short')}</div></div>
+          <div class="setting"><div class="grow"><div class="t">Перерыв между частями${info('short')}</div></div>
             ${stepper('timing.short_break_min', { min: 1, max: 120, step: 5, unit: 'мин', label: 'Минут перерыва', ceil: locked ? t.short_break_min : Infinity })}</div>
           <div class="setting"><div class="grow"><div class="t">Перерыв между блоками${info('between')}</div></div>
             ${stepper('timing.between_blocks_min', { min: 1, max: 180, step: 5, unit: 'мин', label: 'Минут между блоками', ceil: locked ? t.between_blocks_min : Infinity })}</div>
-          <div class="setting"><div class="grow"><div class="t">Обед с таймером${info('lunch')}</div></div>
-            ${stepper('timing.lunch_min', { min: 5, max: 180, step: 5, unit: 'мин', label: 'Минут обеда', ceil: locked ? t.lunch_min : Infinity })}</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Отрезки</h2>
+        <div class="surface">
+          ${cfg.segments.map((sg, i) => `<div class="setting seg-type">
+            <span class="badge">${icon(sg.alarm ? 'alarm' : 'coffee')}</span>
+            <div class="grow"><input class="seg-name" data-segname="${i}" value="${esc(sg.name)}" maxlength="24" aria-label="Название отрезка"></div>
+            ${stepper(`segments.${i}.minutes`, { min: 1, max: 240, step: 5, unit: 'мин', label: `Минут: ${sg.name}`, ceil: locked ? sg.minutes : Infinity })}
+            <label class="sw-wrap"><span class="sw-label">Будильник</span>${sw(`segments.${i}.alarm`, sg.alarm, `Будильник: ${sg.name}`, 'segAlarm')}</label>
+            <label class="sw-wrap"><span class="sw-label">Доступ</span>${sw(`segments.${i}.open_access`, sg.open_access, `Доступ на время: ${sg.name}`, 'segAccess', locked && !sg.open_access)}</label>
+            <button class="icon-btn interactive" data-segdel="${i}" aria-label="Удалить ${esc(sg.name)}" ${cfg.segments.length <= 1 ? 'disabled' : ''}>${icon('delete')}</button>
+          </div>`).join('')}
+          <div class="setting seg-add"><div class="grow"><div class="d">Обед, сон, прогулка — неучебное время с обратным отсчётом${info('segments')}. Свой тип: «Душ 10 мин». В план дня отрезки добавляются на экране «План».</div></div>
+            <button class="btn tonal interactive" data-segadd ${cfg.segments.length >= 10 ? 'disabled' : ''}>${icon('add')}Добавить тип</button></div>
         </div>
       </section>
 
@@ -175,6 +223,8 @@ export function mountSettings(root, ctx) {
           <div class="setting"><div class="grow"><div class="t">Контрастный мини-таймер</div><div class="d">Инверсные цвета — виден на любом фоне</div></div>${sw('appearance.mini_contrast', cfg.appearance.mini_contrast, 'Контрастный мини-таймер', 'contrast')}</div>
         </div>
       </section>
+
+      ${phoneSection(m.phone)}
 
       <section class="section">
         <h2>MCP для Claude</h2>
@@ -280,6 +330,15 @@ export function mountSettings(root, ctx) {
     if (t.dataset.sw) {
       pulse = `[data-sw="${t.dataset.sw}"]`;
       save((c) => setPath(c, t.dataset.sw, t.checked));
+    } else if (t.dataset.segname !== undefined) {
+      const i = Number(t.dataset.segname);
+      const name = t.value.trim();
+      // Two types with one name would merge into one (and the other would vanish).
+      if (cfg.segments.some((x, j) => j !== i && x.name.toLowerCase() === name.toLowerCase())) {
+        snack(`«${name}» уже есть — выбери другое название`);
+        render();
+      } else if (name) save((c) => { c.segments[i].name = name; });
+      else render();
     } else if (t.id === 'dayend') {
       const [h, mm] = t.value.split(':').map(Number);
       if (Number.isFinite(h)) save((c) => { c.day_end_min = h * 60 + (mm || 0); });
@@ -321,6 +380,21 @@ export function mountSettings(root, ctx) {
       const port = await run(() => call('regenerate_port'), t);
       if (port) { cfg = await call('get_config'); snack(`Новый порт: ${port}. Обнови адрес в Claude.`); }
     } else if (t.id === 'opendir') call('open_data_dir');
+    else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
+    else if (t.dataset.segdel !== undefined) {
+      const i = Number(t.dataset.segdel);
+      save((c) => { c.segments.splice(i, 1); });
+    } else if (t.dataset.segadd !== undefined) {
+      save((c) => {
+        let name = 'Свой';
+        for (let n = 2; c.segments.some((x) => x.name.toLowerCase() === name.toLowerCase()); n++) name = `Свой ${n}`;
+        c.segments.push({ name, minutes: 15, alarm: false, open_access: false });
+      }).then(() => box.querySelector('.seg-type:last-of-type .seg-name')?.select());
+    }
+    else if (t.dataset.forget) {
+      const ok = await run(() => call('phone_forget', { id: t.dataset.forget }).then(() => true), t);
+      if (ok) snack('Телефон отключён — подключить снова можно по новому PIN');
+    }
   });
 
   async function reload() {
@@ -333,8 +407,10 @@ export function mountSettings(root, ctx) {
     update(s) {
       last = s;
       const v = s.view;
-      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}`;
-      if (nsig !== sig && cfg) { sig = nsig; render(); }
+      // Phone "last seen" re-renders once a minute, not on every poll of the phone.
+      const ph = { ...s.meta.phone, devices: s.meta.phone.devices.map((d) => ({ ...d, last_seen: d.last_seen && Math.floor((Date.now() - d.last_seen) / 60000) })) };
+      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}`;
+      if (nsig !== sig) { sig = nsig; if (cfg) render(); }
     },
     show() { reload(); },
     config() { reload(); },

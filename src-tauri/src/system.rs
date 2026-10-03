@@ -118,3 +118,72 @@ pub fn style_titlebar(window: &tauri::WebviewWindow, bg: &str, fg: &str, dark: b
 pub fn style_titlebar(_window: &tauri::WebviewWindow, _bg: &str, _fg: &str, _dark: bool) {
     let _ = parse_hex;
 }
+
+const FIREWALL_RULE: &str = "ClockManage phone sync";
+
+/// Inbound rule for the phone API and discovery (TCP + UDP of this exe). Every network profile:
+/// home Wi-Fi is often marked "public" by Windows, and the API answers paired phones only.
+#[cfg(windows)]
+pub fn allow_phone_firewall() {
+    let run = |args: &[&str]| {
+        std::process::Command::new("netsh")
+            .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    let name = format!("name={FIREWALL_RULE}");
+    if run(&["advfirewall", "firewall", "show", "rule", &name]) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let program = format!("program={}", exe.display());
+    run(&["advfirewall", "firewall", "add", "rule", &name, "dir=in", "action=allow", &program, "enable=yes", "profile=any"]);
+}
+
+#[cfg(not(windows))]
+pub fn allow_phone_firewall() {}
+
+#[cfg(windows)]
+pub fn remove_phone_firewall() {
+    let _ = std::process::Command::new("netsh")
+        .args(["advfirewall", "firewall", "delete", "rule", &format!("name={FIREWALL_RULE}")])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+#[cfg(not(windows))]
+pub fn remove_phone_firewall() {}
+
+/// Name of this PC, shown on the phone when it finds it.
+pub fn pc_name() -> String {
+    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "ПК".into())
+}
+
+/// `lan_ip`, looked up at most every 30 s (the state goes to the UI every second).
+pub fn lan_ip_cached() -> Option<String> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, Option<String>)>> = Mutex::new(None);
+    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, ip)) = c.as_ref() {
+        if at.elapsed() < std::time::Duration::from_secs(30) {
+            return ip.clone();
+        }
+    }
+    let ip = lan_ip();
+    *c = Some((std::time::Instant::now(), ip.clone()));
+    ip
+}
+
+/// The LAN address of the default interface (no packet is sent: UDP connect only picks a route).
+pub fn lan_ip() -> Option<String> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.168.0.1:9").or_else(|_| s.connect("10.0.0.1:9")).ok()?;
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+}

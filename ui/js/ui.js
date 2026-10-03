@@ -2,10 +2,39 @@
 import { esc } from './api.js';
 
 let snackTimer = 0;
+let snackCount = 0;
 
-export function snack(text, ms = 3600) {
+/**
+ * Bottom message. `action` = { label, run } adds a button (an "undo"); the bar then stays for
+ * the whole `ms`, and the label counts the seconds down.
+ */
+export function snack(text, ms = 3600, action = null) {
   const el = document.getElementById('snackbar');
   document.getElementById('snack-text').textContent = text;
+  const btn = document.getElementById('snack-act');
+  clearInterval(snackCount);
+  if (btn) {
+    btn.hidden = !action;
+    const oldBar = el.querySelector('.snack-bar');
+    if (oldBar && !action) oldBar.hidden = true;
+    btn.onclick = null;
+    if (action) {
+      const until = Date.now() + ms;
+      const label = () => { btn.textContent = `${action.label} · ${Math.max(0, Math.ceil((until - Date.now()) / 1000))}`; };
+      label();
+      snackCount = setInterval(label, 250);
+      let bar = el.querySelector('.snack-bar');
+      if (!bar) { bar = document.createElement('span'); bar.className = 'snack-bar'; el.appendChild(bar); }
+      bar.hidden = false;
+      bar.getAnimations().forEach((x) => x.cancel());
+      bar.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ms, easing: 'linear', fill: 'forwards' });
+      btn.onclick = () => {
+        clearInterval(snackCount);
+        el.classList.remove('show');
+        action.run();
+      };
+    }
+  }
   // A popover lives in the top layer: re-opening it puts it above any modal dialog, so an
   // error raised from inside a dialog is actually seen (it used to hide under the backdrop).
   if (el.showPopover) {
@@ -18,7 +47,7 @@ export function snack(text, ms = 3600) {
   }
   el.classList.add('show');
   clearTimeout(snackTimer);
-  snackTimer = setTimeout(() => el.classList.remove('show'), ms);
+  snackTimer = setTimeout(() => { el.classList.remove('show'); clearInterval(snackCount); }, ms);
 }
 
 /** Wrap a command so failures surface as a snackbar and buttons show pending state. */
@@ -44,6 +73,7 @@ export function dialog(html, build) {
     const d = document.createElement('dialog');
     d.className = 'm3';
     d.innerHTML = `<form method="dialog" class="dlg">${html}</form>`;
+    [...d.querySelector('.dlg').children].forEach((el, i) => el.style.setProperty('--i', Math.min(i, 8)));
     document.body.appendChild(d);
     let done = false;
     const close = (value) => {
@@ -63,6 +93,14 @@ export function dialog(html, build) {
     d.querySelector('form').addEventListener('submit', (e) => e.preventDefault());
     build?.(d, close);
     d.showModal();
+    // Grow out of the button that opened it.
+    const from = opener?.getBoundingClientRect?.();
+    const box = d.getBoundingClientRect();
+    if (from && from.width && box.width) {
+      const x = Math.min(Math.max(from.left + from.width / 2 - box.left, 0), box.width);
+      const y = Math.min(Math.max(from.top + from.height / 2 - box.top, 0), box.height);
+      d.style.transformOrigin = `${x}px ${y}px`;
+    }
     const first = d.querySelector('[autofocus]') || d.querySelector('input, textarea, button:not([data-close])');
     first?.focus();
   });
@@ -73,6 +111,120 @@ export function ask(title, text, ok = 'Да', cancel = 'Отмена') {
   return dialog(`<h2>${esc(title)}</h2><p class="body-m muted">${esc(text)}</p>
     <div class="actions"><button class="btn text interactive" data-close>${esc(cancel)}</button><button class="btn filled interactive" data-ok autofocus>${esc(ok)}</button></div>`,
   (d, close) => d.querySelector('[data-ok]').addEventListener('click', () => close(true))).then((v) => v === true);
+}
+
+/**
+ * Press-and-hold confirmation: `onDone` runs only after holding `btn` for `ms` (pointer or
+ * Space/Enter). A `.fillbar` child shows the progress. A plain click does nothing.
+ */
+export function holdButton(btn, ms, onDone) {
+  const bar = btn.querySelector('.fillbar');
+  let start = 0;
+  let raf = 0;
+  const stop = () => {
+    cancelAnimationFrame(raf);
+    start = 0;
+    if (bar) { bar.style.transition = 'transform 200ms'; bar.style.transform = 'scaleX(0)'; }
+  };
+  const frame = () => {
+    const t = Math.min(1, (Date.now() - start) / ms);
+    if (bar) { bar.style.transition = 'none'; bar.style.transform = `scaleX(${t})`; }
+    if (t < 1) { raf = requestAnimationFrame(frame); return; }
+    stop();
+    onDone();
+  };
+  const begin = (e) => {
+    if (btn.disabled || start) return;
+    e.preventDefault();
+    start = Date.now();
+    raf = requestAnimationFrame(frame);
+  };
+  btn.addEventListener('pointerdown', begin);
+  btn.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) begin(e); });
+  ['pointerup', 'pointerleave', 'keyup', 'blur'].forEach((ev) => btn.addEventListener(ev, () => { if (start) stop(); }));
+  btn.addEventListener('click', (e) => e.preventDefault());
+}
+
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const springFast = () => getComputedStyle(document.documentElement).getPropertyValue('--spring-fast').trim() || 'cubic-bezier(.2,0,0,1)';
+
+const RISE = 'section, .prow, .day-row, .blk, .setting';
+
+/** Screen contents rise in one after another (each element only once). */
+export function stagger(root, selector = RISE) {
+  if (reduced()) return 0;
+  return riseIn([...root.querySelectorAll(selector)]);
+}
+
+/** Returns how many elements were animated. */
+function riseIn(els) {
+  const items = els.filter((el) => !el.dataset.risen && el.offsetParent).slice(0, 16);
+  const easing = springFast();
+  items.forEach((el, i) => {
+    el.dataset.risen = '1';
+    el.animate([{ opacity: 0, transform: 'translateY(16px)' }, { opacity: 1, transform: 'none' }], { duration: 440, delay: i * 35, easing, fill: 'backwards' });
+  });
+  return items.length;
+}
+
+/**
+ * The cascade for a screen that renders after a fetch: catch its first render the moment it
+ * is inserted (MutationObserver runs before the browser paints), animate it once, stop.
+ * Animating it later made the content show, vanish and rise again.
+ */
+export function staggerFirstRender(root, selector = RISE) {
+  if (reduced()) return;
+  const mo = new MutationObserver((records) => {
+    const found = [];
+    for (const r of records) {
+      r.addedNodes.forEach((n) => {
+        if (n.nodeType !== 1) return;
+        if (n.matches(selector)) found.push(n);
+        found.push(...n.querySelectorAll(selector));
+      });
+    }
+    if (!found.length) return;
+    mo.disconnect();
+    riseIn(found);
+  });
+  mo.observe(root, { childList: true, subtree: true });
+  setTimeout(() => mo.disconnect(), 1500);
+}
+
+/** A little burst of dots out of `el` (a block closed, a goal reached). */
+export function burst(el, n = 14) {
+  if (!el || reduced()) return;
+  const r = el.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const colors = ['--md-sys-color-primary', '--md-sys-color-tertiary', '--md-sys-color-secondary', '--md-sys-color-primary-container'];
+  for (let i = 0; i < n; i++) {
+    const d = document.createElement('span');
+    d.className = 'burst-dot';
+    const size = 4 + Math.random() * 5;
+    d.style.cssText = `left:${cx}px;top:${cy}px;width:${size}px;height:${size}px;background:var(${colors[i % colors.length]})`;
+    document.body.appendChild(d);
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+    const dist = 26 + Math.random() * 34;
+    d.animate([
+      { transform: 'translate(-50%, -50%) scale(1)', opacity: 1 },
+      { transform: `translate(calc(-50% + ${Math.cos(a) * dist}px), calc(-50% + ${Math.sin(a) * dist}px)) scale(.2)`, opacity: 0 },
+    ], { duration: 650 + Math.random() * 250, easing: 'cubic-bezier(.05,.7,.1,1)' }).onfinish = () => d.remove();
+  }
+}
+
+/** Count a number up to `to` (formatted by `fmt`) — journal totals. */
+export function countUp(el, to, fmt = (v) => String(v), ms = 700) {
+  if (!el) return;
+  if (reduced() || !to) { el.textContent = fmt(to); return; }
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / ms);
+    const e = 1 - (1 - k) ** 3;
+    el.textContent = fmt(k < 1 ? Math.round(to * e * 4) / 4 : to);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 export function hoursLabel(min) {

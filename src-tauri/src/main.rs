@@ -3,6 +3,7 @@
 mod app;
 mod blocker;
 mod mcp_server;
+mod phone_server;
 mod sound;
 mod store;
 mod system;
@@ -27,6 +28,7 @@ fn cleanup() {
     blocker::clear_guard_redirects(&store::Store::new(dir.clone()).load_config().blocklist.apps);
     let _ = std::fs::remove_file(dir.join("guard.beat"));
     let _ = system::set_autostart(false);
+    system::remove_phone_firewall();
 }
 
 fn main() {
@@ -72,10 +74,14 @@ fn main() {
                 store,
                 blocker: Mutex::new(blocker::Blocker::new(dir.join("blocker.json"))),
                 mcp: mcp_server::McpServer::default(),
+                phone: phone_server::PhoneServer::default(),
                 app: handle.clone(),
                 admin: system::is_admin(),
                 overlay: Mutex::new(None),
                 tray: Mutex::new(None),
+                overlay_rect: Mutex::new(None),
+                finish_token: Mutex::new(None),
+                apk_dir: handle.path().resource_dir().ok().map(|d| d.join("resources").join("android")),
             });
             tauri_app.manage(shared.clone());
 
@@ -85,6 +91,9 @@ fn main() {
                 g.cfg.mcp_port = port;
                 shared.store.save_config(&g.cfg);
             }
+
+            let cfg = shared.lock().cfg.clone();
+            shared.phone.start(shared.clone(), &cfg);
 
             windows::build_tray(&handle, shared.clone())?;
             windows::install_close_handlers(&handle);
@@ -114,7 +123,6 @@ fn main() {
             app::resume,
             app::start_next,
             app::primary,
-            app::start_lunch,
             app::start_single,
             app::stop_single,
             app::set_plan,
@@ -135,6 +143,15 @@ fn main() {
             app::toggle_mini,
             app::style_titlebar,
             app::restart_firefox,
+            app::phone_pin,
+            app::phone_forget,
+            app::finish_block,
+            app::undo_skip,
+            app::set_block_note,
+            app::start_segments,
+            app::end_segment,
+            app::drop_queued,
+            app::week_stats,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

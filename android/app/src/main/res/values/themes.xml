@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ClockManage" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#2E7D32</item>
+        <item name="android:colorPrimary">#2E7D32</item>
+        <item name="android:windowBackground">#FCFDF7</item>
+        <item name="android:statusBarColor">#FCFDF7</item>
+        <item name="android:navigationBarColor">#FCFDF7</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

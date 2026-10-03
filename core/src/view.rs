@@ -6,9 +6,9 @@ use crate::clock::{Ts, MIN};
 use crate::config::{fmt_hm, Config, DayKind};
 use crate::day::{fmt_day_min, BreakKind, DayState, Forecast, LockState, Mode, Phase, MAX_DAY_END_MIN};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct PhaseView {
-    /// idle | work | break | lunch_break | await | lunch | done
+    /// idle | work | break | lunch_break | await | lunch | segment | done
     pub kind: String,
     pub title: String,
     pub subtitle: String,
@@ -20,6 +20,10 @@ pub struct PhaseView {
     pub paused: bool,
     /// When waiting: how long already.
     pub waiting_ms: i64,
+    /// Segment: its end is a loud alarm (a nap).
+    pub alarm: bool,
+    /// Segment: what is queued after it ("Сон 20 мин").
+    pub queue: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +36,15 @@ pub struct BlockView {
     pub done: bool,
     pub current: bool,
     pub started: bool,
+    pub note: Option<String>,
+    /// study | break (a planned segment: no parts, no work)
+    pub kind: crate::day::ItemKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingNote {
+    pub block: usize,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +76,14 @@ pub struct Can {
     pub set_day_end: bool,
     /// Today may switch to a lighter kind (outside of the lock).
     pub lighter_kind: bool,
+    /// The current block was started and can be closed on the minutes worked.
+    pub finish_block: bool,
+    /// A break was just skipped: "Отменить" works until `undo_until`.
+    pub undo_skip: bool,
+    /// "Отрезок": start a segment now, or queue one behind the running segment.
+    pub segment: bool,
+    /// "Закончил" / "Встал".
+    pub end_segment: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +119,10 @@ pub struct View {
     pub emergency_count: usize,
     pub lunch_used: bool,
     pub single: Option<crate::day::SingleRun>,
+    /// End of the "undo skipped break" window.
+    pub undo_until: Option<Ts>,
+    /// A closed block waits for its end-of-block line.
+    pub pending_note: Option<PendingNote>,
     pub can: Can,
 }
 
@@ -118,6 +143,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             running: false,
             paused: false,
             waiting_ms: 0,
+            ..Default::default()
         },
         Phase::Work { block, dur_ms, since, .. } => {
             let (name, _, parts) = d.part_info(*block);
@@ -136,6 +162,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
                 running: since.is_some(),
                 paused,
                 waiting_ms: 0,
+                ..Default::default()
             }
         }
         Phase::Break { brk, dur_ms, since, next, .. } => {
@@ -157,6 +184,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
                 running: since.is_some(),
                 paused,
                 waiting_ms: 0,
+                ..Default::default()
             }
         }
         Phase::Await { next, since, .. } => {
@@ -172,6 +200,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
                 running: false,
                 paused: false,
                 waiting_ms: now - since,
+                ..Default::default()
             }
         }
         Phase::Lunch { since, next } => {
@@ -187,6 +216,34 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
                 running: false,
                 paused: false,
                 waiting_ms: now - since,
+                ..Default::default()
+            }
+        }
+        Phase::Segment { rec, next } => {
+            let r = &d.segments[*rec];
+            let (name, part, parts) = d.part_info(*next);
+            let queue: Vec<String> = d.segment_queue.iter().map(|q| format!("{} {} мин", q.name, q.minutes)).collect();
+            let elapsed = now - r.start;
+            PhaseView {
+                kind: "segment".into(),
+                title: r.name.clone(),
+                subtitle: if !queue.is_empty() {
+                    format!("Потом: {}", queue.join(" → "))
+                } else if d.first_open_block().is_some() && parts > 0 {
+                    format!("Дальше: {name}, часть {part} из {parts}")
+                } else {
+                    "Учебные блоки на сегодня закрыты".into()
+                },
+                block: current,
+                dur_ms: r.planned_ms(),
+                elapsed_ms: elapsed,
+                // Negative = over time.
+                remaining_ms: r.planned_ms() - elapsed,
+                running: true,
+                paused: false,
+                waiting_ms: 0,
+                alarm: r.alarm,
+                queue,
             }
         }
         Phase::Done => PhaseView {
@@ -200,6 +257,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             running: false,
             paused: false,
             waiting_ms: 0,
+            ..Default::default()
         },
     };
 
@@ -216,6 +274,8 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             done: d.is_block_done(i),
             current: d.mode == Mode::Plan && current == Some(i),
             started: d.progress[i].started_at.is_some(),
+            note: d.progress[i].note.clone(),
+            kind: b.kind,
         })
         .collect();
 
@@ -237,7 +297,9 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
     let after_day_end = d.after_day_end(now, cfg);
     let day_end = d.day_end(cfg);
     let can = Can {
-        start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.plan.iter().any(|b| b.minutes > 0),
+        start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.first_open_block().is_some(),
+        segment: d.can_start_segment(),
+        end_segment: matches!(d.phase, Phase::Segment { .. }),
         pause: running && !lunch_break,
         resume: paused,
         start_next: matches!(d.phase, Phase::Await { .. } | Phase::Break { .. } | Phase::Lunch { .. }),
@@ -255,6 +317,10 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             && day_end < MAX_DAY_END_MIN,
         lighter_kind: !d.plan_lock(now, cfg),
         set_day_end: d.mode == Mode::Plan && d.is_live(now, cfg),
+        undo_skip: d.skip_undo.as_ref().is_some_and(|u| now - u.at <= crate::day::SKIP_UNDO_MS)
+            && matches!(d.phase, Phase::Work { since: Some(_), .. })
+            && d.pause.is_none(),
+        finish_block: d.finish_target(None).is_ok_and(|i| d.block_work_live(i, now) >= 30 * crate::clock::SEC),
     };
 
     View {
@@ -275,7 +341,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         day_end_changed: day_end != cfg.day_end_min,
         forecast: d.forecast(now, cfg),
         mode: d.mode,
-        planned_ms: d.plan.iter().map(|b| b.total_ms()).sum(),
+        planned_ms: d.plan.iter().filter(|b| !b.is_break()).map(|b| b.total_ms()).sum(),
         work_ms: blocks.iter().map(|b| b.work_ms).sum(),
         phase,
         blocks,
@@ -284,6 +350,8 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         emergency_count: d.emergencies.len(),
         lunch_used: d.lunch.is_some(),
         single: if d.mode == Mode::Single { d.singles.last().cloned() } else { None },
+        pending_note: d.pending_note().map(|i| PendingNote { block: i, name: d.plan[i].name.clone() }),
+        undo_until: d.skip_undo.as_ref().map(|u| u.at + crate::day::SKIP_UNDO_MS).filter(|_| can.undo_skip),
         can,
     }
 }

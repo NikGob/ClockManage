@@ -341,10 +341,14 @@ dialog.m3 {
   user-select: text;
 }
 dialog.m3::backdrop { background: rgb(0 0 0 / .32); }
-dialog.m3[open] { animation: dialog-in var(--dur-spring-slow) var(--spring), fade-in 240ms var(--ease) both; }
-dialog.m3[open]::backdrop { animation: fade-in var(--dur-m1) linear; }
+/* Opens from the button that was pressed (transform-origin set in JS). Only transform and
+   opacity animate: they run on the GPU; the old clip-path repainted the window every frame. */
+dialog.m3[open] { animation: dialog-in var(--dur-spring) var(--spring-fast), fade-in 120ms var(--ease) both; }
+dialog.m3[open]::backdrop { animation: fade-in 160ms linear; }
 dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) forwards; }
-@keyframes dialog-in { from { transform: translateY(-20px) scale(.92); clip-path: inset(0 0 55% 0 round var(--shape-xl)); } to { transform: none; clip-path: inset(0 0 0 0 round var(--shape-xl)); } }
+dialog.m3[open] .dlg > * { animation: rise-in var(--dur-spring) var(--spring-fast) both; animation-delay: calc(var(--i, 0) * 30ms + 30ms); }
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes dialog-in { from { transform: scale(.86); } to { transform: none; } }
 @keyframes dialog-out { to { opacity: 0; transform: scale(.96); } }
 @keyframes fade-in { from { opacity: 0; } }
 .dlg { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
@@ -459,3 +463,7 @@ dialog.m3.closing { animation: dialog-out var(--dur-s2) var(--ease-emph-accel) f
   .doodle .pop, .doodle .fade { opacity: 1; }
   .doodle .wag-arcs { opacity: .5; }
 }
+.snackbar #snack-act { min-width: 0; white-space: nowrap; }
+.snackbar #snack-act[hidden] { display: none; }
+.snackbar { overflow: hidden; }
+.snackbar .snack-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--md-sys-color-inverse-primary); transform-origin: left; }

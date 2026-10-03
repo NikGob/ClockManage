@@ -12,9 +12,15 @@ const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 pub trait McpHost {
     fn session_state(&self) -> Value;
     fn day_stats(&self, date: Option<&str>) -> Result<Value, String>;
+    /// Journal hours of the week containing `date` (default: this week).
+    fn week_stats(&self, date: Option<&str>) -> Result<Value, String>;
     fn get_plan(&self) -> Value;
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String>;
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String>;
+    /// Without a token: preview + one-time token. With the token: close the block.
+    fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String>;
+    /// End-of-block line; `name` None = the latest closed block.
+    fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String>;
 }
 
 fn tools() -> Value {
@@ -22,14 +28,14 @@ fn tools() -> Value {
         {
             "name": "get_session_state",
             "title": "Текущее состояние таймера",
-            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/пауза/ожидание, сколько осталось, действует ли блокировка. Время — миллисекунды и готовые строки.",
+            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/отрезок/пауза/ожидание (phase: work | break | segment | await | idle | done), сколько осталось, действует ли блокировка. Во время отрезка — segment {type, planned_min, elapsed_min, overrun_min, alarm, queue}. В blocks отрезки плана помечены type: \"break\". plan_forecast считает и отрезки: идущий, очередь и запланированные. Время — миллисекунды и готовые строки.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "get_today_stats",
             "title": "Статистика дня",
-            "description": "Фактическое время по каждому блоку, паузы (сколько и сколько длились), доступ к заблокированному на паузе, аварийные доступы, обед, разовые сдвиги конца дня (day_end_changes). Без аргумента — сегодня.",
+            "description": "Статистика дня. blocks[] — только учебные блоки: planned_min, actual_min, journal_hours (actual_min вниз до 0,25 ч), note (строка «что было скучно / куда отвлекался»); journal_total — сумма journal_hours. breaks[] — неучебные отрезки (обед, сон, прогулка, свои): {type, planned_min, actual_min, overrun_min, start, end}; в учебные часы и journal_hours не входят. Ещё: паузы (короче 10 с не пишутся), доступ на паузе, аварийные доступы, сдвиги конца дня (day_end_changes). Без аргумента — сегодня.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, по умолчанию сегодня (МСК)" } },
@@ -38,16 +44,27 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": true }
         },
         {
+            "name": "get_week_stats",
+            "title": "Неделя для журнала",
+            "description": "Часы для журнала за неделю (пн–вс), в которую попадает date: subjects[] — предмет и journal_hours по дням (блоки с одинаковым именем складываются; каждый блок округлён вниз до 0,25 ч), day_totals, total, actual_min (неокруглённый факт). tsv — та же таблица текстом с табуляцией для вставки в таблицу. Отрезки (обед, сон) не входят.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "date": { "type": "string", "description": "Любой день недели, YYYY-MM-DD; по умолчанию текущая неделя" } },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "get_plan",
             "title": "План дня",
-            "description": "План сегодняшнего дня и шаблон по умолчанию, конец дня на сегодня (day_end) и из шаблона (day_end_default).",
+            "description": "План сегодняшнего дня по порядку (учебные блоки и неучебные отрезки с type: \"break\"), шаблон этого типа дня, конец дня на сегодня (day_end) и из шаблона (day_end_default), типы отрезков из настроек (segment_types: name, minutes, alarm).",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "set_plan",
             "title": "Задать план дня",
-            "description": "Заменяет план сегодняшнего дня списком блоков (блоки сопоставляются со старыми по имени). Можно добавлять, удлинять, урезать и удалять ещё не начатые блоки. Начатый блок нельзя удалить или переименовать, а пока действует блокировка — урезать меньше уже отработанного. Отработанное время не стирается. В ответе changes — что изменилось.",
+            "description": "Заменяет план сегодняшнего дня списком пунктов по порядку дня (сопоставляются со старыми по имени и типу). Учебный блок: {name, minutes|hours}. Неучебный отрезок (обед, сон, прогулка…): {name, minutes, type: \"break\"} — стоит на своём месте: когда закрывается блок перед ним, вместо перерыва между блоками запускается этот отрезок с обратным отсчётом (для «Сон» в конце — будильник). Отрезки не входят в учебные часы и journal_hours, но учитываются в plan_forecast. Можно добавлять, удлинять, урезать и удалять ещё не начатое. Начатый блок (и уже прошедший отрезок) нельзя удалить или переименовать, а пока действует блокировка начатый блок нельзя урезать меньше отработанного. Отработанное время не стирается. В ответе changes — что изменилось.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -59,7 +76,8 @@ fn tools() -> Value {
                             "properties": {
                                 "name": { "type": "string", "description": "Предмет, например «Математика»" },
                                 "minutes": { "type": "integer", "minimum": 1 },
-                                "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" }
+                                "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" },
+                                "type": { "type": "string", "enum": ["study", "break"], "description": "break — неучебный отрезок (обед, сон, прогулка); по умолчанию study" }
                             },
                             "required": ["name"]
                         }
@@ -85,6 +103,35 @@ fn tools() -> Value {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_block_note",
+            "title": "Строка в конце блока",
+            "description": "Сохраняет строку пользователя о блоке: что было скучно, куда отвлекался (до 300 символов). Попадает в лог и в get_today_stats как blocks[].note. Без name — последний закрытый блок. Повторный вызов заменяет строку.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Блок; по умолчанию последний закрытый" },
+                    "note": { "type": "string", "description": "Слова пользователя, по возможности дословно" }
+                },
+                "required": ["note"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "finish_block",
+            "title": "Закрыть блок сейчас",
+            "description": "Закрывает начатый блок прямо сейчас на фактически отработанных минутах: planned_min блока становится равным actual_min (с округлением до минуты), день идёт дальше как после обычного конца блока (перерыв между блоками или конец дня), всё пишется в лог. Убирает гонку «урезать set_plan, пока таймер идёт». ДВА ШАГА. Первый вызов (без confirm_token) ничего не меняет: возвращает предпросмотр (сколько отработано, сколько уйдёт из плана) и одноразовый confirm_token на 2 минуты. Перед вторым вызовом ОБЯЗАТЕЛЬНО задай пользователю прямой вопрос из поля ask_user и дождись явного «да». Только потом вызови finish_block с confirm_token. Не подтверждай за пользователя, не делай второй вызов по своей инициативе и не трактуй общие фразы («давай дальше», «ок») как согласие.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Какой блок закрыть; по умолчанию текущий" },
+                    "confirm_token": { "type": "string", "description": "Токен из первого вызова — только после явного «да» пользователя" }
+                },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false }
         }
     ])
 }
@@ -120,10 +167,17 @@ fn parse_plan(args: &Value) -> Result<(Vec<PlanBlock>, bool), String> {
         } else {
             return Err(format!("У блока «{name}» нет minutes или hours."));
         };
-        if !(1.0..=480.0).contains(&minutes) {
-            return Err(format!("«{name}»: длительность должна быть от 1 до 480 минут."));
+        let is_break = match b.get("type").and_then(Value::as_str).unwrap_or("study") {
+            "break" => true,
+            "study" => false,
+            other => return Err(format!("«{name}»: type бывает \"study\" или \"break\", а не «{other}».")),
+        };
+        let max = if is_break { 240.0 } else { 480.0 };
+        if !(1.0..=max).contains(&minutes) {
+            return Err(format!("«{name}»: длительность должна быть от 1 до {max} минут."));
         }
-        plan.push(PlanBlock::new(name, minutes.round() as u32));
+        let m = minutes.round() as u32;
+        plan.push(if is_break { PlanBlock::brk(name, m) } else { PlanBlock::new(name, m) });
     }
     let save = args.get("save_as_template").and_then(Value::as_bool).unwrap_or(false);
     Ok((plan, save))
@@ -150,7 +204,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. Используй get_session_state, чтобы узнать, что идёт сейчас, get_today_stats — фактические часы за день, set_plan — задать план дня (часы по предметам), set_day_end — разово сдвинуть конец сегодняшнего дня."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах). set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
                 }),
             )
         }
@@ -163,7 +217,13 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "get_session_state" => Ok(host.session_state()),
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
                 "get_plan" => Ok(host.get_plan()),
+                "get_week_stats" => host.week_stats(args.get("date").and_then(Value::as_str)),
                 "set_plan" => parse_plan(&args).and_then(|(p, s)| host.set_plan(p, s)),
+                "set_block_note" => match args.get("note").and_then(Value::as_str) {
+                    Some(n) => host.set_block_note(args.get("name").and_then(Value::as_str), n),
+                    None => Err("Нужен note.".into()),
+                },
+                "finish_block" => host.finish_block(args.get("name").and_then(Value::as_str), args.get("confirm_token").and_then(Value::as_str)),
                 "set_day_end" => match args.get("time").and_then(Value::as_str) {
                     Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
                     None => Err("Нужен time в формате ЧЧ:ММ.".into()),
@@ -206,6 +266,9 @@ mod tests {
         fn day_stats(&self, _: Option<&str>) -> Result<Value, String> {
             Ok(json!({}))
         }
+        fn week_stats(&self, d: Option<&str>) -> Result<Value, String> {
+            Ok(json!({ "week_of": d }))
+        }
         fn get_plan(&self) -> Value {
             json!(*self.0.borrow())
         }
@@ -216,6 +279,15 @@ mod tests {
         fn set_day_end(&self, t: &str, r: Option<&str>) -> Result<Value, String> {
             Ok(json!({"new": t, "reason": r}))
         }
+        fn set_block_note(&self, n: Option<&str>, note: &str) -> Result<Value, String> {
+            Ok(json!({"block": n, "note": note}))
+        }
+        fn finish_block(&self, n: Option<&str>, t: Option<&str>) -> Result<Value, String> {
+            Ok(match t {
+                None => json!({"needs_confirmation": true, "block": n, "confirm_token": "abc"}),
+                Some(t) => json!({"ok": true, "token": t}),
+            })
+        }
     }
 
     #[test]
@@ -225,7 +297,9 @@ mod tests {
         assert!(r.contains("2025-03-26"));
         assert!(handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, &h).is_none());
         let r = handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, &h).unwrap();
-        assert!(r.contains("get_today_stats"));
+        assert!(r.contains("get_today_stats") && r.contains("get_week_stats"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_week_stats","arguments":{"date":"2026-09-30"}}}"#, &h).unwrap();
+        assert!(r.contains("2026-09-30"));
         let r = handle(
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"set_plan","arguments":{"blocks":[{"name":"Математика","hours":1.5},{"name":"Экстернат","minutes":150}]}}}"#,
             &h,
@@ -233,6 +307,15 @@ mod tests {
         .unwrap();
         assert!(r.contains("\"isError\":false"));
         assert_eq!(h.0.borrow()[0].minutes, 90);
+        let r = handle(
+            r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"set_plan","arguments":{"blocks":[{"name":"Математика","minutes":90},{"name":"Обед","minutes":45,"type":"break"}]}}}"#,
+            &h,
+        )
+        .unwrap();
+        assert!(r.contains("\"isError\":false"));
+        assert!(h.0.borrow()[1].is_break());
+        let r = handle(r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"set_plan","arguments":{"blocks":[{"name":"X","minutes":5,"type":"nap"}]}}}"#, &h).unwrap();
+        assert!(r.contains("\"isError\":true"));
         let r = handle(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"set_plan","arguments":{"blocks":[{"name":"X"}]}}}"#, &h).unwrap();
         assert!(r.contains("\"isError\":true"));
         let r = handle(r#"{"jsonrpc":"2.0","id":5,"method":"tools/list"}"#, &h).unwrap();
@@ -241,5 +324,9 @@ mod tests {
         assert!(r.contains("\"isError\":false") && r.contains("разовый сдвиг"));
         let r = handle(r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"set_day_end","arguments":{}}}"#, &h).unwrap();
         assert!(r.contains("\"isError\":true"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"finish_block","arguments":{"name":"Математика"}}}"#, &h).unwrap();
+        assert!(r.contains("needs_confirmation") && r.contains("Математика"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"finish_block","arguments":{"confirm_token":"abc"}}}"#, &h).unwrap();
+        assert!(r.contains("\"isError\":false") && r.contains("abc"));
     }
 }

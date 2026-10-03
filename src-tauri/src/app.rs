@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
-use clockmanage_core::day::{fmt_change, fmt_day_min, Event, Forecast, PlanBlock, SingleCfg};
+use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, Event, Forecast, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
 use clockmanage_core::{mcp::McpHost, Config, DayState};
@@ -17,6 +17,7 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::blocker::Blocker;
 use crate::mcp_server::{McpServer, McpStatus};
+use crate::phone_server::{PhoneServer, PhoneStatus};
 use crate::sound::{self, Sound};
 use crate::store::Store;
 use crate::system;
@@ -28,6 +29,14 @@ pub struct Captcha {
 }
 
 pub const CAPTCHA_WAIT_MS: i64 = 15_000;
+/// The agent's "finish block" confirmation lives this long.
+const FINISH_TOKEN_MS: i64 = 120_000;
+
+pub struct FinishToken {
+    token: String,
+    block: String,
+    until: Ts,
+}
 
 pub struct Inner {
     pub cfg: Config,
@@ -50,10 +59,16 @@ pub struct Shared {
     pub store: Store,
     pub blocker: Mutex<Blocker>,
     pub mcp: McpServer,
+    pub phone: PhoneServer,
     pub app: AppHandle,
     pub admin: bool,
     pub overlay: Mutex<Option<Value>>,
     pub tray: Mutex<Option<TrayItems>>,
+    /// Monitor rect the overlay was last stretched over (resizing a WebView is slow: only on change).
+    pub overlay_rect: Mutex<Option<(i32, i32, u32, u32)>>,
+    pub finish_token: Mutex<Option<FinishToken>>,
+    /// Bundled Android APK + apk.json (version), served to paired phones for self-update.
+    pub apk_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Serialize, Clone)]
@@ -61,6 +76,7 @@ pub struct Meta {
     pub admin: bool,
     pub version: &'static str,
     pub mcp: McpStatus,
+    pub phone: PhoneStatus,
     pub blocker_error: Option<String>,
     pub blocking_applied: bool,
     pub sound: bool,
@@ -69,6 +85,8 @@ pub struct Meta {
     pub pause_access_min: u32,
     pub emergency_min: u32,
     pub lunch_min: u32,
+    /// Segment types, so the "Отрезок" picker opens without a round trip.
+    pub segments: Vec<clockmanage_core::config::SegmentType>,
     pub seed: String,
     pub theme_mode: ThemeMode,
     pub variant: SchemeVariant,
@@ -96,6 +114,7 @@ impl Shared {
                 admin: self.admin,
                 version: env!("CARGO_PKG_VERSION"),
                 mcp: self.mcp.status.lock().unwrap().clone(),
+                phone: self.phone.status(&g.cfg, self.apk_dir.as_deref()),
                 blocker_error: blocker.last_error.clone(),
                 blocking_applied: blocker.applied.active,
                 sound: g.cfg.sound,
@@ -104,6 +123,7 @@ impl Shared {
                 pause_access_min: g.cfg.pause_access_min,
                 emergency_min: g.cfg.emergency_min,
                 lunch_min: g.day.timing.lunch_min,
+                segments: g.cfg.segments.clone(),
                 seed: g.cfg.appearance.seed.clone(),
                 theme_mode: g.cfg.appearance.mode,
                 variant: g.cfg.appearance.variant,
@@ -152,25 +172,54 @@ impl Shared {
     }
 
     pub fn show_overlay(&self, payload: Value) {
-        if !self.lock().cfg.overlay {
+        // The nap alarm shows even with cards turned off: it is the alarm clock.
+        let forced = payload.get("force").and_then(Value::as_bool).unwrap_or(false);
+        if !self.lock().cfg.overlay && !forced {
             return;
         }
         let passive = payload.get("passive").and_then(Value::as_bool).unwrap_or(false);
         *self.overlay.lock().unwrap() = Some(payload.clone());
         let Some(w) = self.app.get_webview_window("overlay") else { return };
         if let Ok(Some(m)) = w.current_monitor().or_else(|_| w.primary_monitor()) {
-            let _ = w.set_position(PhysicalPosition::new(m.position().x, m.position().y));
-            let _ = w.set_size(PhysicalSize::new(m.size().width, m.size().height));
+            let rect = (m.position().x, m.position().y, m.size().width, m.size().height);
+            let mut last = self.overlay_rect.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != Some(rect) {
+                let _ = w.set_position(PhysicalPosition::new(rect.0, rect.1));
+                let _ = w.set_size(PhysicalSize::new(rect.2, rect.3));
+                *last = Some(rect);
+            }
         }
         // Passive notices never steal focus or clicks from whatever the user is doing.
         let _ = w.set_focusable(!passive);
         let _ = w.set_ignore_cursor_events(passive);
         let _ = w.set_always_on_top(true);
-        let _ = self.app.emit_to("overlay", "overlay", &payload);
+        // Visible first, then the content: a hidden WebView2 holds animation frames back, so
+        // rendering into it first made the card appear late.
         let _ = w.show();
+        let _ = self.app.emit_to("overlay", "overlay", &payload);
         if !passive {
             let _ = w.set_focus();
         }
+    }
+
+    /// End of a nap: the overlay that only "Встал" closes (the ticker rings meanwhile).
+    fn wake_overlay(&self, name: &str, over_ms: i64) {
+        self.show_overlay(json!({
+            "kind": "wake", "passive": false, "force": true,
+            "title": "Вставай!",
+            "text": if over_ms > 0 { format!("{name} окончен {} назад", fmt_dur(over_ms)) } else { format!("{name} окончен") },
+            "action": "Встал",
+        }));
+    }
+
+    /// End of another segment: "Закончил" or keep going.
+    fn segment_overlay(&self, name: &str, over_ms: i64, v: &View) {
+        self.show_overlay(json!({
+            "kind": "segment", "passive": false,
+            "title": if over_ms > 0 { format!("{name}: +{}", fmt_dur(over_ms)) } else { format!("{name} окончен") },
+            "text": if v.phase.queue.is_empty() { v.phase.subtitle.clone() } else { format!("Потом: {}", v.phase.queue.join(" → ")) },
+            "action": format!("Закончил {}", name.to_lowercase()),
+        }));
     }
 
     /// Playful "no-no-no" finger wag over the screen when something blocked is opened.
@@ -182,8 +231,9 @@ impl Shared {
         }));
     }
 
-    /// Something was changed by the agent through MCP, not by the user: say so in the UI.
-    fn agent_notice(&self, title: &str, text: &str) {
+    /// Something was changed by the agent through MCP or from the phone, not in this window:
+    /// say so in the UI.
+    pub fn notice(&self, title: &str, text: &str) {
         let _ = self.app.emit("agent", json!({ "title": title, "text": text }));
         self.notify(title, text);
     }
@@ -200,6 +250,8 @@ impl Shared {
             ("Пауза", true)
         } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
             ("Начать следующую часть", true)
+        } else if v.can.end_segment {
+            (if v.phase.alarm { "Встал" } else { "Закончить отрезок" }, true)
         } else if v.can.start_day {
             ("Начать день", true)
         } else {
@@ -233,7 +285,7 @@ impl Shared {
                     }));
                 }
                 Event::WorkEnded { block_done: true, .. } => {}
-                Event::BlockCompleted { block_name, work_ms, pauses, pause_ms } => {
+                Event::BlockCompleted { block, block_name, work_ms, pauses, pause_ms } => {
                     self.play(Sound::Done);
                     let facts = format!(
                         "{} работы · пауз: {}{}",
@@ -241,15 +293,12 @@ impl Shared {
                         pauses,
                         if *pauses > 0 { format!(" ({})", fmt_dur(*pause_ms)) } else { String::new() }
                     );
-                    self.notify(
-                        &format!("Блок «{block_name}» закрыт"),
-                        "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
-                    );
+                    self.notify(&format!("Блок «{block_name}» закрыт"), "Что было скучно, куда отвлекался? Одна строка — в окне ClockManage или агенту.");
                     self.show_overlay(json!({
                         "kind": "block", "passive": false,
                         "title": format!("«{block_name}» закрыт"),
                         "text": facts,
-                        "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
+                        "ask_note": true, "block": block,
                     }));
                 }
                 Event::DayCompleted { work_ms } => {
@@ -258,7 +307,6 @@ impl Shared {
                         "kind": "day", "passive": false,
                         "title": "День закрыт",
                         "text": format!("{} учёбы. Блокировка снята.", fmt_dur(*work_ms)),
-                        "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
                     }));
                 }
                 Event::BreakEnded { next_name, next_part, next_parts, lunch } => {
@@ -305,6 +353,43 @@ impl Shared {
                 Event::DayEndReached => {
                     self.play(Sound::Done);
                     self.notify(&format!("{} — блокировка снята", v.day_end), "Учебный день закончился по времени.");
+                }
+                Event::SegmentWarning { name, left_ms } => {
+                    self.play(Sound::Ping);
+                    let text = format!("{name}: осталось {}", fmt_dur(*left_ms));
+                    self.notify("Скоро конец", &text);
+                    self.show_overlay(json!({ "kind": "break", "passive": true, "auto_hide_ms": 4200, "title": "Скоро конец", "text": text }));
+                }
+                Event::SegmentEnded { name, alarm: true } => {
+                    // The nap alarm: the ticker keeps ringing until "Встал".
+                    self.notify(&format!("{name} окончен — вставай!"), "Будильник звонит, пока не нажмёшь «Встал».");
+                    self.wake_overlay(name, 0);
+                }
+                Event::SegmentEnded { name, alarm: false } => {
+                    self.play(Sound::Alarm);
+                    self.notify(&format!("{name} окончен"), "Нажми «Закончил», когда вернёшься. Напомню каждые 5 минут.");
+                    self.segment_overlay(name, 0, &snap.view);
+                }
+                Event::SegmentOverrun { name, alarm, over_ms } => {
+                    let title = format!("{name}: превышено на {}", fmt_dur(*over_ms));
+                    if *alarm {
+                        self.notify(&title, "Вставай — будильник не замолчит, пока не нажмёшь «Встал».");
+                        self.wake_overlay(name, *over_ms);
+                    } else {
+                        self.play(Sound::Alarm);
+                        self.notify(&title, "Нажми «Закончил», когда вернёшься.");
+                        self.segment_overlay(name, *over_ms, &snap.view);
+                    }
+                }
+                Event::AskWhatNow => {
+                    self.play(Sound::Ping);
+                    let types = self.lock().cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes })).collect::<Vec<_>>();
+                    self.notify("Что сейчас?", "Блок закрыт 10 минут назад, а дальше ничего не началось. Обед, сон, перерыв?");
+                    self.show_overlay(json!({
+                        "kind": "ask", "passive": false, "title": "Что сейчас?",
+                        "text": "Блок закрыт 10 минут назад. Запусти таймер того, чем занят:",
+                        "types": types,
+                    }));
                 }
             }
         }
@@ -370,6 +455,8 @@ fn tray_tooltip(v: &View) -> String {
         "work" | "break" | "lunch_break" => {
             format!("{} — {}{}", p.title, mmss(p.remaining_ms), if p.paused { " (пауза)" } else { "" })
         }
+        "segment" if p.remaining_ms < 0 => format!("{} — превышено на {}", p.title, mmss(-p.remaining_ms)),
+        "segment" => format!("{} — {}", p.title, mmss(p.remaining_ms)),
         _ => p.title.clone(),
     };
     let lock = if v.lock.blocked { "блокировка включена" } else if v.lock.base { "доступ временно открыт" } else { "без блокировки" };
@@ -424,6 +511,7 @@ fn ticker(shared: Arc<Shared>) {
     let mut last_beat: Ts = 0;
     let mut last_beat_blocked = false;
     let mut last_attempts: Ts = 0;
+    let mut last_ring: Ts = 0;
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
@@ -452,6 +540,13 @@ fn ticker(shared: Arc<Shared>) {
 
         if !events.is_empty() {
             shared.react(&events, &snap);
+        }
+        // Nap over: the alarm rings back to back until "Встал" — even with sounds turned off,
+        // it is the alarm clock.
+        let p = &snap.view.phase;
+        if p.kind == "segment" && p.alarm && p.remaining_ms <= 0 && now - last_ring >= 3_400 {
+            last_ring = now;
+            sound::play(Sound::Alarm);
         }
 
         // Enforcement: apply on change, verify/repair every 30 s.
@@ -598,10 +693,14 @@ impl McpHost for McpBridge {
             "elapsed_ms": v.phase.elapsed_ms,
             "waiting_for_start_ms": v.phase.waiting_ms,
             "current_block": v.phase.block.and_then(|i| v.blocks.get(i)).map(|b| b.name.clone()),
-            "blocks": v.blocks.iter().map(|b| json!({
-                "name": b.name, "planned_min": b.minutes, "done_min": b.work_ms / MIN,
-                "parts": b.parts, "parts_done": b.parts_done, "done": b.done, "current": b.current
-            })).collect::<Vec<_>>(),
+            "blocks": v.blocks.iter().map(|b| if b.kind.is_study() {
+                json!({
+                    "name": b.name, "planned_min": b.minutes, "done_min": b.work_ms / MIN,
+                    "parts": b.parts, "parts_done": b.parts_done, "done": b.done, "current": b.current
+                })
+            } else {
+                json!({ "name": b.name, "type": "break", "planned_min": b.minutes, "done": b.done, "taken": b.started })
+            }).collect::<Vec<_>>(),
             "worked": fmt_dur(v.work_ms),
             "planned": fmt_dur(v.planned_ms),
             "blocking": { "active": v.lock.blocked, "day_lock": v.lock.base, "reason": v.lock.reason },
@@ -609,6 +708,14 @@ impl McpHost for McpBridge {
             "day_end_default": v.day_end_base,
             "day_end_next_day": v.day_end_next_day,
             "plan_forecast": forecast_json(&v.forecast, s.meta.tz_offset_min),
+            "segment": (v.phase.kind == "segment").then(|| json!({
+                "type": v.phase.title,
+                "planned_min": v.phase.dur_ms / MIN,
+                "elapsed_min": v.phase.elapsed_ms / MIN,
+                "overrun_min": (-v.phase.remaining_ms).max(0) / MIN,
+                "alarm": v.phase.alarm,
+                "queue": v.phase.queue,
+            })),
         })
     }
 
@@ -628,6 +735,13 @@ impl McpHost for McpBridge {
         serde_json::to_value(stats).map_err(|e| e.to_string())
     }
 
+    fn week_stats(&self, date: Option<&str>) -> Result<Value, String> {
+        let (w, tsv) = week(&self.0, date)?;
+        let mut v = serde_json::to_value(w).map_err(|e| e.to_string())?;
+        v["tsv"] = json!(tsv);
+        Ok(v)
+    }
+
     fn get_plan(&self) -> Value {
         let g = self.0.lock();
         json!({
@@ -637,6 +751,7 @@ impl McpHost for McpBridge {
             "started": g.day.started_at.is_some(),
             "day_end": fmt_day_min(g.day.day_end(&g.cfg)),
             "day_end_default": clockmanage_core::config::fmt_hm(g.cfg.day_end_min),
+            "segment_types": g.cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes, "alarm": t.alarm })).collect::<Vec<_>>(),
         })
     }
 
@@ -647,6 +762,96 @@ impl McpHost for McpBridge {
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String> {
         apply_day_end(&self.0, time, reason, "mcp")
     }
+
+    fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String> {
+        apply_block_note(&self.0, None, name, Some(note), "mcp")
+    }
+
+    fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
+        let now = clock::now_ts();
+        let Some(typed) = confirm_token else {
+            // Step 1: nothing changes, the agent has to ask the user first.
+            let g = self.0.lock();
+            let i = g.day.finish_target(name)?;
+            let worked = g.day.block_work_live(i, now);
+            let b = g.day.plan[i].clone();
+            drop(g);
+            let to_min = (((worked + MIN / 2) / MIN) as u32).max(1);
+            let token = {
+                use rand::Rng;
+                format!("{:08x}", rand::thread_rng().gen::<u32>())
+            };
+            *self.0.finish_token.lock().unwrap() = Some(FinishToken { token: token.clone(), block: b.name.clone(), until: now + FINISH_TOKEN_MS });
+            let cut = b.minutes.saturating_sub(to_min);
+            return Ok(json!({
+                "needs_confirmation": true,
+                "block": b.name,
+                "worked_min": fmt_min(worked).replace(',', ".").parse::<f64>().unwrap_or(0.0),
+                "planned_min": b.minutes,
+                "new_planned_min": to_min,
+                "cut_min": cut,
+                "confirm_token": token,
+                "expires_in_s": FINISH_TOKEN_MS / 1000,
+                "ask_user": format!(
+                    "Закрыть «{}» сейчас на {} мин из {}?{} Это попадёт в лог.",
+                    b.name, fmt_min(worked), b.minutes,
+                    if cut > 0 { format!(" {cut} мин уйдут из плана.") } else { String::new() }
+                ),
+                "next_step": "Задай пользователю вопрос из ask_user. Только после явного «да» вызови finish_block с этим confirm_token.",
+            }));
+        };
+        // Step 2: one-time token for the block shown in step 1.
+        let t = self.0.finish_token.lock().unwrap().take();
+        let t = t.ok_or("Нет открытого подтверждения: сначала вызови finish_block без confirm_token и спроси пользователя.")?;
+        if t.token != typed.trim() || now > t.until {
+            return Err("confirm_token не подходит или истёк — вызови finish_block без токена и снова спроси пользователя.".into());
+        }
+        apply_finish(&self.0, Some(&t.block), "mcp")
+    }
+}
+
+/// End-of-block line from the UI, the overlay or the agent.
+pub fn apply_block_note(shared: &Arc<Shared>, block: Option<usize>, name: Option<&str>, note: Option<&str>, by: &str) -> Result<Value, String> {
+    shared.mutate(|g, now| {
+        let i = match (block, name.map(str::trim).filter(|n| !n.is_empty())) {
+            (Some(i), _) => i,
+            (None, Some(n)) => g.day.plan.iter().position(|b| b.name.eq_ignore_ascii_case(n)).ok_or(format!("В плане нет блока «{n}»."))?,
+            (None, None) => g
+                .day
+                .pending_note()
+                .or_else(|| (0..g.day.plan.len()).filter(|&i| g.day.is_block_done(i)).max_by_key(|&i| g.day.progress[i].completed_at))
+                .ok_or("Сегодня ещё нет закрытых блоков — укажи name.")?,
+        };
+        g.day.set_block_note(now, i, note, by)?;
+        Ok(json!({ "ok": true, "block": g.day.plan[i].name, "note": g.day.progress[i].note }))
+    })
+}
+
+/// "Finish block" from the UI (`by = "ui"`) or the agent (`"mcp"`).
+pub fn apply_finish(shared: &Arc<Shared>, name: Option<&str>, by: &str) -> Result<Value, String> {
+    let (res, events) = shared.mutate(|g, now| {
+        let (cfg, day) = (&g.cfg, &mut g.day);
+        let (f, events) = day.finish_block(now, cfg, name, by)?;
+        let v = view::build(&g.day, &g.cfg, now);
+        let res = json!({
+            "ok": true,
+            "block": f.block,
+            "worked_min": fmt_min(f.worked_ms).replace(',', ".").parse::<f64>().unwrap_or(0.0),
+            "planned_min_before": f.from_min,
+            "planned_min": f.to_min,
+            "now": v.phase.title,
+            "phase": v.phase.kind,
+            "plan_forecast": forecast_json(&g.day.forecast(now, &g.cfg), g.cfg.tz_offset_min),
+        });
+        Ok((res, events))
+    })?;
+    let snap = shared.snapshot();
+    shared.react(&events, &snap);
+    if by == "mcp" {
+        let text = format!("«{}»: {} из {} мин", res["block"].as_str().unwrap_or(""), res["worked_min"], res["planned_min_before"]);
+        shared.notice("Агент закрыл блок", &text);
+    }
+    Ok(res)
 }
 
 fn forecast_json(f: &Forecast, tz: i32) -> Value {
@@ -654,9 +859,10 @@ fn forecast_json(f: &Forecast, tz: i32) -> Value {
         "plan_left_min": (f.work_left_ms + MIN - 1) / MIN,
         "breaks_left_min": f.breaks_left_ms / MIN,
         "finish_estimate": clock::hm(f.finish_at, tz),
+        "segments_left_min": (f.segments_left_ms + MIN - 1) / MIN,
         "fits": f.fits,
         "margin_min": f.margin_ms.div_euclid(MIN),
-        "note": "Если продолжать прямо сейчас без пауз; обед не учтён.",
+        "note": "Если продолжать прямо сейчас без пауз. Отрезки (обед, сон…) учтены: идущий, очередь и запланированные в плане.",
     })
 }
 
@@ -681,8 +887,8 @@ pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, save_as_template: 
         Ok((res, changes))
     })?;
     let _ = shared.app.emit("config", ());
-    if by == "mcp" && !changes.is_empty() {
-        shared.agent_notice("Агент изменил план", &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
+    if by != "ui" && !changes.is_empty() {
+        shared.notice(if by == "mcp" { "Агент изменил план" } else { "Телефон изменил план" }, &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
     }
     Ok(res)
 }
@@ -716,7 +922,7 @@ pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by:
         Ok((res, notice))
     })?;
     if let (Some(text), "mcp") = (notice, by) {
-        shared.agent_notice("Агент изменил конец дня", &text);
+        shared.notice("Агент изменил конец дня", &text);
     }
     Ok(res)
 }
@@ -739,11 +945,15 @@ pub fn get_config(s: S) -> Config {
 pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
     cfg.normalize();
     let shared = s.inner().clone();
-    let (autostart_changed, mcp_changed, saved) = shared.mutate(|g, now| {
+    let (autostart_changed, mcp_changed, phone_changed, saved) = shared.mutate(|g, now| {
+        // Paired phones are managed by pairing / "forget" only: a settings screen opened before
+        // a phone was paired must not drop its token.
+        cfg.phone.devices = g.cfg.phone.devices.clone();
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
+        let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
         let old = std::mem::replace(&mut g.cfg, cfg.clone());
         if g.day.started_at.is_none() {
             let wd = g.day.weekday();
@@ -775,7 +985,7 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
             }
         }
         shared.store.save_config(&g.cfg);
-        Ok((autostart_changed, mcp_changed, g.cfg.clone()))
+        Ok((autostart_changed, mcp_changed, phone_changed, g.cfg.clone()))
     })?;
     if autostart_changed {
         system::set_autostart(saved.autostart)?;
@@ -786,6 +996,9 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
             shared.lock().cfg.mcp_port = port;
             shared.store.save_config(&shared.lock().cfg);
         }
+    }
+    if phone_changed {
+        shared.phone.start(shared.clone(), &saved);
     }
     let _ = shared.app.emit("config", ());
     let _ = shared.app.emit("state", shared.snapshot());
@@ -806,6 +1019,36 @@ pub fn regenerate_port(s: S) -> Result<u16, String> {
     let _ = shared.app.emit("config", ());
     let _ = shared.app.emit("state", shared.snapshot());
     Ok(port)
+}
+
+#[derive(Serialize)]
+pub struct PinView {
+    pin: String,
+    until: Ts,
+}
+
+/// Open a 6-digit PIN for pairing a phone (two minutes).
+#[tauri::command]
+pub fn phone_pin(s: S) -> Result<PinView, String> {
+    if !s.lock().cfg.phone.enabled {
+        return Err("Сначала включи синхронизацию с телефоном.".into());
+    }
+    let (pin, until) = s.phone.new_pin();
+    let _ = s.app.emit("state", s.snapshot());
+    Ok(PinView { pin, until })
+}
+
+#[tauri::command]
+pub fn phone_forget(s: S, id: String) -> Result<(), String> {
+    s.mutate(|g, now| {
+        let name = g.cfg.phone.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).ok_or("Такого телефона нет.")?;
+        g.cfg.phone.devices.retain(|d| d.id != id);
+        s.store.save_config(&g.cfg);
+        g.day.log(now, "phone", format!("Телефон «{name}» отключён"));
+        Ok(())
+    })?;
+    let _ = s.app.emit("config", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -858,6 +1101,50 @@ pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
     r
 }
 
+/// `note: None` = skip ("не сейчас").
+#[tauri::command]
+pub fn set_block_note(s: S, block: usize, note: Option<String>) -> Result<(), String> {
+    apply_block_note(s.inner(), Some(block), None, note.as_deref(), "ui").map(|_| ())
+}
+
+#[derive(serde::Deserialize)]
+pub struct SegmentPick {
+    name: String,
+    minutes: Option<u32>,
+}
+
+/// Start segments now (or queue them behind the running one): lunch → nap.
+#[tauri::command]
+pub fn start_segments(s: S, items: Vec<SegmentPick>) -> Result<(), String> {
+    let r = s.mutate(|g, now| {
+        let items = items.iter().map(|i| QueuedSegment::of(&g.cfg, &i.name, i.minutes)).collect();
+        g.day.start_segments(now, items)
+    });
+    if r.is_ok() {
+        hide_overlay_window(&s.app);
+    }
+    r
+}
+
+#[tauri::command]
+pub fn end_segment(s: S) -> Result<(), String> {
+    let r = s.mutate(|g, now| g.day.end_segment(now));
+    if r.is_ok() {
+        hide_overlay_window(&s.app);
+    }
+    r
+}
+
+#[tauri::command]
+pub fn drop_queued(s: S, index: usize) -> Result<(), String> {
+    s.mutate(|g, now| g.day.drop_queued(now, index))
+}
+
+#[tauri::command]
+pub fn undo_skip(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.undo_skip(now))
+}
+
 /// Tray / mini window "main button": whatever the primary action is right now.
 pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
     let v = shared.snapshot().view;
@@ -867,6 +1154,10 @@ pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
         shared.mutate(|g, now| g.day.pause(now, &g.cfg))
     } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
         let r = shared.mutate(|g, now| g.day.start_next(now));
+        hide_overlay_window(&shared.app);
+        r
+    } else if v.can.end_segment {
+        let r = shared.mutate(|g, now| g.day.end_segment(now));
         hide_overlay_window(&shared.app);
         r
     } else if v.can.start_day {
@@ -879,11 +1170,6 @@ pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
 #[tauri::command]
 pub fn primary(s: S) -> Result<(), String> {
     primary_action(s.inner())
-}
-
-#[tauri::command]
-pub fn start_lunch(s: S, with_timer: bool, at_pc: bool) -> Result<(), String> {
-    s.mutate(|g, now| g.day.start_lunch(now, with_timer, at_pc))
 }
 
 #[tauri::command]
@@ -904,6 +1190,11 @@ pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(),
 #[tauri::command]
 pub fn set_day_end(s: S, time: String, reason: Option<String>) -> Result<Value, String> {
     apply_day_end(s.inner(), &time, reason.as_deref(), "ui")
+}
+
+#[tauri::command]
+pub fn finish_block(s: S, name: Option<String>) -> Result<Value, String> {
+    apply_finish(s.inner(), name.as_deref(), "ui")
 }
 
 #[tauri::command]
@@ -1029,6 +1320,43 @@ pub fn day_stats(s: S, date: String) -> Result<DayStats, String> {
     Ok(stats::day_stats(&day, tz, now))
 }
 
+/// The week (Monday..Sunday) containing `date` (default: today) from the saved days.
+pub fn week(shared: &Shared, date: Option<&str>) -> Result<(stats::WeekStats, String), String> {
+    let now = clock::now_ts();
+    let (tz, today) = {
+        let g = shared.lock();
+        (g.cfg.tz_offset_min, g.day.clone())
+    };
+    let anchor = match date {
+        Some(d) => clockmanage_core::chrono::NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").map_err(|_| "Дата нужна в виде ГГГГ-ММ-ДД.")?,
+        None => today.date,
+    };
+    let monday = stats::week_monday(anchor);
+    let mut days = vec![];
+    for i in 0..7 {
+        let d = monday + clockmanage_core::chrono::Duration::days(i);
+        let day = if d == today.date { Some(today.clone()) } else { shared.store.load_day(&d.format("%Y-%m-%d").to_string()) };
+        if let Some(day) = day {
+            days.push(stats::day_stats(&day, tz, now));
+        }
+    }
+    let w = stats::week_stats(monday, &days);
+    let tsv = stats::week_tsv(&w);
+    Ok((w, tsv))
+}
+
+#[derive(Serialize)]
+pub struct WeekView {
+    week: stats::WeekStats,
+    tsv: String,
+}
+
+#[tauri::command]
+pub fn week_stats(s: S, date: Option<String>) -> Result<WeekView, String> {
+    let (week, tsv) = week(s.inner(), date.as_deref())?;
+    Ok(WeekView { week, tsv })
+}
+
 #[tauri::command]
 pub fn export_log(s: S, format: String) -> Result<String, String> {
     let now = clock::now_ts();
@@ -1075,7 +1403,7 @@ pub fn preview_overlay(s: S, kind: String) {
     let p = match kind.as_str() {
         "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": "Перерыв", "text": "Математика: часть 1 из 2 готова. Перерыв 10 мин.", "preview": true}),
         "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 3000, "title": "Не-не-не", "text": "Telegram — после учёбы", "preview": true}),
-        "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.", "preview": true}),
+        "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "ask_note": true, "block": 0, "preview": true}),
         _ => json!({"kind": "await", "passive": false, "title": "Перерыв окончен", "text": "Математика · часть 2 из 2", "action": "Начать часть 2", "preview": true}),
     };
     let was = s.lock().cfg.overlay;

@@ -1,8 +1,12 @@
 import { call, esc } from '../api.js';
 import { icon, CHECK } from '../icons.js';
-import { run, snack, ask, hoursLabel, partsPreview, KINDS, kindLabel } from '../ui.js';
+import { run, snack, ask, hoursLabel, partsPreview, KINDS, kindLabel, menu } from '../ui.js';
 
 const STEP = 15;
+const SEG_STEP = 5;
+const isSeg = (r) => r.type === 'break';
+/** What goes to the backend: `type` only for segments. */
+const item = (r) => (isSeg(r) ? { name: r.name.trim(), minutes: r.minutes, type: 'break' } : { name: r.name.trim(), minutes: r.minutes });
 
 export function mountPlan(root, ctx) {
   let rows = [];        // editable copy [{name, minutes, orig?:{name, minutes}, progress?}]
@@ -29,7 +33,10 @@ export function mountPlan(root, ctx) {
       <div id="lock-note"></div>
       <p class="body-m muted" style="margin-bottom:16px" id="hint"></p>
       <div class="plan-editor" id="rows"></div>
-      <button class="btn outlined interactive" id="add" style="margin-top:12px">${icon('add')}Добавить блок</button>
+      <div class="hstack" style="margin-top:12px">
+        <button class="btn outlined interactive" id="add">${icon('add')}Добавить блок</button>
+        <button class="btn text interactive" id="add-seg" data-tip="Обед, сон, прогулка — стоит на своём месте в дне, в учебные часы не входит">${icon('coffee')}Добавить отрезок</button>
+      </div>
       <div class="plan-footer">
         <label id="tpl-wrap" data-tip="Следующие такие дни начнутся с этого плана"><input type="checkbox" class="check" id="tpl"> <span id="tpl-l">Сохранить и как шаблон</span></label>
         <span class="grow"></span>
@@ -47,7 +54,7 @@ export function mountPlan(root, ctx) {
     });
     $('hint').innerHTML = tpl
       ? `Шаблон дня «${kindLabel(target)}»: с него начинается каждый такой день. Сегодняшний план он не меняет${target === todayKind && !started ? ' — кроме случая, когда сегодня ещё не начат и план не правился' : ''}.`
-      : `Каждый блок идёт отрезками по <b>${seg}</b> мин с перерывами между ними. Перерывы не съедают учебное время.`;
+      : `Каждый блок идёт частями по <b>${seg}</b> мин с перерывами между ними. Перерывы не съедают учебное время.`;
     $('tpl-wrap').hidden = tpl;
     $('tpl-l').textContent = `Сохранить и как шаблон «${kindLabel(todayKind)}»`;
     $('save').lastChild.textContent = tpl ? 'Сохранить шаблон' : 'Сохранить план';
@@ -55,6 +62,21 @@ export function mountPlan(root, ctx) {
       ? `<div class="lock-note">${icon('lock')}<div><div class="title-s">Идёт учебный день</div><div class="body-m">Не начатые блоки можно урезать и удалять, начатый — урезать не меньше уже отработанного. Отработанное время не стирается.</div></div></div>`
       : '';
     $('rows').innerHTML = rows.map((r, i) => {
+      if (isSeg(r)) {
+        const taken = !tpl && !!(r.progress?.started);
+        return `<div class="prow seg${r.fresh ? ' fresh' : ''}" data-i="${i}">
+        <input class="name" value="${esc(r.name)}" aria-label="Отрезок ${i + 1}" maxlength="24" ${taken ? 'disabled' : ''}>
+        <div class="stepper" role="group" aria-label="Длительность">
+          <button class="icon-btn interactive" data-a="minus" aria-label="Меньше на ${SEG_STEP} мин" ${r.minutes <= SEG_STEP || taken ? 'disabled' : ''}>${icon('remove')}</button>
+          <div class="val tnum${r.bump ? ' bump' : ''}">${r.minutes} мин<small>${taken ? (r.progress.done ? 'прошёл' : 'идёт') : 'отрезок · не учёба'}</small></div>
+          <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${SEG_STEP} мин" ${r.minutes + SEG_STEP > 240 || taken ? 'disabled' : ''}>${icon('add')}</button>
+        </div>
+        <div class="tools">
+          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 || taken ? 'disabled' : ''}>${icon('up')}</button>
+          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 || taken ? 'disabled' : ''}>${icon('down')}</button>
+          <button class="icon-btn interactive" data-a="del" aria-label="Удалить" ${taken ? 'disabled' : ''}>${icon('delete')}</button>
+        </div></div>`;
+      }
       const o = tpl ? null : r.orig;
       // Started block during the lock: not below the time already worked; never deleted.
       const minMinutes = o ? minFor(r) : STEP;
@@ -87,7 +109,7 @@ export function mountPlan(root, ctx) {
   }
 
   function markDirty() {
-    const cur = JSON.stringify(rows.map((r) => ({ name: r.name.trim(), minutes: r.minutes })));
+    const cur = JSON.stringify(rows.map(item));
     dirty = cur !== JSON.stringify(base) || (target === 'today' && $('tpl').checked);
     $('save').disabled = !dirty || rows.some((r) => !r.name.trim()) || (target === 'today' && started && !rows.length);
     $('reset').disabled = !dirty;
@@ -104,13 +126,13 @@ export function mountPlan(root, ctx) {
     started = st.view.started;
     locked = st.view.lock.base && st.view.started && st.view.mode === 'plan' && st.view.lock.reason !== 'single';
     if (target === 'today') {
-      base = st.view.blocks.map((b) => ({ name: b.name, minutes: b.minutes }));
+      base = st.view.blocks.map((b) => item({ name: b.name, minutes: b.minutes, type: b.kind }));
       rows = st.view.blocks.map((b) => ({
-        name: b.name, minutes: b.minutes, orig: { name: b.name, minutes: b.minutes },
+        name: b.name, minutes: b.minutes, type: b.kind, orig: { name: b.name, minutes: b.minutes },
         progress: { work_ms: b.work_ms, started: b.started, done: b.done },
       }));
     } else {
-      base = cfg.profiles[target].plan.map((b) => ({ name: b.name, minutes: b.minutes }));
+      base = cfg.profiles[target].plan.map(item);
       rows = base.map((b) => ({ ...b }));
     }
     $('tpl').checked = false;
@@ -123,8 +145,8 @@ export function mountPlan(root, ctx) {
     const i = Number(b.closest('.prow').dataset.i);
     const r = rows[i];
     switch (b.dataset.a) {
-      case 'plus': r.minutes = Math.min(480, r.minutes + STEP); r.bump = true; break;
-      case 'minus': r.minutes = Math.max(minFor(r), r.minutes - STEP); r.bump = true; break;
+      case 'plus': r.minutes = isSeg(r) ? Math.min(240, r.minutes + SEG_STEP) : Math.min(480, r.minutes + STEP); r.bump = true; break;
+      case 'minus': r.minutes = isSeg(r) ? Math.max(SEG_STEP, r.minutes - SEG_STEP) : Math.max(minFor(r), r.minutes - STEP); r.bump = true; break;
       case 'up': [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; break;
       case 'down': [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; break;
       case 'del': {
@@ -135,6 +157,18 @@ export function mountPlan(root, ctx) {
       }
     }
     render();
+    // Moved rows slide into their new places instead of jumping (FLIP).
+    if (b.dataset.a === 'up' || b.dataset.a === 'down') {
+      const j = b.dataset.a === 'up' ? i - 1 : i + 1;
+      const a = root.querySelector(`.prow[data-i="${j}"]`);
+      const o = root.querySelector(`.prow[data-i="${i}"]`);
+      if (a && o) {
+        const dy = o.getBoundingClientRect().top - a.getBoundingClientRect().top;
+        a.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,0,0,1)' });
+        o.animate([{ transform: `translateY(${-dy}px)` }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,0,0,1)' });
+        a.animate([{ boxShadow: '0 6px 18px rgb(0 0 0 / .18)', zIndex: 2 }, { boxShadow: 'none', zIndex: 2 }], { duration: 380 });
+      }
+    }
     root.querySelector(`.prow[data-i="${b.dataset.a === 'up' ? i - 1 : b.dataset.a === 'down' ? i + 1 : i}"] [data-a="${b.dataset.a}"]`)?.focus();
   });
   $('rows').addEventListener('input', (e) => {
@@ -148,9 +182,16 @@ export function mountPlan(root, ctx) {
     render();
     root.querySelector('.prow:last-child input.name')?.focus();
   });
+  $('add-seg').addEventListener('click', async (e) => {
+    const types = (cfg?.segments || []);
+    const pick = await menu(e.currentTarget, types.map((t, i) => ({ value: i, label: t.name, sub: `${t.minutes} мин${t.alarm ? ' · будильник' : ''}`, icon: icon(t.alarm ? 'alarm' : 'coffee') })), { title: 'Отрезок в плане', note: 'Запустится сам, когда закроется блок перед ним.' });
+    if (pick === undefined) return;
+    rows.push({ name: types[pick].name, minutes: types[pick].minutes, type: 'break', fresh: true });
+    render();
+  });
   $('reset').addEventListener('click', () => load(true));
   $('save').addEventListener('click', async (e) => {
-    const blocks = rows.map((r) => ({ name: r.name.trim(), minutes: r.minutes }));
+    const blocks = rows.map(item);
     let ok;
     if (target === 'today') {
       ok = await run(() => call('set_plan', { blocks, saveTemplate: $('tpl').checked }).then(() => true), e.currentTarget);

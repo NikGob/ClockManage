@@ -1,44 +1,6 @@
 import { call, esc, dur } from '../api.js';
 import { icon } from '../icons.js';
-import { dialog, run, snack } from '../ui.js';
-
-export function lunchDialog(lunchMin) {
-  return dialog(`
-    <h2>Обед</h2>
-    <p class="body-m muted">Один раз за день. Учебное время не идёт.</p>
-    <div class="options" role="radiogroup" aria-label="Как обедаешь">
-      <label class="option">
-        <input type="radio" name="mode" value="free" checked>
-        <span class="t">Просто поесть</span>
-        <span class="d">Без таймера. Блокировка остаётся. Вернёшься — нажмёшь «Пообедал».</span>
-      </label>
-      <label class="option">
-        <input type="radio" name="mode" value="timer">
-        <span class="t">Таймер ${lunchMin} мин</span>
-        <span class="d">По окончании зазвонит будильник.</span>
-        <span class="sub"><input type="checkbox" class="check" name="pc" id="lunch-pc"><label for="lunch-pc">Ем за ПК — открыть YouTube, Discord и остальное на время обеда</label></span>
-      </label>
-    </div>
-    <div class="actions">
-      <button class="btn text interactive" data-close>Отмена</button>
-      <button class="btn filled interactive" data-ok>${icon('restaurant')}Начать обед</button>
-    </div>`, (d, close) => {
-    const pc = d.querySelector('[name=pc]');
-    const sync = () => {
-      const timer = d.querySelector('[name=mode]:checked').value === 'timer';
-      pc.disabled = !timer;
-      if (!timer) pc.checked = false;
-    };
-    d.querySelectorAll('[name=mode]').forEach((r) => r.addEventListener('change', sync));
-    pc.addEventListener('change', () => { if (pc.checked) d.querySelector('[value=timer]').checked = true; sync(); });
-    sync();
-    d.querySelector('[data-ok]').addEventListener('click', async (e) => {
-      const withTimer = d.querySelector('[name=mode]:checked').value === 'timer';
-      const r = await run(() => call('start_lunch', { withTimer, atPc: withTimer && pc.checked }).then(() => true), e.currentTarget);
-      if (r) close(true);
-    });
-  });
-}
+import { dialog, run, snack, holdButton } from '../ui.js';
 
 export function singleDialog() {
   return dialog(`
@@ -177,6 +139,86 @@ export function captchaDialog(minutes) {
 
     await load();
     refresh();
+  });
+}
+
+/**
+ * "Close the block now" — deliberately slow: the numbers first, then a 3-second hold.
+ * A habit click or a stray Enter never closes a block.
+ */
+export function finishDialog(v) {
+  const i = v.phase.block;
+  const b = v.blocks[i];
+  if (!b) return Promise.resolve(false);
+  const worked = b.work_ms / 60000;
+  const workedTxt = String(Math.round(worked * 10) / 10).replace('.', ',');
+  const to = Math.max(1, Math.round(worked));
+  const cut = Math.max(0, b.minutes - to);
+  return dialog(`
+    <h2>Закрыть «${esc(b.name)}» сейчас?</h2>
+    <p class="body-l">Отработано <b>${workedTxt} из ${b.minutes} мин</b>.</p>
+    <p class="body-m muted">План блока станет ${to} мин${cut ? ` — <b>${cut} мин</b> недоработки уйдут из плана` : ''}. Дальше — перерыв между блоками${v.blocks.filter((x) => !x.done).length <= 1 ? ' и конец дня' : ''}. Это попадёт в лог.</p>
+    <div class="actions">
+      <button class="btn text interactive" data-close autofocus>Нет, работаю дальше</button>
+      <button class="btn tonal interactive hold" data-ok><span class="fillbar"></span>${icon('check')}Удерживай 3 сек — закрыть</button>
+    </div>`, (d, close) => {
+    holdButton(d.querySelector('[data-ok]'), 3000, async () => {
+      const r = await run(() => call('finish_block', { name: b.name }));
+      if (r) close(true);
+    });
+  });
+}
+
+/**
+ * "Отрезок": pick one or several (lunch → nap); they run one after another. While a segment
+ * runs, the picks go to its queue.
+ */
+export function segmentDialog(types, running, queue = []) {
+  const picked = [];
+  // While a segment runs: what already waits, each can be taken out.
+  const queued = queue.length ? `<div class="seg-queue" id="sq-now"><span class="body-m muted">Уже в очереди:</span>${queue.map((q, i) => `<span class="chip input removable">${esc(q)}<button class="x interactive" data-drop="${i}" aria-label="Убрать ${esc(q)} из очереди">${icon('close')}</button></span>`).join('')}</div>` : '';
+  return dialog(`
+    <h2>${running ? 'Добавить в очередь' : 'Отрезок'}</h2>
+    <p class="body-m muted">${running ? 'Начнётся сразу после текущего.' : 'Обратный отсчёт; несколько подряд идут очередью. Блокировка — как на перерыве.'}</p>
+    ${queued}
+    <div class="seg-types">${types.map((t, i) => `<button class="btn tonal interactive" data-t="${i}">${icon(t.alarm ? 'alarm' : t.name.toLowerCase().startsWith('обед') ? 'restaurant' : 'coffee')}${esc(t.name)} · ${t.minutes} мин</button>`).join('')}</div>
+    <div class="seg-queue" id="sq" aria-live="polite"></div>
+    <div class="actions">
+      <button class="btn text interactive" data-close>Отмена</button>
+      <button class="btn filled interactive" data-ok disabled>${icon('play')}${running ? 'В очередь' : 'Начать'}</button>
+    </div>`, (d, close) => {
+    const sq = d.querySelector('#sq');
+    const ok = d.querySelector('[data-ok]');
+    const draw = () => {
+      sq.innerHTML = picked.length
+        ? picked.map((t, i) => `<span class="chip input removable">${esc(t.name)} ${t.minutes} мин<button class="x interactive" data-rm="${i}" aria-label="Убрать">${icon('close')}</button></span>`).join('<span class="arrow">→</span>')
+        : '<span class="body-m muted">Нажми на тип — можно несколько: обед → сон</span>';
+      ok.disabled = !picked.length;
+    };
+    draw();
+    d.addEventListener('click', async (e) => {
+      const drop = e.target.closest('[data-drop]');
+      if (drop) {
+        const ok = await run(() => call('drop_queued', { index: Number(drop.dataset.drop) }).then(() => true));
+        if (ok) {
+          // Indices shift after a removal: drop the chip and renumber the rest.
+          drop.closest('.chip').remove();
+          d.querySelectorAll('[data-drop]').forEach((b, i) => { b.dataset.drop = String(i); });
+          if (!d.querySelector('[data-drop]')) d.querySelector('#sq-now')?.remove();
+          snack('Убрано из очереди');
+        }
+        return;
+      }
+      const t = e.target.closest('[data-t]');
+      const rm = e.target.closest('[data-rm]');
+      if (t) { picked.push(types[Number(t.dataset.t)]); draw(); }
+      if (rm) { picked.splice(Number(rm.dataset.rm), 1); draw(); }
+    });
+    ok.addEventListener('click', async (e) => {
+      const items = picked.map((t) => ({ name: t.name, minutes: t.minutes }));
+      const r = await run(() => call('start_segments', { items }).then(() => true), e.currentTarget);
+      if (r) close(picked);
+    });
   });
 }
 

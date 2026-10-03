@@ -2,8 +2,8 @@ import { call, mmss, dur, esc } from '../api.js';
 import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
-import { run, snack, menu, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
-import { lunchDialog, singleDialog, emergencyDialog, captchaDialog, dayEndDialog } from './dialogs.js';
+import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
+import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog } from './dialogs.js';
 
 export function endLabel(v) {
   return v.day_end + (v.day_end_next_day ? ' ночи' : '');
@@ -33,6 +33,7 @@ export function mountToday(root, ctx) {
     </section>
     <aside class="side">
       <section class="surface access" id="access" hidden aria-live="polite"></section>
+      <section class="surface note-card" id="note-card" hidden></section>
       <section class="surface plan-card" aria-labelledby="plan-h">
         <div class="head">
           <div class="row1"><h2 id="plan-h">План дня</h2><button class="kind-chip interactive" id="kind" data-act="kind" aria-haspopup="menu"></button><button class="btn text interactive" id="edit-plan">Изменить</button></div>
@@ -106,6 +107,7 @@ export function mountToday(root, ctx) {
       case 'pause_access': text = 'Доступ открыт на паузе'; when = left; cls = 'open'; action = 'end'; break;
       case 'emergency': text = 'Аварийный доступ'; when = left; cls = 'open'; action = 'end'; break;
       case 'lunch_at_pc': text = 'Обед за ПК — доступ открыт'; when = left; cls = 'open'; break;
+      case 'segment_access': text = `${v.phase.title} — доступ открыт`; when = left; cls = 'open'; break;
       case 'not_started':
         text = v.study_day ? 'Блокировка включится по кнопке «Начать день»' : offText;
         if (v.study_day) when = `и продержится ${endBtn(`до ${endLabel(v)}`)}`;
@@ -218,14 +220,18 @@ export function mountToday(root, ctx) {
         if (c.resume) B('resume', 'Продолжить перерыв', 'filled lg', 'play');
         else if (c.pause) B('pause', 'Пауза', 'tonal lg', 'pause');
         B('start_next', 'Начать сейчас', c.resume ? 'tonal lg' : 'filled lg', 'skip');
-        if (c.lunch) B('lunch', 'Обед', 'outlined lg', 'restaurant');
+        if (c.segment) B('segment', 'Отрезок', 'outlined lg', 'restaurant');
         break;
       case 'lunch_break':
         B('start_next', 'Закончить обед раньше', 'tonal lg', 'skip');
         break;
       case 'await':
         B('start_next', startLabel(p), 'filled xl', 'play');
-        if (c.lunch) B('lunch', 'Обед', 'tonal lg', 'restaurant');
+        if (c.segment) B('segment', 'Отрезок', 'tonal lg', 'restaurant');
+        break;
+      case 'segment':
+        B('end_segment', p.alarm ? 'Встал' : `Закончил ${p.title.toLowerCase()}`, 'filled xl', p.alarm ? 'alarm' : 'check');
+        if (c.segment) B('segment', 'В очередь', 'outlined lg', 'add');
         break;
       case 'lunch':
         B('start_next', 'Пообедал — начать', 'filled xl', 'play');
@@ -234,6 +240,8 @@ export function mountToday(root, ctx) {
         if (c.single) B('single', 'Один таймер', 'outlined lg', 'timer');
         break;
     }
+    // Quiet on purpose: a text button after the main ones, behind a hold-to-confirm dialog.
+    if (c.finish_block) B('finish', 'Закрыть блок…', 'text lg', 'check');
     if (c.stop_single) B('stop_single', 'Стоп', 'outlined lg', 'stop');
     const sig = items.map((i) => i.act + i.label + i.cls).join('|');
     if (sig === ctrlSig) return;
@@ -334,7 +342,7 @@ export function mountToday(root, ctx) {
 
   function blocks(v) {
     const ol = $('blocks');
-    $('total').textContent = v.blocks.length ? `${dur(v.work_ms)} из ${dur(v.planned_ms)}` : '';
+    $('total').textContent = v.blocks.length ? `${dur(v.work_ms)} из ${dur(v.planned_ms)} учёбы` : '';
     $('total-bar').style.setProperty('--v', v.planned_ms ? Math.min(1, v.work_ms / v.planned_ms) : 0);
     $('total-bar').hidden = !v.blocks.length;
     if (!v.blocks.length) {
@@ -342,6 +350,10 @@ export function mountToday(root, ctx) {
       return;
     }
     const html = v.blocks.map((b) => {
+      if (b.kind === 'break') {
+        return `<li class="blk seg ${b.done ? 'done' : ''}"><span class="st">${b.done ? icon('check', 's20') : icon('coffee', 's20')}</span>
+          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} мин · ${b.done ? (b.started ? 'прошёл' : 'пропущен') : b.started ? 'идёт' : 'отрезок'}</span></li>`;
+      }
       const st = b.done ? icon('check', 's20') : '<span class="dot"></span>';
       const meta = `${Math.floor(b.work_ms / 60000)} из ${b.minutes} мин · ${b.done ? 'готово' : `часть ${Math.min(b.parts_done + 1, b.parts)}/${b.parts}`}`;
       return `<li class="blk ${b.done ? 'done' : ''} ${b.current ? 'current' : ''}">
@@ -352,10 +364,29 @@ export function mountToday(root, ctx) {
       ol.innerHTML = html;
       ol.dataset.html = html;
       v.blocks.forEach((b, i) => {
-        if (b.done && prevDone[i] === false) ol.children[i]?.classList.add('just-done');
+        if (b.done && prevDone[i] === false) {
+          ol.children[i]?.classList.add('just-done');
+          burst(ol.children[i]?.querySelector('.st'));
+        }
       });
     }
     prevDone = v.blocks.map((b) => b.done);
+  }
+
+  // End-of-block line, for when the overlay card is off or was dismissed.
+  let noteFor = null;
+  function noteCard(v) {
+    const el = $('note-card');
+    const pn = v.pending_note;
+    el.hidden = !pn;
+    if (!pn) { noteFor = null; return; }
+    if (noteFor === pn.block) return; // keep what is being typed
+    noteFor = pn.block;
+    el.innerHTML = `<div class="title-m">«${esc(pn.name)}» закрыт</div>
+      <div class="field"><label for="note-in">Что было скучно, куда отвлекался?</label><input id="note-in" maxlength="300" autocomplete="off"></div>
+      <div class="hstack"><button class="btn tonal interactive" data-act="note_save">${icon('check')}Сохранить</button>
+        <button class="btn text interactive" data-act="note_skip">Пропустить</button></div>`;
+    el.querySelector('#note-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') el.querySelector('[data-act="note_save"]').click(); });
   }
 
   function update(s) {
@@ -365,6 +396,7 @@ export function mountToday(root, ctx) {
     const hero = $('hero');
     hero.dataset.kind = p.kind;
     hero.dataset.paused = String(!!p.paused);
+    hero.dataset.over = String(p.kind === 'segment' && p.remaining_ms < 0);
     lockLine(v, s.meta);
     kindChip(v);
 
@@ -379,6 +411,14 @@ export function mountToday(root, ctx) {
         big = mmss(p.remaining_ms);
         state = p.paused ? 'пауза' : p.kind === 'work' ? 'работа' : 'перерыв';
         break;
+      case 'segment': {
+        const over = p.remaining_ms < 0;
+        frac = over ? 1 : p.elapsed_ms / p.dur_ms;
+        running = !over;
+        big = over ? `+${mmss(-p.remaining_ms)}` : mmss(p.remaining_ms);
+        state = over ? 'превышено' : p.alarm ? 'сон · будильник' : 'отрезок';
+        break;
+      }
       case 'await':
         art = 'await';
         sub = `${p.subtitle} · ждём ${mmss(p.waiting_ms)}`;
@@ -396,7 +436,7 @@ export function mountToday(root, ctx) {
         small = true;
         state = v.mode === 'single' ? '' : 'в плане';
         title = v.started ? p.title : (v.study_day ? 'Готов начать?' : 'Выходной');
-        sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} · ${v.blocks.map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
+        sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} учёбы · ${v.blocks.filter((b) => b.kind !== 'break').map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
         if (!v.started && v.mode !== 'single') art = 'idle';
     }
     setArt(art);
@@ -411,6 +451,7 @@ export function mountToday(root, ctx) {
     $('psub').textContent = sub;
     controls(v);
     access(v, s.meta);
+    noteCard(v);
     blocks(v);
     dayEnd(v);
   }
@@ -432,15 +473,43 @@ export function mountToday(root, ctx) {
       case 'pause': await run(() => call('pause'), b); break;
       case 'resume': await run(() => call('resume'), b); break;
       // `expect`: the backend refuses if the phase moved on since this button was drawn.
-      case 'start_next': await run(() => call('start_next', { expect: v.phase.kind }), b); break;
+      case 'start_next': {
+        const wasBreak = v.phase.kind === 'break' || v.phase.kind === 'lunch_break';
+        const ok = await run(() => call('start_next', { expect: v.phase.kind }).then(() => true), b);
+        // Skipping a break is one click; a misclick is taken back within 10 seconds.
+        if (ok && wasBreak) {
+          snack(v.phase.kind === 'lunch_break' ? 'Обед закончен раньше' : 'Перерыв пропущен', 10000, {
+            label: 'Отменить',
+            run: () => run(() => call('undo_skip').then(() => snack('Перерыв продолжается'))),
+          });
+        }
+        break;
+      }
       case 'stop_single': await run(() => call('stop_single'), b); break;
       case 'end_access': await run(() => call('end_access'), b); break;
       case 'mini': await call('toggle_mini'); break;
       case 'goplan': ctx.navigate('plan'); break;
       case 'kind': await pickKind(b); break;
       case 'dayend': await extendDayEnd(b); break;
-      case 'lunch': await lunchDialog(last.meta.lunch_min); break;
+      case 'segment': {
+        const picked = await segmentDialog(last.meta.segments || [], v.phase.kind === 'segment', v.phase.kind === 'segment' ? v.phase.queue : []);
+        if (picked?.length) snack(picked.map((t) => t.name).join(' → ') + (v.phase.kind === 'segment' ? ' — в очереди' : ' — пошёл отсчёт'));
+        break;
+      }
+      case 'end_segment': await run(() => call('end_segment'), b); break;
       case 'single': await singleDialog(); break;
+      case 'note_save':
+      case 'note_skip': {
+        const text = act === 'note_save' ? root.querySelector('#note-in')?.value.trim() : '';
+        const ok = await run(() => call('set_block_note', { block: v.pending_note.block, note: text || null }).then(() => true), b);
+        if (ok && text) snack('Строка сохранена в блок');
+        break;
+      }
+      case 'finish': {
+        const ok = await finishDialog(v);
+        if (ok) snack('Блок закрыт на отработанном — записано в лог');
+        break;
+      }
       case 'emergency': {
         const cfg = await call('get_config');
         const ok = await emergencyDialog(cfg, v.emergency_count);

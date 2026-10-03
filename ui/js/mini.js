@@ -51,6 +51,14 @@ function render(s) {
       }
       btn = p.paused || !v.can.pause ? (v.can.resume ? ['play', 'Продолжить'] : null) : ['pause', 'Пауза'];
       break;
+    case 'segment': {
+      const over = p.remaining_ms < 0;
+      frac = over ? 1 : p.elapsed_ms / p.dur_ms;
+      setTime(over ? `+${mmss(-p.remaining_ms)}` : mmss(p.remaining_ms));
+      label = over ? `${p.title} · превышено` : p.title;
+      btn = p.alarm ? ['alarm', 'Встал'] : ['check', `Закончил ${p.title.toLowerCase()}`];
+      break;
+    }
     case 'await':
       setTime(p.subtitle.includes('часть') ? `Часть ${p.subtitle.match(/часть (\d+)/)?.[1] ?? ''}` : 'Дальше');
       label = `Перерыв окончен · ${mmss(p.waiting_ms)}`;
