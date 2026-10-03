@@ -57,6 +57,8 @@ class Block(
 class Snapshot(
     val version: String,
     val serverNow: Long,
+    /** How long the PC held a long poll before stamping [serverNow] (-1: an older PC didn't say). */
+    val heldMs: Long,
     val started: Boolean,
     val completed: Boolean,
     val studyDay: Boolean,
@@ -132,6 +134,7 @@ class Snapshot(
             return Snapshot(
                 version = o.getString("version"),
                 serverNow = o.getLong("server_now"),
+                heldMs = o.optLong("held_ms", -1),
                 started = o.getBoolean("started"),
                 completed = o.getBoolean("completed"),
                 studyDay = o.getBoolean("study_day"),

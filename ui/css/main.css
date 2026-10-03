@@ -143,8 +143,8 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .dial .state { font: 600 12px/16px var(--font); letter-spacing: .8px; text-transform: uppercase; opacity: .8; min-height: 16px; }
 .hero[data-paused="true"] .dial .big { opacity: .55; }
 /* Fixed box so the doodle never changes size while it draws in. */
-.dial .art { width: 240px; height: 240px; display: grid; place-items: center; contain: layout size; }
-.dial .art svg { width: 240px; height: 240px; display: block; }
+.dial .art { width: 92%; height: 92%; display: grid; place-items: center; contain: layout size; }
+.dial .art svg { width: 100%; height: 100%; display: block; }
 .dial:has(.art:not([hidden])) svg#ring { opacity: 0; }
 .hero { --hero-bg: var(--md-sys-color-surface-container); }
 .hero[data-kind="await"] { --hero-bg: var(--md-sys-color-primary-container); --hero-fg: var(--md-sys-color-on-primary-container); }
@@ -165,6 +165,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .hero .doodle .fill-bg { fill: var(--hero-bg); }
 .hero .doodle .fill-p { fill: color-mix(in srgb, currentColor 22%, var(--hero-bg)); }
 .hero .doodle .fill-t { fill: color-mix(in srgb, var(--md-sys-color-tertiary) 40%, var(--hero-bg)); }
+.hero .doodle .fill-sun { fill: color-mix(in srgb, #f5c04a 75%, var(--hero-bg)); }
 
 .phase-title { text-align: center; }
 .phase-title h2 { font: 400 28px/36px var(--font-display); }
