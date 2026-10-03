@@ -55,8 +55,17 @@ class MainActivity : Activity() {
     private val rowViews = mutableListOf<Pair<TextView, ProgressBar>>()
 
     private val onSync: (Snapshot?, String?) -> Unit = { s, _ ->
-        if (!store.paired) showPair() else { snap = s ?: snap; render() }
+        if (!store.paired) showPair() else {
+            snap = s ?: snap
+            render()
+            // The PC was updated while the app was open (or within the hourly check): ask now.
+            if (s != null && s.apkCode > Updater.current(this) && s.apkCode != askedCode) {
+                askedCode = s.apkCode
+                checkUpdate(true)
+            }
+        }
     }
+    private var askedCode = -1L
 
     private val tick = object : Runnable {
         override fun run() {
@@ -89,7 +98,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /** An update card when the PC carries a newer APK (checked at most once an hour). */
+    /** An update card when the PC carries a newer APK (checked on open at most once an hour, and at once when a sync reports a newer one). */
     private fun checkUpdate(force: Boolean) {
         Thread {
             val a = Updater.check(this, force)
