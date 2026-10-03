@@ -16,6 +16,9 @@ const ACCESS_WARNING_MS: i64 = 2 * MIN;
 const MAX_PLAN_BLOCKS: usize = 12;
 /// A skipped break can be taken back this long (misclick protection).
 pub const SKIP_UNDO_MS: i64 = 10 * crate::clock::SEC;
+/// Pauses shorter than this are noise (a misclick, pause/resume to check something): they are
+/// not recorded and not counted.
+pub const MIN_PAUSE_MS: i64 = 10 * crate::clock::SEC;
 const MAX_BLOCK_MIN: u32 = 8 * 60;
 /// Latest allowed day end: 02:00 of the next day, in minutes after the day's midnight.
 pub const MAX_DAY_END_MIN: u32 = 26 * 60;
@@ -183,6 +186,9 @@ pub struct SkipUndo {
     /// The break as it was (a running one keeps counting through the undo window).
     pub phase: Phase,
     pub pause: Option<ActivePause>,
+    /// Closing that pause added a record to `pauses` (short ones add none).
+    #[serde(default)]
+    pub pause_recorded: bool,
     pub block: usize,
     /// The skip started the block for the first time.
     pub first_start: bool,
@@ -704,12 +710,22 @@ impl DayState {
             Phase::Work { since, .. } | Phase::Break { since, .. } => *since = Some(now),
             _ => {}
         }
-        self.close_pause(p, now);
-        self.log(now, "resume", "Продолжение");
+        let since = p.since;
+        if self.close_pause(p, now) {
+            self.log(now, "resume", "Продолжение");
+        } else if let Some(i) = self.events.iter().rposition(|e| e.kind == "pause" && e.ts == since) {
+            // A blink of a pause leaves no trace in the log either.
+            self.events.remove(i);
+        }
         Ok(())
     }
 
-    fn close_pause(&mut self, p: ActivePause, now: Ts) {
+    /// Record a finished pause. Returns false for a pause shorter than [`MIN_PAUSE_MS`]
+    /// (dropped as noise).
+    fn close_pause(&mut self, p: ActivePause, now: Ts) -> bool {
+        if now - p.since < MIN_PAUSE_MS {
+            return false;
+        }
         let access_ms = p.access.iter().map(|w| (w.until.min(now) - w.from).max(0)).sum();
         self.pauses.push(PauseRecord {
             start: p.since,
@@ -719,6 +735,7 @@ impl DayState {
             access_ms,
             extensions: p.access.len().saturating_sub(1) as u32,
         });
+        true
     }
 
     /// Extend pause access (the app checks the captcha before calling this).
@@ -744,11 +761,10 @@ impl DayState {
     pub fn start_next(&mut self, now: Ts) -> Result<(), String> {
         let before = (self.phase.clone(), self.pause.clone(), self.lunch.as_ref().is_some_and(|l| l.end.is_none()));
         self.skip_undo = None;
-        if self.pause.is_some() {
-            if let Some(p) = self.pause.take() {
-                self.close_pause(p, now);
-            }
-        }
+        let pause_recorded = match self.pause.take() {
+            Some(p) => self.close_pause(p, now),
+            None => false,
+        };
         let next = match &self.phase {
             Phase::Break { next, brk, .. } => {
                 let n = *next;
@@ -775,7 +791,7 @@ impl DayState {
         self.start_work(now, b);
         if let (Phase::Break { .. }, pause, lunch_open) = before {
             let lunch_end_cleared = lunch_open && self.lunch.as_ref().is_some_and(|l| l.end.is_some());
-            self.skip_undo = Some(SkipUndo { at: now, phase: before.0, pause, block: b, first_start, lunch_end_cleared });
+            self.skip_undo = Some(SkipUndo { at: now, phase: before.0, pause, pause_recorded, block: b, first_start, lunch_end_cleared });
         }
         Ok(())
     }
@@ -793,7 +809,7 @@ impl DayState {
                 p.started_at = None;
             }
         }
-        if u.pause.is_some() {
+        if u.pause_recorded {
             self.pauses.pop();
         }
         self.pause = u.pause;
@@ -1944,6 +1960,46 @@ mod tests {
         d.set_block_note(start() + 96 * MIN, 1, None, "ui").unwrap();
         assert_eq!(d.pending_note(), None);
         assert_eq!(d.progress[1].note, None);
+    }
+
+    #[test]
+    fn blink_pauses_are_not_recorded() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        let p = start() + 5 * MIN;
+        d.pause(p, &c).unwrap();
+        // an ongoing 5 s pause is not in the stats yet
+        assert_eq!(crate::stats::day_stats(&d, 180, p + 5000).pauses_count, 0);
+        d.resume(p + 9_999).unwrap();
+        assert!(d.pauses.is_empty());
+        assert!(!d.events.iter().any(|e| e.kind == "pause" || e.kind == "resume"));
+        // exactly 10 s counts
+        d.pause(p + MIN, &c).unwrap();
+        assert_eq!(crate::stats::day_stats(&d, 180, p + MIN + 10_000).pauses_count, 1);
+        d.resume(p + MIN + 10_000).unwrap();
+        assert_eq!(d.pauses.len(), 1);
+        let st = crate::stats::day_stats(&d, 180, p + 2 * MIN);
+        assert_eq!(st.pauses_count, 1);
+        assert_eq!(st.blocks[0].pauses, 1);
+        // the paused time still froze the timer: 5 s of work were not counted
+        assert_eq!(d.phase_elapsed(p + MIN + 10_000), 5 * MIN + MIN - 9_999);
+    }
+
+    #[test]
+    fn undo_after_a_blink_pause_keeps_older_records() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.pause(start() + MIN, &c).unwrap();
+        d.resume(start() + 3 * MIN).unwrap();
+        assert_eq!(d.pauses.len(), 1);
+        d.tick(start() + 47 * MIN, &c); // in the break
+        d.pause(start() + 48 * MIN, &c).unwrap();
+        d.start_next(start() + 48 * MIN + 3_000).unwrap(); // 3 s pause: not recorded
+        d.undo_skip(start() + 48 * MIN + 5_000).unwrap();
+        assert_eq!(d.pauses.len(), 1);
+        assert!(d.pause.is_some());
     }
 
     #[test]

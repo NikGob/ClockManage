@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::clock::{self, MIN};
 use crate::config::DayKind;
-use crate::day::{fmt_day_min, DayState};
+use crate::day::{fmt_day_min, DayState, MIN_PAUSE_MS};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockStats {
@@ -134,7 +134,9 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
         .collect();
     let mut access_ms: i64 = d.pauses.iter().map(|r| r.access_ms).sum();
     let mut extensions: u32 = d.pauses.iter().map(|r| r.extensions).sum();
-    if let Some(p) = &d.pause {
+    // A pause shorter than MIN_PAUSE_MS may still turn out to be a blink: not counted yet.
+    let open_pause = d.pause.as_ref().filter(|p| now - p.since >= MIN_PAUSE_MS);
+    if let Some(p) = open_pause {
         let acc: i64 = p.access.iter().map(|w| (w.until.min(now) - w.from).max(0)).sum();
         access_ms += acc;
         extensions += p.access.len().saturating_sub(1) as u32;
@@ -148,7 +150,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
             extensions: p.access.len().saturating_sub(1) as u32,
         });
     }
-    let pauses_ms: i64 = d.pauses.iter().map(|r| r.end - r.start).sum::<i64>() + d.pause.as_ref().map(|p| now - p.since).unwrap_or(0);
+    let pauses_ms: i64 = d.pauses.iter().map(|r| r.end - r.start).sum::<i64>() + open_pause.map(|p| now - p.since).unwrap_or(0);
     DayStats {
         date: d.date.format("%Y-%m-%d").to_string(),
         kind: d.kind,
