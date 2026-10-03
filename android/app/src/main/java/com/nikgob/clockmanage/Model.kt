@@ -59,6 +59,8 @@ class Snapshot(
     val serverNow: Long,
     /** How long the PC held a long poll before stamping [serverNow] (-1: an older PC didn't say). */
     val heldMs: Long,
+    /** Version code of the APK the PC carries (-1: an older PC didn't say). */
+    val apkCode: Long,
     val started: Boolean,
     val completed: Boolean,
     val studyDay: Boolean,
@@ -135,6 +137,7 @@ class Snapshot(
                 version = o.getString("version"),
                 serverNow = o.getLong("server_now"),
                 heldMs = o.optLong("held_ms", -1),
+                apkCode = o.optLong("apk_code", -1),
                 started = o.getBoolean("started"),
                 completed = o.getBoolean("completed"),
                 studyDay = o.getBoolean("study_day"),

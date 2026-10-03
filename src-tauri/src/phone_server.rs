@@ -283,6 +283,9 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
                     // the clock offset.
                     let mut v = json!(snap);
                     v["held_ms"] = json!(start.elapsed().as_millis() as u64);
+                    // The phone app this PC carries: a phone that sees a newer one offers the update
+                    // right away instead of waiting for its hourly check.
+                    v["apk_code"] = json!(apk_info(shared.apk_dir.as_deref()).code);
                     reply(req, 200, &v);
                 }
                 (Method::Get, "/api/apk/info") => reply(req, 200, &json!(apk_info(shared.apk_dir.as_deref()))),
