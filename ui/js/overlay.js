@@ -29,7 +29,10 @@ function render(p) {
   requestAnimationFrame(() => scrim.classList.add('show'));
 
   const actions = [];
-  if (p.kind === 'await') {
+  if (p.ask_note) {
+    actions.push(`<button class="btn filled lg interactive" data-act="note">${icon('check')}Сохранить</button>`);
+    actions.push('<button class="btn text lg interactive" data-act="skip">Пропустить</button>');
+  } else if (p.kind === 'await') {
     actions.push(`<button class="btn filled xl interactive" data-act="start">${icon('play')}${esc(p.action || 'Начать')}</button>`);
     actions.push(`<button class="btn text lg interactive" data-act="hide">Скрыть на минуту</button>`);
   } else if (!passive) {
@@ -43,6 +46,8 @@ function render(p) {
       ${p.text ? `<p class="sub">${esc(p.text)}</p>` : ''}
       ${p.kind === 'await' ? '<p class="waiting tnum" id="waiting"></p>' : ''}
       ${p.note ? `<p class="note">${esc(p.note)}</p>` : ''}
+      ${p.ask_note ? `<div class="field note-field"><label for="ov-note">Что было скучно, куда отвлекался? Одна строка, можно пропустить</label>
+        <input id="ov-note" maxlength="300" autocomplete="off" spellcheck="true"></div>` : ''}
       ${actions.length ? `<div class="actions">${actions.join('')}</div>` : ''}
       ${p.preview ? '<p class="preview">Предпросмотр — так будет выглядеть оповещение</p>' : ''}
     </section>`;
@@ -51,7 +56,7 @@ function render(p) {
   stopBoil = play(stage, { extraMs: { await: 3600, break: 1800 }[p.kind] ?? 1200, jitter: p.kind !== 'nope' });
   updateWaiting();
   armedAt = performance.now() + ARM_MS;
-  const primary = stage.querySelector('[data-act="start"]') || stage.querySelector('[data-act="hide"]');
+  const primary = stage.querySelector('#ov-note') || stage.querySelector('[data-act="start"]') || stage.querySelector('[data-act="hide"]');
   if (primary && !passive) setTimeout(() => primary.focus({ preventScroll: true }), ARM_MS);
   if (passive) hideTimer = setTimeout(hide, p.auto_hide_ms || 5000);
 }
@@ -83,7 +88,9 @@ stage.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   if (performance.now() < armedAt) return;
-  if (b.dataset.act === 'start') {
+  if (b.dataset.act === 'note' || b.dataset.act === 'skip') {
+    await saveNote(b.dataset.act === 'note' ? document.getElementById('ov-note')?.value : null);
+  } else if (b.dataset.act === 'start') {
     b.setAttribute('aria-busy', 'true');
     try {
       if (!current?.preview) await call('start_next', { expect: 'await' });
@@ -96,8 +103,21 @@ stage.addEventListener('click', async (e) => {
   }
 });
 
+async function saveNote(text) {
+  if (!current?.preview && !current?.demo) {
+    try {
+      await call('set_block_note', { block: current.block, note: text?.trim() ? text : null });
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+  hide();
+}
+
 window.addEventListener('keydown', (e) => {
   if (!current || current.passive) return;
+  if (e.key === 'Enter' && e.target.id === 'ov-note' && performance.now() >= armedAt) { e.preventDefault(); saveNote(e.target.value); return; }
+  // Escape only hides the card: the line still waits on the "Сегодня" screen.
   if (e.key === 'Escape') hide();
 });
 

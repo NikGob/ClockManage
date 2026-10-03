@@ -51,6 +51,12 @@ pub struct BlockProgress {
     /// Closed early by "finish block": done on the minutes actually worked.
     #[serde(default)]
     pub closed: bool,
+    /// One line at the end of the block: what was boring, where the mind wandered.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// The note was skipped on purpose (don't ask again).
+    #[serde(default)]
+    pub note_skipped: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -242,7 +248,7 @@ pub struct LogEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     WorkEnded { block_name: String, part: u32, parts: u32, block_done: bool },
-    BlockCompleted { block_name: String, work_ms: i64, pauses: u32, pause_ms: i64 },
+    BlockCompleted { block: usize, block_name: String, work_ms: i64, pauses: u32, pause_ms: i64 },
     DayCompleted { work_ms: i64 },
     BreakEnded { next_name: String, next_part: u32, next_parts: u32, lunch: bool },
     AwaitReminder { waiting_ms: i64, next_name: String, next_part: u32, next_parts: u32 },
@@ -924,6 +930,37 @@ impl DayState {
         Ok(())
     }
 
+    /// The latest closed block that still waits for its end-of-block line.
+    pub fn pending_note(&self) -> Option<usize> {
+        (0..self.plan.len())
+            .filter(|&i| self.progress[i].completed_at.is_some() && self.progress[i].note.is_none() && !self.progress[i].note_skipped)
+            .max_by_key(|&i| self.progress[i].completed_at)
+    }
+
+    /// Save the end-of-block line (`None` or blank = skip). Works for any started block.
+    pub fn set_block_note(&mut self, now: Ts, block: usize, note: Option<&str>, by: &str) -> Result<(), String> {
+        let name = self.plan.get(block).map(|b| b.name.clone()).ok_or("Нет такого блока.")?;
+        let p = &mut self.progress[block];
+        if p.started_at.is_none() && p.work_ms == 0 {
+            return Err(format!("«{name}» ещё не начат."));
+        }
+        let note: Option<String> = note.map(|n| n.trim().chars().take(300).collect::<String>()).filter(|n| !n.is_empty());
+        match &note {
+            Some(n) => {
+                p.note = Some(n.clone());
+                p.note_skipped = false;
+                let by = if by == "mcp" { " — агент" } else { "" };
+                self.log(now, "block_note", format!("«{name}»: {n}{by}"));
+            }
+            None => {
+                if p.note.is_none() {
+                    p.note_skipped = true;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The block "finish block" would close: `name` (any started, open block) or the current one.
     pub fn finish_target(&self, name: Option<&str>) -> Result<usize, String> {
         if self.mode != Mode::Plan || self.started_at.is_none() {
@@ -989,7 +1026,7 @@ impl DayState {
                 if by == "mcp" { " — агент" } else { "" }
             ),
         );
-        ev.push(Event::BlockCompleted { block_name: name.clone(), work_ms: worked, pauses, pause_ms });
+        ev.push(Event::BlockCompleted { block: i, block_name: name.clone(), work_ms: worked, pauses, pause_ms });
         if running_here || next_here {
             match self.first_open_block() {
                 Some(next) if running_here || matches!(self.phase, Phase::Break { .. }) => {
@@ -1413,7 +1450,7 @@ impl DayState {
                         .filter(|r| r.block == Some(block))
                         .fold((0u32, 0i64), |(n, ms), r| (n + 1, ms + (r.end - r.start)));
                     self.log(end, "block_done", format!("Блок «{name}» закрыт: {} мин работы", work_ms / MIN));
-                    ev.push(Event::BlockCompleted { block_name: name, work_ms, pauses, pause_ms });
+                    ev.push(Event::BlockCompleted { block, block_name: name, work_ms, pauses, pause_ms });
                     match self.first_open_block() {
                         Some(next) => {
                             let dur_ms = self.timing.between_blocks_min as i64 * MIN;
@@ -1884,6 +1921,29 @@ mod tests {
         assert!(d2.pause.is_some());
         assert_eq!(d2.pauses.len(), n);
         assert!(matches!(d2.phase, Phase::Break { brk: BreakKind::Between, since: None, .. }));
+    }
+
+    #[test]
+    fn block_note_is_asked_once() {
+        let mut c = cfg();
+        c.profiles.full.plan = vec![PlanBlock::new("A", 45), PlanBlock::new("B", 45)];
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        assert_eq!(d.pending_note(), None);
+        let ev = d.tick(start() + 45 * MIN, &c);
+        assert!(ev.iter().any(|e| matches!(e, Event::BlockCompleted { block: 0, .. })));
+        assert_eq!(d.pending_note(), Some(0));
+        d.set_block_note(start() + 46 * MIN, 0, Some("  скучно на интегралах, лез в телефон  "), "ui").unwrap();
+        assert_eq!(d.progress[0].note.as_deref(), Some("скучно на интегралах, лез в телефон"));
+        assert_eq!(d.pending_note(), None);
+        assert!(d.set_block_note(start(), 1, Some("x"), "ui").is_err());
+        // skipping
+        d.start_next(start() + 50 * MIN).unwrap();
+        d.tick(start() + 95 * MIN, &c);
+        assert_eq!(d.pending_note(), Some(1));
+        d.set_block_note(start() + 96 * MIN, 1, None, "ui").unwrap();
+        assert_eq!(d.pending_note(), None);
+        assert_eq!(d.progress[1].note, None);
     }
 
     #[test]

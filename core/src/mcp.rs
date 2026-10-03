@@ -17,6 +17,8 @@ pub trait McpHost {
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String>;
     /// Without a token: preview + one-time token. With the token: close the block.
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String>;
+    /// End-of-block line; `name` None = the latest closed block.
+    fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String>;
 }
 
 fn tools() -> Value {
@@ -84,6 +86,21 @@ fn tools() -> Value {
                     "reason": { "type": "string", "description": "Почему сдвигаем — попадёт в лог и в уведомление" }
                 },
                 "required": ["time"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_block_note",
+            "title": "Строка в конце блока",
+            "description": "Сохраняет строку пользователя о блоке: что было скучно, куда отвлекался (до 300 символов). Попадает в лог и в get_today_stats как blocks[].note. Без name — последний закрытый блок. Повторный вызов заменяет строку.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Блок; по умолчанию последний закрытый" },
+                    "note": { "type": "string", "description": "Слова пользователя, по возможности дословно" }
+                },
+                "required": ["note"],
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
@@ -180,6 +197,10 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
                 "get_plan" => Ok(host.get_plan()),
                 "set_plan" => parse_plan(&args).and_then(|(p, s)| host.set_plan(p, s)),
+                "set_block_note" => match args.get("note").and_then(Value::as_str) {
+                    Some(n) => host.set_block_note(args.get("name").and_then(Value::as_str), n),
+                    None => Err("Нужен note.".into()),
+                },
                 "finish_block" => host.finish_block(args.get("name").and_then(Value::as_str), args.get("confirm_token").and_then(Value::as_str)),
                 "set_day_end" => match args.get("time").and_then(Value::as_str) {
                     Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
@@ -232,6 +253,9 @@ mod tests {
         }
         fn set_day_end(&self, t: &str, r: Option<&str>) -> Result<Value, String> {
             Ok(json!({"new": t, "reason": r}))
+        }
+        fn set_block_note(&self, n: Option<&str>, note: &str) -> Result<Value, String> {
+            Ok(json!({"block": n, "note": note}))
         }
         fn finish_block(&self, n: Option<&str>, t: Option<&str>) -> Result<Value, String> {
             Ok(match t {

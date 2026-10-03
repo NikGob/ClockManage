@@ -33,6 +33,7 @@ export function mountToday(root, ctx) {
     </section>
     <aside class="side">
       <section class="surface access" id="access" hidden aria-live="polite"></section>
+      <section class="surface note-card" id="note-card" hidden></section>
       <section class="surface plan-card" aria-labelledby="plan-h">
         <div class="head">
           <div class="row1"><h2 id="plan-h">План дня</h2><button class="kind-chip interactive" id="kind" data-act="kind" aria-haspopup="menu"></button><button class="btn text interactive" id="edit-plan">Изменить</button></div>
@@ -360,6 +361,22 @@ export function mountToday(root, ctx) {
     prevDone = v.blocks.map((b) => b.done);
   }
 
+  // End-of-block line, for when the overlay card is off or was dismissed.
+  let noteFor = null;
+  function noteCard(v) {
+    const el = $('note-card');
+    const pn = v.pending_note;
+    el.hidden = !pn;
+    if (!pn) { noteFor = null; return; }
+    if (noteFor === pn.block) return; // keep what is being typed
+    noteFor = pn.block;
+    el.innerHTML = `<div class="title-m">«${esc(pn.name)}» закрыт</div>
+      <div class="field"><label for="note-in">Что было скучно, куда отвлекался?</label><input id="note-in" maxlength="300" autocomplete="off"></div>
+      <div class="hstack"><button class="btn tonal interactive" data-act="note_save">${icon('check')}Сохранить</button>
+        <button class="btn text interactive" data-act="note_skip">Пропустить</button></div>`;
+    el.querySelector('#note-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') el.querySelector('[data-act="note_save"]').click(); });
+  }
+
   function update(s) {
     last = s;
     const v = s.view;
@@ -413,6 +430,7 @@ export function mountToday(root, ctx) {
     $('psub').textContent = sub;
     controls(v);
     access(v, s.meta);
+    noteCard(v);
     blocks(v);
     dayEnd(v);
   }
@@ -454,6 +472,13 @@ export function mountToday(root, ctx) {
       case 'dayend': await extendDayEnd(b); break;
       case 'lunch': await lunchDialog(last.meta.lunch_min); break;
       case 'single': await singleDialog(); break;
+      case 'note_save':
+      case 'note_skip': {
+        const text = act === 'note_save' ? root.querySelector('#note-in')?.value.trim() : '';
+        const ok = await run(() => call('set_block_note', { block: v.pending_note.block, note: text || null }).then(() => true), b);
+        if (ok && text) snack('Строка сохранена в блок');
+        break;
+      }
       case 'finish': {
         const ok = await finishDialog(v);
         if (ok) snack('Блок закрыт на отработанном — записано в лог');

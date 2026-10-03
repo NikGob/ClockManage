@@ -50,7 +50,7 @@ export function mountLog(root, ctx) {
     if (!selected) { el.innerHTML = '<p class="body-l muted">Выбери день слева.</p>'; return; }
     let st;
     try { st = await call('day_stats', { date: selected }); } catch (e) { el.innerHTML = `<p class="body-l">${esc(e)}</p>`; return; }
-    const blocks = st.blocks.map((b) => `<tr><td>${esc(b.name)}${b.done ? ' ' + icon('check', 's18') : ''}</td>
+    const blocks = st.blocks.map((b) => `<tr><td>${esc(b.name)}${b.done ? ' ' + icon('check', 's18') : ''}${b.note ? `<div class="body-s muted">${esc(b.note)}</div>` : ''}</td>
         <td class="r tnum">${fmtMin(b.planned_min)}</td><td class="r tnum">${fmtMin(b.actual_min)}</td>
         <td class="r tnum">${b.pauses ? `${b.pauses} · ${fmtMin(b.pause_min)}` : '—'}</td></tr>`).join('');
     const pauses = st.pauses.map((p) => `<tr><td class="tnum">${hmOf(p.start)}–${p.end === 'идёт' ? 'идёт' : hmOf(p.end)}</td>

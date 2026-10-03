@@ -17,6 +17,8 @@ pub struct BlockStats {
     pub completed_at: Option<String>,
     pub pauses: u32,
     pub pause_min: f64,
+    /// End-of-block line: what was boring, where the mind wandered.
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +102,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
                 completed_at: p.completed_at.map(iso),
                 pauses: n,
                 pause_min: m(ms),
+                note: p.note.clone(),
             }
         })
         .collect();
@@ -200,7 +203,7 @@ pub fn to_csv(days: &[DayStats]) -> String {
     for d in days {
         row([&d.date, "day", "", d.started_at.as_deref().unwrap_or(""), d.completed_at.as_deref().unwrap_or(""), &d.planned_min.to_string(), &d.actual_min.to_string(), &format!("pauses={} pause_min={} pause_access_min={} extensions={} emergencies={}", d.pauses_count, d.pauses_min, d.pause_access_min, d.pause_access_extensions, d.emergency_count)]);
         for b in &d.blocks {
-            row([&d.date, "block", &b.name, b.started_at.as_deref().unwrap_or(""), b.completed_at.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &format!("done={} parts={} pauses={} pause_min={}", b.done, b.parts_done, b.pauses, b.pause_min)]);
+            row([&d.date, "block", &b.name, b.started_at.as_deref().unwrap_or(""), b.completed_at.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &format!("done={} parts={} pauses={} pause_min={}{}", b.done, b.parts_done, b.pauses, b.pause_min, b.note.as_ref().map(|n| format!(" note={n}")).unwrap_or_default())]);
         }
         for p in &d.pauses {
             row([&d.date, "pause", p.block.as_deref().unwrap_or(""), &p.start, &p.end, "", &p.minutes.to_string(), &format!("during={} access_min={} extensions={}", p.during, p.access_min, p.extensions)]);

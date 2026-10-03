@@ -32,6 +32,13 @@ pub struct BlockView {
     pub done: bool,
     pub current: bool,
     pub started: bool,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingNote {
+    pub block: usize,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +111,8 @@ pub struct View {
     pub single: Option<crate::day::SingleRun>,
     /// End of the "undo skipped break" window.
     pub undo_until: Option<Ts>,
+    /// A closed block waits for its end-of-block line.
+    pub pending_note: Option<PendingNote>,
     pub can: Can,
 }
 
@@ -222,6 +231,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             done: d.is_block_done(i),
             current: d.mode == Mode::Plan && current == Some(i),
             started: d.progress[i].started_at.is_some(),
+            note: d.progress[i].note.clone(),
         })
         .collect();
 
@@ -294,6 +304,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         emergency_count: d.emergencies.len(),
         lunch_used: d.lunch.is_some(),
         single: if d.mode == Mode::Single { d.singles.last().cloned() } else { None },
+        pending_note: d.pending_note().map(|i| PendingNote { block: i, name: d.plan[i].name.clone() }),
         undo_until: d.skip_undo.as_ref().map(|u| u.at + crate::day::SKIP_UNDO_MS).filter(|_| can.undo_skip),
         can,
     }

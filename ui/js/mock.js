@@ -25,6 +25,7 @@ const cfg = {
 };
 let kind = q.get('kind') || 'full';
 let phonePin = null;
+let noteDone = false;
 let dayEnd = 1320;
 
 function blocks(now) {
@@ -82,7 +83,8 @@ function snapshot() {
       day_end_at: dayEndAt(), day_end_next_day: dayEnd >= 1440, day_end_changed: dayEnd !== 1320, forecast: forecast(now, b),
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
       pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN, access_enabled: cfg.pause_access, access_until: access ? t0 + 7 * MIN : null, access_left_ms: access ? t0 + 7 * MIN - now : 0, extensions: 0 } : null,
-      emergency_count: 0, lunch_used: false, single: null,
+      emergency_count: 0, lunch_used: false, single: null, undo_until: null,
+      pending_note: q.get('note') && !noteDone ? { block: 0, name: 'Математика' } : null,
       can: {
         start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
@@ -135,6 +137,7 @@ export async function invoke(cmd, args) {
     }
     case 'start_next': STATE = 'work'; return null;
     case 'undo_skip': STATE = 'break'; return null;
+    case 'set_block_note': noteDone = true; return null;
     case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
@@ -160,8 +163,8 @@ export function overlayDemo(kind) {
   const d = {
     await: { kind: 'await', passive: false, title: 'Перерыв окончен', text: 'Словацкий · часть 2 из 2', action: 'Начать часть 2' },
     break: { kind: 'break', passive: true, auto_hide_ms: 600000, title: 'Перерыв', text: 'Математика: часть 1 из 2 готова. Перерыв 10 мин.' },
-    block: { kind: 'block', passive: false, title: '«Математика» закрыт', text: '1 ч 30 мин работы · пауз: 1 (6 мин)', note: 'Надиктуй агенту строку: часы, что было скучно, куда отвлекался.' },
-    day: { kind: 'day', passive: false, title: 'День закрыт', text: '5 ч 30 мин учёбы. Блокировка снята.', note: 'Надиктуй агенту строку: часы, что было скучно, куда отвлекался.' },
+    block: { kind: 'block', passive: false, title: '«Математика» закрыт', text: '1 ч 30 мин работы · пауз: 1 (6 мин)', ask_note: true, block: 0 },
+    day: { kind: 'day', passive: false, title: 'День закрыт', text: '5 ч 30 мин учёбы. Блокировка снята.' },
     nope: { kind: 'nope', passive: true, auto_hide_ms: 600000, title: 'Не-не-не', text: 'Telegram — после учёбы' },
     access: { kind: 'access', passive: true, auto_hide_ms: 600000, title: 'Доступ закрыт', text: 'Блокировка снова включена' },
   }[kind];

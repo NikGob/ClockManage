@@ -247,7 +247,7 @@ impl Shared {
                     }));
                 }
                 Event::WorkEnded { block_done: true, .. } => {}
-                Event::BlockCompleted { block_name, work_ms, pauses, pause_ms } => {
+                Event::BlockCompleted { block, block_name, work_ms, pauses, pause_ms } => {
                     self.play(Sound::Done);
                     let facts = format!(
                         "{} работы · пауз: {}{}",
@@ -255,15 +255,12 @@ impl Shared {
                         pauses,
                         if *pauses > 0 { format!(" ({})", fmt_dur(*pause_ms)) } else { String::new() }
                     );
-                    self.notify(
-                        &format!("Блок «{block_name}» закрыт"),
-                        "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
-                    );
+                    self.notify(&format!("Блок «{block_name}» закрыт"), "Что было скучно, куда отвлекался? Одна строка — в окне ClockManage или агенту.");
                     self.show_overlay(json!({
                         "kind": "block", "passive": false,
                         "title": format!("«{block_name}» закрыт"),
                         "text": facts,
-                        "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
+                        "ask_note": true, "block": block,
                     }));
                 }
                 Event::DayCompleted { work_ms } => {
@@ -272,7 +269,6 @@ impl Shared {
                         "kind": "day", "passive": false,
                         "title": "День закрыт",
                         "text": format!("{} учёбы. Блокировка снята.", fmt_dur(*work_ms)),
-                        "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.",
                     }));
                 }
                 Event::BreakEnded { next_name, next_part, next_parts, lunch } => {
@@ -662,6 +658,10 @@ impl McpHost for McpBridge {
         apply_day_end(&self.0, time, reason, "mcp")
     }
 
+    fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String> {
+        apply_block_note(&self.0, None, name, Some(note), "mcp")
+    }
+
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
         let now = clock::now_ts();
         let Some(typed) = confirm_token else {
@@ -703,6 +703,23 @@ impl McpHost for McpBridge {
         }
         apply_finish(&self.0, Some(&t.block), "mcp")
     }
+}
+
+/// End-of-block line from the UI, the overlay or the agent.
+pub fn apply_block_note(shared: &Arc<Shared>, block: Option<usize>, name: Option<&str>, note: Option<&str>, by: &str) -> Result<Value, String> {
+    shared.mutate(|g, now| {
+        let i = match (block, name.map(str::trim).filter(|n| !n.is_empty())) {
+            (Some(i), _) => i,
+            (None, Some(n)) => g.day.plan.iter().position(|b| b.name.eq_ignore_ascii_case(n)).ok_or(format!("В плане нет блока «{n}»."))?,
+            (None, None) => g
+                .day
+                .pending_note()
+                .or_else(|| (0..g.day.plan.len()).filter(|&i| g.day.is_block_done(i)).max_by_key(|&i| g.day.progress[i].completed_at))
+                .ok_or("Сегодня ещё нет закрытых блоков — укажи name.")?,
+        };
+        g.day.set_block_note(now, i, note, by)?;
+        Ok(json!({ "ok": true, "block": g.day.plan[i].name, "note": g.day.progress[i].note }))
+    })
 }
 
 /// "Finish block" from the UI (`by = "ui"`) or the agent (`"mcp"`).
@@ -977,6 +994,12 @@ pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
     r
 }
 
+/// `note: None` = skip ("не сейчас").
+#[tauri::command]
+pub fn set_block_note(s: S, block: usize, note: Option<String>) -> Result<(), String> {
+    apply_block_note(s.inner(), Some(block), None, note.as_deref(), "ui").map(|_| ())
+}
+
 #[tauri::command]
 pub fn undo_skip(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.undo_skip(now))
@@ -1204,7 +1227,7 @@ pub fn preview_overlay(s: S, kind: String) {
     let p = match kind.as_str() {
         "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": "Перерыв", "text": "Математика: часть 1 из 2 готова. Перерыв 10 мин.", "preview": true}),
         "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 3000, "title": "Не-не-не", "text": "Telegram — после учёбы", "preview": true}),
-        "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "note": "Надиктуй агенту строку: часы, что было скучно, куда отвлекался.", "preview": true}),
+        "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "ask_note": true, "block": 0, "preview": true}),
         _ => json!({"kind": "await", "passive": false, "title": "Перерыв окончен", "text": "Математика · часть 2 из 2", "action": "Начать часть 2", "preview": true}),
     };
     let was = s.lock().cfg.overlay;

@@ -195,6 +195,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .blk .linear { grid-column: 2 / 4; }
 .empty-plan { padding: 8px 16px 12px; }
 
+.note-card { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .access { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .access .row1 { display: flex; gap: 12px; align-items: center; }
 .access .row1 .grow { flex: 1; min-width: 0; }
