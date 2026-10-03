@@ -65,6 +65,8 @@ pub struct Can {
     pub lighter_kind: bool,
     /// The current block was started and can be closed on the minutes worked.
     pub finish_block: bool,
+    /// A break was just skipped: "Отменить" works until `undo_until`.
+    pub undo_skip: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +102,8 @@ pub struct View {
     pub emergency_count: usize,
     pub lunch_used: bool,
     pub single: Option<crate::day::SingleRun>,
+    /// End of the "undo skipped break" window.
+    pub undo_until: Option<Ts>,
     pub can: Can,
 }
 
@@ -257,6 +261,9 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             && day_end < MAX_DAY_END_MIN,
         lighter_kind: !d.plan_lock(now, cfg),
         set_day_end: d.mode == Mode::Plan && d.is_live(now, cfg),
+        undo_skip: d.skip_undo.as_ref().is_some_and(|u| now - u.at <= crate::day::SKIP_UNDO_MS)
+            && matches!(d.phase, Phase::Work { since: Some(_), .. })
+            && d.pause.is_none(),
         finish_block: d.finish_target(None).is_ok_and(|i| d.block_work_live(i, now) >= 30 * crate::clock::SEC),
     };
 
@@ -287,6 +294,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         emergency_count: d.emergencies.len(),
         lunch_used: d.lunch.is_some(),
         single: if d.mode == Mode::Single { d.singles.last().cloned() } else { None },
+        undo_until: d.skip_undo.as_ref().map(|u| u.at + crate::day::SKIP_UNDO_MS).filter(|_| can.undo_skip),
         can,
     }
 }

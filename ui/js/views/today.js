@@ -434,7 +434,18 @@ export function mountToday(root, ctx) {
       case 'pause': await run(() => call('pause'), b); break;
       case 'resume': await run(() => call('resume'), b); break;
       // `expect`: the backend refuses if the phase moved on since this button was drawn.
-      case 'start_next': await run(() => call('start_next', { expect: v.phase.kind }), b); break;
+      case 'start_next': {
+        const wasBreak = v.phase.kind === 'break' || v.phase.kind === 'lunch_break';
+        const ok = await run(() => call('start_next', { expect: v.phase.kind }).then(() => true), b);
+        // Skipping a break is one click; a misclick is taken back within 10 seconds.
+        if (ok && wasBreak) {
+          snack(v.phase.kind === 'lunch_break' ? 'Обед закончен раньше' : 'Перерыв пропущен', 10000, {
+            label: 'Отменить',
+            run: () => run(() => call('undo_skip').then(() => snack('Перерыв продолжается'))),
+          });
+        }
+        break;
+      }
       case 'stop_single': await run(() => call('stop_single'), b); break;
       case 'end_access': await run(() => call('end_access'), b); break;
       case 'mini': await call('toggle_mini'); break;

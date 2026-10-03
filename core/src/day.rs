@@ -14,6 +14,8 @@ const MERGE_TAIL_MS: i64 = 15 * MIN;
 const PAUSE_REMINDER_MS: i64 = 5 * MIN;
 const ACCESS_WARNING_MS: i64 = 2 * MIN;
 const MAX_PLAN_BLOCKS: usize = 12;
+/// A skipped break can be taken back this long (misclick protection).
+pub const SKIP_UNDO_MS: i64 = 10 * crate::clock::SEC;
 const MAX_BLOCK_MIN: u32 = 8 * 60;
 /// Latest allowed day end: 02:00 of the next day, in minutes after the day's midnight.
 pub const MAX_DAY_END_MIN: u32 = 26 * 60;
@@ -168,6 +170,19 @@ pub struct LunchRecord {
     pub end: Option<Ts>,
 }
 
+/// Everything needed to take a skipped break back.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SkipUndo {
+    pub at: Ts,
+    /// The break as it was (a running one keeps counting through the undo window).
+    pub phase: Phase,
+    pub pause: Option<ActivePause>,
+    pub block: usize,
+    /// The skip started the block for the first time.
+    pub first_start: bool,
+    pub lunch_end_cleared: bool,
+}
+
 /// One-off shift of today's day end (the template in the config stays as is).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DayEndChange {
@@ -275,6 +290,9 @@ pub struct DayState {
     pub day_end_changes: Vec<DayEndChange>,
     #[serde(default)]
     pub saved_at: Ts,
+    /// The last skipped break, for "Отменить" within [`SKIP_UNDO_MS`].
+    #[serde(default)]
+    pub skip_undo: Option<SkipUndo>,
 }
 
 pub fn next_segment_ms(total_ms: i64, done_ms: i64, seg_ms: i64) -> i64 {
@@ -356,6 +374,7 @@ impl DayState {
             day_end_min: None,
             day_end_changes: vec![],
             saved_at: now,
+            skip_undo: None,
         }
     }
 
@@ -717,6 +736,8 @@ impl DayState {
 
     /// Start the next part from a break / waiting / lunch state.
     pub fn start_next(&mut self, now: Ts) -> Result<(), String> {
+        let before = (self.phase.clone(), self.pause.clone(), self.lunch.as_ref().is_some_and(|l| l.end.is_none()));
+        self.skip_undo = None;
         if self.pause.is_some() {
             if let Some(p) = self.pause.take() {
                 self.close_pause(p, now);
@@ -739,19 +760,44 @@ impl DayState {
             }
             _ => return Err("Сейчас нельзя начать следующую часть.".into()),
         };
-        if self.mode == Mode::Plan && self.is_block_done(next) {
-            return match self.first_open_block() {
-                Some(b) => {
-                    self.start_work(now, b);
-                    Ok(())
-                }
-                None => {
-                    self.phase = Phase::Done;
-                    Ok(())
-                }
-            };
+        let target = if self.mode == Mode::Plan && self.is_block_done(next) { self.first_open_block() } else { Some(next) };
+        let Some(b) = target else {
+            self.phase = Phase::Done;
+            return Ok(());
+        };
+        let first_start = self.mode == Mode::Plan && self.progress[b].started_at.is_none();
+        self.start_work(now, b);
+        if let (Phase::Break { .. }, pause, lunch_open) = before {
+            let lunch_end_cleared = lunch_open && self.lunch.as_ref().is_some_and(|l| l.end.is_some());
+            self.skip_undo = Some(SkipUndo { at: now, phase: before.0, pause, block: b, first_start, lunch_end_cleared });
         }
-        self.start_work(now, next);
+        Ok(())
+    }
+
+    /// Take a skipped break back within [`SKIP_UNDO_MS`]: the break goes on as if it had never
+    /// been skipped (those seconds count as break, not work).
+    pub fn undo_skip(&mut self, now: Ts) -> Result<(), String> {
+        let u = self.skip_undo.take().ok_or("Отменять нечего.")?;
+        let fresh = matches!(self.phase, Phase::Work { block, since: Some(_), .. } if block == u.block) && self.pause.is_none();
+        if now - u.at > SKIP_UNDO_MS || !fresh {
+            return Err("Поздно отменять — часть уже идёт.".into());
+        }
+        if u.first_start {
+            if let Some(p) = self.progress.get_mut(u.block) {
+                p.started_at = None;
+            }
+        }
+        if u.pause.is_some() {
+            self.pauses.pop();
+        }
+        self.pause = u.pause;
+        if u.lunch_end_cleared {
+            if let Some(l) = &mut self.lunch {
+                l.end = None;
+            }
+        }
+        self.phase = u.phase;
+        self.log(now, "break_skip_undo", "Пропуск перерыва отменён — перерыв продолжается");
         Ok(())
     }
 
@@ -1787,6 +1833,57 @@ mod tests {
         assert_eq!(d.phase, Phase::Done);
         assert!(d.pause.is_none());
         assert!(!d.lock_state(start() + 31 * MIN, &c).blocked);
+    }
+
+    #[test]
+    fn skipped_break_can_be_taken_back() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.tick(start() + 45 * MIN, &c); // break 45..55
+        let skip = start() + 48 * MIN;
+        d.start_next(skip).unwrap();
+        assert!(d.phase.is_work());
+        assert!(crate::view::build(&d, &c, skip + 1000).can.undo_skip);
+        d.undo_skip(skip + 8 * crate::clock::SEC).unwrap();
+        // the break kept counting through the undo window and ends on time
+        assert!(matches!(d.phase, Phase::Break { brk: BreakKind::Short, .. }));
+        assert_eq!(d.phase_elapsed(skip + 8 * crate::clock::SEC), 3 * MIN + 8 * crate::clock::SEC);
+        assert_eq!(d.progress[0].work_ms, 45 * MIN);
+        assert!(d.tick(start() + 55 * MIN, &c).iter().any(|e| matches!(e, Event::BreakEnded { .. })));
+        assert!(d.undo_skip(start() + 55 * MIN).is_err());
+    }
+
+    #[test]
+    fn undo_window_is_ten_seconds_and_restores_first_start() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.tick(start() + 45 * MIN, &c);
+        d.tick(start() + 55 * MIN, &c);
+        d.start_next(start() + 55 * MIN).unwrap();
+        d.tick(start() + 100 * MIN, &c); // block 0 done -> between break, next = 1 (not started)
+        d.pause(start() + 101 * MIN, &c).unwrap();
+        let skip = start() + 102 * MIN;
+        d.start_next(skip).unwrap();
+        assert!(d.progress[1].started_at.is_some());
+        assert!(d.undo_skip(skip + 11 * crate::clock::SEC).is_err());
+        d.start_next(skip + 20 * crate::clock::SEC).ok();
+        // a fresh skip from the between break: undo restores the pause and "not started"
+        let mut d2 = DayState::new(start(), &c);
+        d2.start_day(start(), &c).unwrap();
+        d2.tick(start() + 45 * MIN, &c);
+        d2.tick(start() + 55 * MIN, &c);
+        d2.start_next(start() + 55 * MIN).unwrap();
+        d2.tick(start() + 100 * MIN, &c);
+        d2.pause(start() + 101 * MIN, &c).unwrap();
+        let n = d2.pauses.len();
+        d2.start_next(skip).unwrap();
+        d2.undo_skip(skip + 5 * crate::clock::SEC).unwrap();
+        assert!(d2.progress[1].started_at.is_none());
+        assert!(d2.pause.is_some());
+        assert_eq!(d2.pauses.len(), n);
+        assert!(matches!(d2.phase, Phase::Break { brk: BreakKind::Between, since: None, .. }));
     }
 
     #[test]

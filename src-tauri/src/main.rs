@@ -145,6 +145,7 @@ fn main() {
             app::phone_pin,
             app::phone_forget,
             app::finish_block,
+            app::undo_skip,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

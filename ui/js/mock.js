@@ -133,6 +133,8 @@ export async function invoke(cmd, args) {
       setTimeout(() => (listeners.agent || []).forEach((cb) => cb({ title: 'Агент изменил конец дня', text: `${fmt(old)} → ${fmt(dayEnd)} (превью)` })), 1500);
       return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
     }
+    case 'start_next': STATE = 'work'; return null;
+    case 'undo_skip': STATE = 'break'; return null;
     case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };

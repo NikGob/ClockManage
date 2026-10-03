@@ -977,6 +977,11 @@ pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
     r
 }
 
+#[tauri::command]
+pub fn undo_skip(s: S) -> Result<(), String> {
+    s.mutate(|g, now| g.day.undo_skip(now))
+}
+
 /// Tray / mini window "main button": whatever the primary action is right now.
 pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
     let v = shared.snapshot().view;

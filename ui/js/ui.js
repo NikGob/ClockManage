@@ -2,10 +2,32 @@
 import { esc } from './api.js';
 
 let snackTimer = 0;
+let snackCount = 0;
 
-export function snack(text, ms = 3600) {
+/**
+ * Bottom message. `action` = { label, run } adds a button (an "undo"); the bar then stays for
+ * the whole `ms`, and the label counts the seconds down.
+ */
+export function snack(text, ms = 3600, action = null) {
   const el = document.getElementById('snackbar');
   document.getElementById('snack-text').textContent = text;
+  const btn = document.getElementById('snack-act');
+  clearInterval(snackCount);
+  if (btn) {
+    btn.hidden = !action;
+    btn.onclick = null;
+    if (action) {
+      const until = Date.now() + ms;
+      const label = () => { btn.textContent = `${action.label} · ${Math.max(0, Math.ceil((until - Date.now()) / 1000))}`; };
+      label();
+      snackCount = setInterval(label, 250);
+      btn.onclick = () => {
+        clearInterval(snackCount);
+        el.classList.remove('show');
+        action.run();
+      };
+    }
+  }
   // A popover lives in the top layer: re-opening it puts it above any modal dialog, so an
   // error raised from inside a dialog is actually seen (it used to hide under the backdrop).
   if (el.showPopover) {
@@ -18,7 +40,7 @@ export function snack(text, ms = 3600) {
   }
   el.classList.add('show');
   clearTimeout(snackTimer);
-  snackTimer = setTimeout(() => el.classList.remove('show'), ms);
+  snackTimer = setTimeout(() => { el.classList.remove('show'); clearInterval(snackCount); }, ms);
 }
 
 /** Wrap a command so failures surface as a snackbar and buttons show pending state. */
