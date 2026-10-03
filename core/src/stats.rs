@@ -206,6 +206,106 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
     }
 }
 
+/// One subject over a week: journal hours per day, Monday first.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WeekSubject {
+    pub name: String,
+    pub hours: [f64; 7],
+    pub total: f64,
+}
+
+/// A week of journal hours by subject and day (blocks of the same name are added up).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WeekStats {
+    /// Monday of the week, YYYY-MM-DD.
+    pub week_start: String,
+    /// The 7 dates, Monday..Sunday.
+    pub days: Vec<String>,
+    pub subjects: Vec<WeekSubject>,
+    pub day_totals: [f64; 7],
+    /// Sum of all journal hours of the week.
+    pub total: f64,
+    /// Actual study minutes of the week (not rounded).
+    pub actual_min: f64,
+}
+
+/// Monday of the week that contains `date`.
+pub fn week_monday(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    date - chrono::Duration::days(date.weekday().num_days_from_monday() as i64)
+}
+
+/// Build the week starting at `monday` from the stats of whatever days of it have a log.
+pub fn week_stats(monday: chrono::NaiveDate, days: &[DayStats]) -> WeekStats {
+    let dates: Vec<String> = (0..7).map(|i| (monday + chrono::Duration::days(i)).format("%Y-%m-%d").to_string()).collect();
+    let mut subjects: Vec<WeekSubject> = vec![];
+    let mut actual = 0.0;
+    for d in days {
+        let Some(col) = dates.iter().position(|x| *x == d.date) else { continue };
+        actual += d.actual_min;
+        for b in &d.blocks {
+            let key = b.name.trim().to_lowercase();
+            let i = match subjects.iter().position(|s| s.name.to_lowercase() == key) {
+                Some(i) => i,
+                None => {
+                    subjects.push(WeekSubject { name: b.name.trim().to_string(), hours: [0.0; 7], total: 0.0 });
+                    subjects.len() - 1
+                }
+            };
+            subjects[i].hours[col] += b.journal_hours;
+            subjects[i].total += b.journal_hours;
+        }
+    }
+    // Planned but never worked all week: not a journal line.
+    subjects.retain(|s| s.total > 0.0);
+    let mut day_totals = [0.0; 7];
+    for s in &subjects {
+        for (t, h) in day_totals.iter_mut().zip(s.hours) {
+            *t += h;
+        }
+    }
+    WeekStats {
+        week_start: dates[0].clone(),
+        days: dates,
+        total: day_totals.iter().sum(),
+        day_totals,
+        subjects,
+        actual_min: (actual * 10.0).round() / 10.0,
+    }
+}
+
+/// The week as tab-separated text: pastes straight into a spreadsheet or a journal.
+pub fn week_tsv(w: &WeekStats) -> String {
+    let num = |h: f64| if h == 0.0 { String::new() } else { format!("{h}").replace('.', ",") };
+    let mut out = String::from("Предмет");
+    for d in &w.days {
+        out.push('\t');
+        out.push_str(&d[8..10]);
+        out.push('.');
+        out.push_str(&d[5..7]);
+    }
+    out.push_str("\tИтого\n");
+    for s in &w.subjects {
+        out.push_str(&s.name);
+        for h in s.hours {
+            out.push('\t');
+            out.push_str(&num(h));
+        }
+        out.push('\t');
+        out.push_str(&num(s.total));
+        out.push('\n');
+    }
+    out.push_str("Итого");
+    for h in w.day_totals {
+        out.push('\t');
+        out.push_str(&num(h));
+    }
+    out.push('\t');
+    out.push_str(&num(w.total));
+    out.push('\n');
+    out
+}
+
 fn breaks(d: &DayState, now: clock::Ts, tz: i32) -> Vec<BreakStats> {
     let iso = |t: clock::Ts| clock::iso(t, tz);
     // A lunch from before 0.3 shows up as an "Обед" segment.
@@ -301,6 +401,39 @@ mod tests {
         assert_eq!(st.blocks[0].journal_hours, 2.75);
         assert_eq!(st.blocks[1].journal_hours, 1.25);
         assert_eq!(st.journal_total, 4.0);
+    }
+
+    #[test]
+    fn week_adds_up_subjects_by_day() {
+        let mut c = Config::default();
+        let mon = 1_790_589_600_000; // Monday 2026-09-28
+        let mut day = |ts: i64, blocks: &[(&str, i64)]| {
+            c.profiles.full.plan = blocks.iter().map(|(n, m)| crate::day::PlanBlock::new(n, (*m as u32).max(1))).collect();
+            let mut d = DayState::new(ts, &c);
+            for (i, (_, m)) in blocks.iter().enumerate() {
+                d.progress[i].work_ms = m * MIN;
+            }
+            day_stats(&d, 180, ts)
+        };
+        let days = vec![
+            day(mon, &[("Математика", 165), ("Словацкий", 84)]),
+            day(mon + 2 * 86_400_000, &[("математика", 60), ("Экстернат", 0)]),
+            day(mon + 9 * 86_400_000, &[("Математика", 600)]), // next week: ignored
+        ];
+        let w = week_stats(week_monday(chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()), &days);
+        assert_eq!(w.week_start, "2026-09-28");
+        assert_eq!(w.subjects.len(), 2); // Экстернат never worked
+        assert_eq!(w.subjects[0].name, "Математика");
+        assert_eq!(w.subjects[0].hours, [2.75, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(w.subjects[0].total, 3.75);
+        assert_eq!(w.subjects[1].total, 1.25);
+        assert_eq!(w.day_totals[0], 4.0);
+        assert_eq!(w.total, 5.0);
+        assert_eq!(w.actual_min, 309.0);
+        let tsv = week_tsv(&w);
+        assert!(tsv.starts_with("Предмет\t28.09\t29.09"));
+        assert!(tsv.contains("Математика\t2,75\t\t1\t"));
+        assert!(tsv.trim_end().ends_with("Итого\t4\t\t1\t\t\t\t\t5"));
     }
 
     #[test]

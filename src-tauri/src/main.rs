@@ -150,6 +150,7 @@ fn main() {
             app::start_segments,
             app::end_segment,
             app::drop_queued,
+            app::week_stats,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

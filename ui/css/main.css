@@ -201,6 +201,11 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .seg-type .sw-label { font: 600 12px/16px var(--font); color: var(--md-sys-color-on-surface-variant); }
 .prow.seg { background: color-mix(in srgb, var(--md-sys-color-tertiary-container) 28%, transparent); }
 .prow.seg .name { font-style: italic; }
+.log-tabs { margin-bottom: 16px; }
+.week-card { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+.wk-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scroll-x { overflow-x: auto; }
+.wk-t th.is-today { color: var(--md-sys-color-primary); }
 .note-card { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .access { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .access .row1 { display: flex; gap: 12px; align-items: center; }
@@ -462,3 +467,4 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
 .seg-types { display: flex; flex-wrap: wrap; gap: 8px; }
 .seg-queue { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 40px; }
 .seg-queue .arrow { color: var(--md-sys-color-on-surface-variant); }
+.wk-t td:not(:first-child), .wk-t th:not(:first-child) { width: 9%; }

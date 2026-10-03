@@ -12,6 +12,8 @@ const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 pub trait McpHost {
     fn session_state(&self) -> Value;
     fn day_stats(&self, date: Option<&str>) -> Result<Value, String>;
+    /// Journal hours of the week containing `date` (default: this week).
+    fn week_stats(&self, date: Option<&str>) -> Result<Value, String>;
     fn get_plan(&self) -> Value;
     fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String>;
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String>;
@@ -37,6 +39,17 @@ fn tools() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, по умолчанию сегодня (МСК)" } },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "get_week_stats",
+            "title": "Неделя для журнала",
+            "description": "Часы для журнала за неделю (пн–вс), в которую попадает date: subjects[] — предмет и journal_hours по дням (блоки с одинаковым именем складываются; каждый блок округлён вниз до 0,25 ч), day_totals, total, actual_min (неокруглённый факт). tsv — та же таблица текстом с табуляцией для вставки в таблицу. Отрезки (обед, сон) не входят.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "date": { "type": "string", "description": "Любой день недели, YYYY-MM-DD; по умолчанию текущая неделя" } },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
@@ -191,7 +204,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах). set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах). set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
                 }),
             )
         }
@@ -204,6 +217,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "get_session_state" => Ok(host.session_state()),
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
                 "get_plan" => Ok(host.get_plan()),
+                "get_week_stats" => host.week_stats(args.get("date").and_then(Value::as_str)),
                 "set_plan" => parse_plan(&args).and_then(|(p, s)| host.set_plan(p, s)),
                 "set_block_note" => match args.get("note").and_then(Value::as_str) {
                     Some(n) => host.set_block_note(args.get("name").and_then(Value::as_str), n),
@@ -252,6 +266,9 @@ mod tests {
         fn day_stats(&self, _: Option<&str>) -> Result<Value, String> {
             Ok(json!({}))
         }
+        fn week_stats(&self, d: Option<&str>) -> Result<Value, String> {
+            Ok(json!({ "week_of": d }))
+        }
         fn get_plan(&self) -> Value {
             json!(*self.0.borrow())
         }
@@ -280,7 +297,9 @@ mod tests {
         assert!(r.contains("2025-03-26"));
         assert!(handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, &h).is_none());
         let r = handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, &h).unwrap();
-        assert!(r.contains("get_today_stats"));
+        assert!(r.contains("get_today_stats") && r.contains("get_week_stats"));
+        let r = handle(r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_week_stats","arguments":{"date":"2026-09-30"}}}"#, &h).unwrap();
+        assert!(r.contains("2026-09-30"));
         let r = handle(
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"set_plan","arguments":{"blocks":[{"name":"Математика","hours":1.5},{"name":"Экстернат","minutes":150}]}}}"#,
             &h,

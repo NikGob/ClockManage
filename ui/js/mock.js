@@ -143,6 +143,11 @@ export async function invoke(cmd, args) {
     case 'start_segments': STATE = 'segment'; return null;
     case 'end_segment': STATE = 'await'; return null;
     case 'undo_skip': STATE = 'break'; return null;
+    case 'week_stats': return {
+      week: { week_start: '2026-09-28', days: ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'],
+        subjects: [{ name: 'Математика', hours: [1.5, 1.5, 0.75, 1.5, 1.25, 0, 0], total: 6.5 }, { name: 'Словацкий', hours: [0.75, 1.5, 1, 0, 1.5, 0, 0], total: 4.75 }, { name: 'Экстернат', hours: [0, 2.25, 0, 2.5, 1.75, 0, 0], total: 6.5 }],
+        day_totals: [2.25, 5.25, 1.75, 4, 4.5, 0, 0], total: 17.75, actual_min: 1104.6 },
+      tsv: 'Предмет\t28.09\n' };
     case 'set_block_note': noteDone = true; return null;
     case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };

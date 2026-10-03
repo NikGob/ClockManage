@@ -721,6 +721,13 @@ impl McpHost for McpBridge {
         serde_json::to_value(stats).map_err(|e| e.to_string())
     }
 
+    fn week_stats(&self, date: Option<&str>) -> Result<Value, String> {
+        let (w, tsv) = week(&self.0, date)?;
+        let mut v = serde_json::to_value(w).map_err(|e| e.to_string())?;
+        v["tsv"] = json!(tsv);
+        Ok(v)
+    }
+
     fn get_plan(&self) -> Value {
         let g = self.0.lock();
         json!({
@@ -1302,6 +1309,43 @@ pub fn day_stats(s: S, date: String) -> Result<DayStats, String> {
     drop(g);
     let day = s.store.load_day(&date).ok_or(format!("За {date} записей нет."))?;
     Ok(stats::day_stats(&day, tz, now))
+}
+
+/// The week (Monday..Sunday) containing `date` (default: today) from the saved days.
+pub fn week(shared: &Shared, date: Option<&str>) -> Result<(stats::WeekStats, String), String> {
+    let now = clock::now_ts();
+    let (tz, today) = {
+        let g = shared.lock();
+        (g.cfg.tz_offset_min, g.day.clone())
+    };
+    let anchor = match date {
+        Some(d) => clockmanage_core::chrono::NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").map_err(|_| "Дата нужна в виде ГГГГ-ММ-ДД.")?,
+        None => today.date,
+    };
+    let monday = stats::week_monday(anchor);
+    let mut days = vec![];
+    for i in 0..7 {
+        let d = monday + clockmanage_core::chrono::Duration::days(i);
+        let day = if d == today.date { Some(today.clone()) } else { shared.store.load_day(&d.format("%Y-%m-%d").to_string()) };
+        if let Some(day) = day {
+            days.push(stats::day_stats(&day, tz, now));
+        }
+    }
+    let w = stats::week_stats(monday, &days);
+    let tsv = stats::week_tsv(&w);
+    Ok((w, tsv))
+}
+
+#[derive(Serialize)]
+pub struct WeekView {
+    week: stats::WeekStats,
+    tsv: String,
+}
+
+#[tauri::command]
+pub fn week_stats(s: S, date: Option<String>) -> Result<WeekView, String> {
+    let (week, tsv) = week(s.inner(), date.as_deref())?;
+    Ok(WeekView { week, tsv })
 }
 
 #[tauri::command]

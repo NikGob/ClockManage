@@ -12,3 +12,4 @@ pub mod view;
 pub use clock::Ts;
 pub use config::Config;
 pub use day::DayState;
+pub use chrono;
