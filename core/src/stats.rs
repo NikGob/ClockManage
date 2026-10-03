@@ -11,6 +11,8 @@ pub struct BlockStats {
     pub name: String,
     pub planned_min: u32,
     pub actual_min: f64,
+    /// `actual_min` rounded DOWN to a quarter of an hour, in hours (165 -> 2.75, 84.6 -> 1.25).
+    pub journal_hours: f64,
     pub done: bool,
     pub parts_done: u32,
     pub started_at: Option<String>,
@@ -62,6 +64,8 @@ pub struct DayStats {
     pub planned_min: u32,
     pub actual_min: f64,
     pub blocks: Vec<BlockStats>,
+    /// Sum of `blocks[].journal_hours`.
+    pub journal_total: f64,
     pub pauses_count: usize,
     pub pauses_min: f64,
     pub pauses: Vec<PauseStats>,
@@ -79,6 +83,13 @@ fn m(ms: i64) -> f64 {
     (ms as f64 / MIN as f64 * 10.0).round() / 10.0
 }
 
+/// Minutes (as shown, one decimal) -> hours rounded down to 0.25. Integer math on tenths of a
+/// minute, so 60.0 is exactly 1.0 and never 0.75 from a float error.
+pub fn journal_hours(actual_min: f64) -> f64 {
+    let tenths = (actual_min * 10.0).round().max(0.0) as i64;
+    (tenths / 150) as f64 * 0.25
+}
+
 pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
     let iso = |t: clock::Ts| clock::iso(t, tz);
     let blocks: Vec<BlockStats> = d
@@ -92,10 +103,12 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
                 .iter()
                 .filter(|r| r.block == Some(i))
                 .fold((0u32, 0i64), |(n, ms), r| (n + 1, ms + r.end - r.start));
+            let actual_min = m(d.block_work_live(i, now));
             BlockStats {
                 name: b.name.clone(),
                 planned_min: b.minutes,
-                actual_min: m(d.block_work_live(i, now)),
+                actual_min,
+                journal_hours: journal_hours(actual_min),
                 done: p.completed_at.is_some(),
                 parts_done: p.parts_done,
                 started_at: p.started_at.map(iso),
@@ -144,6 +157,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
         completed_at: d.completed_at.map(iso),
         planned_min: d.plan.iter().map(|b| b.minutes).sum(),
         actual_min: m((0..d.plan.len()).map(|i| d.block_work_live(i, now)).sum()),
+        journal_total: blocks.iter().map(|b| b.journal_hours).sum(),
         blocks,
         pauses_count: pauses.len(),
         pauses_min: m(pauses_ms),
@@ -201,9 +215,9 @@ pub fn to_csv(days: &[DayStats]) -> String {
         out.push('\n');
     };
     for d in days {
-        row([&d.date, "day", "", d.started_at.as_deref().unwrap_or(""), d.completed_at.as_deref().unwrap_or(""), &d.planned_min.to_string(), &d.actual_min.to_string(), &format!("pauses={} pause_min={} pause_access_min={} extensions={} emergencies={}", d.pauses_count, d.pauses_min, d.pause_access_min, d.pause_access_extensions, d.emergency_count)]);
+        row([&d.date, "day", "", d.started_at.as_deref().unwrap_or(""), d.completed_at.as_deref().unwrap_or(""), &d.planned_min.to_string(), &d.actual_min.to_string(), &format!("journal_h={} pauses={} pause_min={} pause_access_min={} extensions={} emergencies={}", d.journal_total, d.pauses_count, d.pauses_min, d.pause_access_min, d.pause_access_extensions, d.emergency_count)]);
         for b in &d.blocks {
-            row([&d.date, "block", &b.name, b.started_at.as_deref().unwrap_or(""), b.completed_at.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &format!("done={} parts={} pauses={} pause_min={}{}", b.done, b.parts_done, b.pauses, b.pause_min, b.note.as_ref().map(|n| format!(" note={n}")).unwrap_or_default())]);
+            row([&d.date, "block", &b.name, b.started_at.as_deref().unwrap_or(""), b.completed_at.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &format!("journal_h={} done={} parts={} pauses={} pause_min={}{}", b.journal_hours, b.done, b.parts_done, b.pauses, b.pause_min, b.note.as_ref().map(|n| format!(" note={n}")).unwrap_or_default())]);
         }
         for p in &d.pauses {
             row([&d.date, "pause", p.block.as_deref().unwrap_or(""), &p.start, &p.end, "", &p.minutes.to_string(), &format!("during={} access_min={} extensions={}", p.during, p.access_min, p.extensions)]);
@@ -228,6 +242,30 @@ pub fn to_csv(days: &[DayStats]) -> String {
 mod tests {
     use super::*;
     use crate::config::Config;
+
+    #[test]
+    fn journal_hours_round_down_to_quarters() {
+        assert_eq!(journal_hours(165.0), 2.75);
+        assert_eq!(journal_hours(84.6), 1.25);
+        assert_eq!(journal_hours(60.0), 1.0);
+        assert_eq!(journal_hours(59.9), 0.75);
+        assert_eq!(journal_hours(14.9), 0.0);
+        assert_eq!(journal_hours(0.0), 0.0);
+        let mut c = Config::default();
+        c.profiles.full.plan = vec![crate::day::PlanBlock::new("A", 165), crate::day::PlanBlock::new("B", 90)];
+        let s = 1_790_589_600_000;
+        let mut d = DayState::new(s, &c);
+        d.start_day(s, &c).unwrap();
+        d.progress[0].work_ms = 165 * MIN;
+        d.progress[1].work_ms = 84 * MIN + 36_000;
+        d.pause(s, &c).unwrap();
+        d.phase = crate::day::Phase::Idle;
+        d.pause = None;
+        let st = day_stats(&d, 180, s);
+        assert_eq!(st.blocks[0].journal_hours, 2.75);
+        assert_eq!(st.blocks[1].journal_hours, 1.25);
+        assert_eq!(st.journal_total, 4.0);
+    }
 
     #[test]
     fn csv_escapes() {

@@ -144,11 +144,11 @@ export async function invoke(cmd, args) {
     case 'day_stats': return {
       date: args.date, study_day: true, started_at: '2026-09-28T13:12:00+03:00', completed_at: null, planned_min: 330, actual_min: 148,
       blocks: [
-        { name: 'Математика', planned_min: 90, actual_min: 90, done: true, parts_done: 2, pauses: 1, pause_min: 6 },
-        { name: 'Словацкий', planned_min: 90, actual_min: 58, done: false, parts_done: 1, pauses: 1, pause_min: 5 },
-        { name: 'Экстернат', planned_min: 150, actual_min: 0, done: false, parts_done: 0, pauses: 0, pause_min: 0 },
+        { name: 'Математика', planned_min: 90, actual_min: 90, journal_hours: 1.5, done: true, parts_done: 2, pauses: 1, pause_min: 6, note: 'скучно на интегралах, лез в телефон' },
+        { name: 'Словацкий', planned_min: 90, actual_min: 58, journal_hours: 0.75, done: false, parts_done: 1, pauses: 1, pause_min: 5 },
+        { name: 'Экстернат', planned_min: 150, actual_min: 0, journal_hours: 0, done: false, parts_done: 0, pauses: 0, pause_min: 0 },
       ],
-      pauses_count: 2, pauses_min: 11,
+      journal_total: 2.25, pauses_count: 2, pauses_min: 11,
       pauses: [
         { start: '2026-09-28T13:40:00+03:00', end: '2026-09-28T13:46:00+03:00', minutes: 6, during: 'work', block: 'Математика', access_min: 0, extensions: 0 },
         { start: '2026-09-28T15:02:00+03:00', end: '2026-09-28T15:07:00+03:00', minutes: 5, during: 'break', block: 'Словацкий', access_min: 0, extensions: 0 },

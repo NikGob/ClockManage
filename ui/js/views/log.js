@@ -51,7 +51,7 @@ export function mountLog(root, ctx) {
     let st;
     try { st = await call('day_stats', { date: selected }); } catch (e) { el.innerHTML = `<p class="body-l">${esc(e)}</p>`; return; }
     const blocks = st.blocks.map((b) => `<tr><td>${esc(b.name)}${b.done ? ' ' + icon('check', 's18') : ''}${b.note ? `<div class="body-s muted">${esc(b.note)}</div>` : ''}</td>
-        <td class="r tnum">${fmtMin(b.planned_min)}</td><td class="r tnum">${fmtMin(b.actual_min)}</td>
+        <td class="r tnum">${fmtMin(b.planned_min)}</td><td class="r tnum">${fmtMin(b.actual_min)}</td><td class="r tnum">${String(b.journal_hours ?? 0).replace('.', ',')}</td>
         <td class="r tnum">${b.pauses ? `${b.pauses} · ${fmtMin(b.pause_min)}` : '—'}</td></tr>`).join('');
     const pauses = st.pauses.map((p) => `<tr><td class="tnum">${hmOf(p.start)}–${p.end === 'идёт' ? 'идёт' : hmOf(p.end)}</td>
         <td>${esc(p.block || '—')} · ${{ work: 'работа', break: 'перерыв', lunch: 'обед' }[p.during] || p.during}</td>
@@ -67,7 +67,8 @@ export function mountLog(root, ctx) {
         <div class="fact"><div class="v tnum">${fmtMin(st.pause_access_min)}</div><div class="k">ДОСТУП НА ПАУЗЕ${st.pause_access_extensions ? ` · +${st.pause_access_extensions}` : ''}</div></div>
         <div class="fact ${st.emergency_count ? 'alert' : ''}"><div class="v tnum">${st.emergency_count}</div><div class="k">АВАРИЙНЫХ ДОСТУПОВ</div></div>
       </div>
-      ${st.blocks.length ? `<table class="t"><caption class="sr-only">Блоки</caption><thead><tr><th>Блок</th><th class="r">План</th><th class="r">Факт</th><th class="r">Паузы</th></tr></thead><tbody>${blocks}</tbody></table>` : ''}
+      ${st.blocks.length ? `<table class="t"><caption class="sr-only">Блоки</caption><thead><tr><th>Блок</th><th class="r">План</th><th class="r">Факт</th><th class="r" title="Факт, округлённый вниз до 0,25 ч">В журнал</th><th class="r">Паузы</th></tr></thead><tbody>${blocks}</tbody>
+        <tfoot><tr><td>Итого в журнал</td><td></td><td></td><td class="r tnum"><b>${String(st.journal_total ?? 0).replace('.', ',')}</b></td><td></td></tr></tfoot></table>` : ''}
       ${st.pauses.length ? `<div><h3 class="title-m" style="margin-bottom:8px">Паузы</h3><table class="t"><thead><tr><th>Время</th><th>Где</th><th class="r">Длилась</th><th class="r">Доступ</th></tr></thead><tbody>${pauses}</tbody></table></div>` : ''}
       ${st.emergencies.length ? `<div><h3 class="title-m" style="margin-bottom:8px">Аварийные доступы</h3><table class="t"><thead><tr><th>Время</th><th class="r">Длительность</th></tr></thead><tbody>${em}</tbody></table></div>` : ''}
       ${st.lunch ? `<p class="body-m"><b>Обед:</b> ${esc(st.lunch)}</p>` : ''}
