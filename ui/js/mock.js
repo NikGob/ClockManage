@@ -100,6 +100,7 @@ function snapshot() {
     meta: {
       admin: true, version: '0.1.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
       phone: { enabled: cfg.phone.enabled, running: cfg.phone.enabled, port: 47811, address: '192.168.1.42', pc_name: 'NIK-PC', error: null, pin: phonePin, pin_until: phonePin ? t0 + 2 * MIN : null,
+        apk: { available: true, code: 42, name: '0.4.0 (42)', size: 812345 },
         devices: [{ id: 'a1b2c3', name: 'Pixel 8', paired_at: t0 - 86400000, last_seen: Date.now() - 2 * MIN, blocker: true }] },
       blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, pause_access: cfg.pause_access, pause_access_min: 10,
       emergency_min: 10, lunch_min: 45, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,

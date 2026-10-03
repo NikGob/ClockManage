@@ -65,6 +65,8 @@ pub struct Shared {
     pub overlay: Mutex<Option<Value>>,
     pub tray: Mutex<Option<TrayItems>>,
     pub finish_token: Mutex<Option<FinishToken>>,
+    /// Bundled Android APK + apk.json (version), served to paired phones for self-update.
+    pub apk_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Serialize, Clone)]
@@ -108,7 +110,7 @@ impl Shared {
                 admin: self.admin,
                 version: env!("CARGO_PKG_VERSION"),
                 mcp: self.mcp.status.lock().unwrap().clone(),
-                phone: self.phone.status(&g.cfg),
+                phone: self.phone.status(&g.cfg, self.apk_dir.as_deref()),
                 blocker_error: blocker.last_error.clone(),
                 blocking_applied: blocker.applied.active,
                 sound: g.cfg.sound,

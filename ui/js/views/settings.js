@@ -129,6 +129,7 @@ export function mountSettings(root, ctx) {
           <div class="setting"><div class="grow"><div class="t">Синхронизация с Android${info('phone')}</div><div class="d">${state}</div></div>${sw('phone.enabled', on, 'Синхронизация с телефоном', 'phone')}</div>
           ${devices}
           ${pin}
+          ${on && ph.apk?.available ? `<div class="setting"><div class="grow"><div class="t">Приложение для телефона</div><div class="d">В этой сборке — версия ${esc(ph.apk.name)} (${(ph.apk.size / 1048576).toFixed(1).replace('.', ',')} МБ). Подключённый телефон предложит обновиться сам, по Wi-Fi.</div></div></div>` : ''}
           ${on ? `<div class="setting"><div class="grow"><div class="d">Телефон и ПК должны быть в одной сети. Приложения, которые блокируются на телефоне, — на экране «Блокировка».</div></div>
             <button class="btn tonal interactive" id="phone-pin">${icon('add')}Подключить телефон</button></div>` : ''}
         </div>

@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var blocker: TextView
     private lateinit var blockerBtn: View
     private lateinit var appsBtn: android.widget.Button
+    private lateinit var updateBox: LinearLayout
     private val rowViews = mutableListOf<Pair<TextView, ProgressBar>>()
 
     private val onSync: (Snapshot?, String?) -> Unit = { s, _ ->
@@ -82,7 +83,43 @@ class MainActivity : Activity() {
             snap = store.snapshot()
             Sync.startLive(this)
             ui.post(tick)
+            checkUpdate(false)
         }
+    }
+
+    /** An update card when the PC carries a newer APK (checked at most once an hour). */
+    private fun checkUpdate(force: Boolean) {
+        Thread {
+            val a = Updater.check(this, force)
+            ui.post { if (::updateBox.isInitialized) showUpdate(a) }
+        }.start()
+    }
+
+    private fun showUpdate(a: Updater.Available?) {
+        updateBox.removeAllViews()
+        updateBox.visibility = if (a == null) View.GONE else View.VISIBLE
+        if (a == null) return
+        updateBox.addWithMargins(label("Доступна версия ${a.name}", 16f, p.onContainer, bold = true))
+        val info = label("С ПК по Wi-Fi, ${"%.1f".format(a.size / 1048576.0)} МБ. Настройки и подключение сохранятся.", 14f, p.onContainer)
+        updateBox.addWithMargins(info, top = dp(2))
+        val go = pill("Обновить", p) {}
+        go.setOnClickListener {
+            if (!Updater.canInstall(this)) {
+                Toast.makeText(this, "Разреши ClockManage устанавливать приложения и вернись", Toast.LENGTH_LONG).show()
+                Updater.openInstallPermission(this)
+                return@setOnClickListener
+            }
+            go.isEnabled = false
+            Thread {
+                val err = Updater.downloadAndInstall(this) { pct -> ui.post { go.text = "Скачиваю… $pct%" } }
+                ui.post {
+                    go.isEnabled = true
+                    go.text = "Обновить"
+                    if (err != null) info.text = err
+                }
+            }.start()
+        }
+        updateBox.addWithMargins(go, top = dp(10), width = ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     override fun onStop() {
@@ -219,6 +256,13 @@ class MainActivity : Activity() {
         col.addWithMargins(status)
         lock = label("", 14f, p.muted)
         col.addWithMargins(lock, top = dp(4))
+        updateBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.container, dp(20).toFloat())
+            setPadding(dp(20), dp(14), dp(20), dp(14))
+            visibility = View.GONE
+        }
+        col.addWithMargins(updateBox, top = dp(12))
 
         val hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -276,6 +320,9 @@ class MainActivity : Activity() {
             Sync.stopLive()
             showPair()
         }, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
+        col.addWithMargins(label("Версия ${Updater.currentName(this)}", 12f, p.muted).apply {
+            setOnClickListener { checkUpdate(true); Toast.makeText(this@MainActivity, "Проверяю обновление на ПК…", Toast.LENGTH_SHORT).show() }
+        }, top = dp(8))
 
         snap = store.snapshot()
         shownVersion = ""

@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// versionCode grows with every CI build (the PC offers the phone an update when it is higher).
+val base = "0.4.0"
+val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.nikgob.clockmanage"
     compileSdk = 35
@@ -11,8 +15,8 @@ android {
         applicationId = "com.nikgob.clockmanage"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.3.0"
+        versionCode = build
+        versionName = "$base ($build)"
     }
 
     // One fixed key for every build, so a new APK installs over the old one (pairing and

@@ -80,6 +80,7 @@ fn main() {
                 overlay: Mutex::new(None),
                 tray: Mutex::new(None),
                 finish_token: Mutex::new(None),
+                apk_dir: handle.path().resource_dir().ok().map(|d| d.join("resources").join("android")),
             });
             tauri_app.manage(shared.clone());
 

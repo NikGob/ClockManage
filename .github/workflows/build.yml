@@ -34,16 +34,27 @@ jobs:
       - name: Build APK
         working-directory: android
         run: gradle --no-daemon assembleRelease
+      # versionCode = run number (see app/build.gradle.kts): every build installs over the last.
       - name: Version
         id: ver
         run: |
-          v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          v=$(sed -n 's/.*val base = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          name="$v ($GITHUB_RUN_NUMBER)"
           echo "version=$v" >> "$GITHUB_OUTPUT"
           cp android/app/build/outputs/apk/release/app-release.apk "ClockManage-android-$v.apk"
+          mkdir -p bundle
+          cp android/app/build/outputs/apk/release/app-release.apk bundle/ClockManage-android.apk
+          printf '{"code":%s,"name":"%s"}\n' "$GITHUB_RUN_NUMBER" "$name" > bundle/apk.json
       - uses: actions/upload-artifact@v4
         with:
           name: ClockManage-android-${{ steps.ver.outputs.version }}
           path: ClockManage-android-*.apk
+          if-no-files-found: error
+      # The same APK rides inside the Windows installer: the PC serves it to the phone.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-bundle
+          path: bundle/
           if-no-files-found: error
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -53,8 +64,13 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    needs: android
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-bundle
+          path: src-tauri/resources/android
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4

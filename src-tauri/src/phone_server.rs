@@ -42,6 +42,26 @@ pub struct PhoneDeviceStatus {
     pub blocker: Option<bool>,
 }
 
+/// The APK bundled with this PC build (CI puts it next to apk.json).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ApkInfo {
+    pub available: bool,
+    /// Android versionCode (grows with every CI build).
+    pub code: u64,
+    pub name: String,
+    pub size: u64,
+}
+
+pub const APK_FILE: &str = "ClockManage-android.apk";
+
+pub fn apk_info(dir: Option<&std::path::Path>) -> ApkInfo {
+    let Some(dir) = dir else { return ApkInfo::default() };
+    let meta: Value = std::fs::read_to_string(dir.join("apk.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    let size = std::fs::metadata(dir.join(APK_FILE)).map(|m| m.len()).unwrap_or(0);
+    let code = meta.get("code").and_then(Value::as_u64).unwrap_or(0);
+    ApkInfo { available: code > 0 && size > 0, code, name: meta.get("name").and_then(Value::as_str).unwrap_or("").to_string(), size }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PhoneStatus {
     pub enabled: bool,
@@ -53,6 +73,8 @@ pub struct PhoneStatus {
     pub pin: Option<String>,
     pub pin_until: Option<Ts>,
     pub devices: Vec<PhoneDeviceStatus>,
+    /// The phone app this PC build carries (phones update from it over Wi-Fi).
+    pub apk: ApkInfo,
 }
 
 struct Pin {
@@ -102,7 +124,7 @@ fn query(url: &str, key: &str) -> Option<String> {
 }
 
 impl PhoneServer {
-    pub fn status(&self, cfg: &Config) -> PhoneStatus {
+    pub fn status(&self, cfg: &Config, apk_dir: Option<&std::path::Path>) -> PhoneStatus {
         let (running, port, error) = self.running.lock().unwrap().clone();
         let now = clock::now_ts();
         let pin = self.pin.lock().unwrap();
@@ -117,6 +139,7 @@ impl PhoneServer {
             error,
             pin: pin.map(|p| p.code.clone()),
             pin_until: pin.map(|p| p.until),
+            apk: apk_info(apk_dir),
             devices: cfg
                 .phone
                 .devices
@@ -255,6 +278,21 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
                         snap = snapshot(shared);
                     }
                     reply(req, 200, &json!(snap));
+                }
+                (Method::Get, "/api/apk/info") => reply(req, 200, &json!(apk_info(shared.apk_dir.as_deref()))),
+                (Method::Get, "/api/apk") => {
+                    let info = apk_info(shared.apk_dir.as_deref());
+                    let file = shared.apk_dir.as_ref().filter(|_| info.available).and_then(|d| std::fs::File::open(d.join(APK_FILE)).ok());
+                    match file {
+                        Some(f) => {
+                            let _ = req.respond(
+                                Response::from_file(f)
+                                    .with_header(header("Content-Type", "application/vnd.android.package-archive"))
+                                    .with_header(header("Cache-Control", "no-store")),
+                            );
+                        }
+                        None => error(req, 404, "В этой сборке ПК нет APK для телефона."),
+                    }
                 }
                 (Method::Post, "/api/action") => {
                     let b = body(&mut req).unwrap_or(Value::Null);
