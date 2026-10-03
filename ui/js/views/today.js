@@ -492,7 +492,7 @@ export function mountToday(root, ctx) {
       case 'kind': await pickKind(b); break;
       case 'dayend': await extendDayEnd(b); break;
       case 'segment': {
-        const picked = await segmentDialog(last.meta.segments || [], v.phase.kind === 'segment');
+        const picked = await segmentDialog(last.meta.segments || [], v.phase.kind === 'segment', v.phase.kind === 'segment' ? v.phase.queue : []);
         if (picked?.length) snack(picked.map((t) => t.name).join(' → ') + (v.phase.kind === 'segment' ? ' — в очереди' : ' — пошёл отсчёт'));
         break;
       }

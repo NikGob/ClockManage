@@ -123,7 +123,6 @@ fn main() {
             app::resume,
             app::start_next,
             app::primary,
-            app::start_lunch,
             app::start_single,
             app::stop_single,
             app::set_plan,

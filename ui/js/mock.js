@@ -50,7 +50,7 @@ function phase(now) {
     case 'paused': { const dur = 45 * MIN, e = 21 * MIN; return { kind: 'work', title: 'Словацкий', subtitle: 'Часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: false, paused: true, waiting_ms: 0 }; }
     case 'lunch_break': { const dur = 45 * MIN, e = el; return { kind: 'lunch_break', title: 'Обед', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
     case 'break': { const dur = 10 * MIN, e = 3 * MIN + el; return { kind: 'break', title: 'Перерыв', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
-    case 'segment': { const dur = 20 * MIN, e = (q.get('over') ? 27 * MIN : 6 * MIN) + el; return { kind: 'segment', title: 'Сон', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0, alarm: true, queue: [] }; }
+    case 'segment': { const dur = 20 * MIN, e = (q.get('over') ? 27 * MIN : 6 * MIN) + el; return { kind: 'segment', title: 'Сон', subtitle: 'Дальше: Словацкий, часть 2 из 2', block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0, alarm: true, queue: q.get('queue') ? ['Прогулка 15 мин'] : [] }; }
     case 'await': return { kind: 'await', title: 'Перерыв окончен', subtitle: 'Словацкий · часть 2 из 2', block: 1, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 74000 + el };
     case 'done': return { kind: 'done', title: 'День закрыт', subtitle: 'Все блоки отсижены', block: null, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 0 };
     default: return { kind: 'idle', title: 'День не начат', subtitle: '', block: null, dur_ms: 0, elapsed_ms: 0, remaining_ms: 0, running: false, paused: false, waiting_ms: 0 };
@@ -150,6 +150,7 @@ export async function invoke(cmd, args) {
         day_totals: [2.25, 5.25, 1.75, 4, 4.5, 0, 0], total: 17.75, actual_min: 1104.6 },
       tsv: 'Предмет\t28.09\n' };
     case 'set_block_note': noteDone = true; return null;
+    case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };

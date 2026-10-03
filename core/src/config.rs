@@ -111,19 +111,13 @@ impl DayKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct DayProfile {
     /// Plan a new day of this kind starts with.
     pub plan: Vec<PlanBlock>,
     /// "Начать день" turns on blocking.
     pub block: bool,
-}
-
-impl Default for DayProfile {
-    fn default() -> Self {
-        Self { plan: vec![], block: false }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

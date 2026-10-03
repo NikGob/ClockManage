@@ -84,12 +84,18 @@ object Alarms {
         }
         if (next != null) {
             val at = next - s.offset + 500
-            if (cur != null && cur.segment && cur.alarm && cur.segmentEnd > now) {
-                // The nap: a real alarm clock (shown in the status bar, survives Doze).
-                am.setAlarmClock(AlarmManager.AlarmClockInfo(at, open(ctx)), pi)
-            } else if (Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) {
-                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
-            } else {
+            val exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
+            try {
+                if (exact && cur != null && cur.segment && cur.alarm && cur.segmentEnd > now) {
+                    // The nap: a real alarm clock (shown in the status bar, survives Doze).
+                    am.setAlarmClock(AlarmManager.AlarmClockInfo(at, open(ctx)), pi)
+                } else if (exact) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+                } else {
+                    am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+                }
+            } catch (e: SecurityException) {
+                // Exact alarms revoked in the settings (Android 12): late is better than a crash.
                 am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
             }
         }

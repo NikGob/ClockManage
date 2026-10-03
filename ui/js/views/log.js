@@ -19,8 +19,8 @@ export function mountLog(root, ctx) {
     </div>`;
 
   root.innerHTML = `<div class="log-tabs"><div class="segmented" role="tablist" id="logtabs">
-      <button class="interactive" data-mode="days" role="tab" aria-pressed="true">${CHECK}Дни</button>
-      <button class="interactive" data-mode="week" role="tab" aria-pressed="false" data-tip="Часы для журнала по предметам за неделю">${CHECK}Неделя</button>
+      <button class="interactive" data-logview="days" role="tab" aria-pressed="true">${CHECK}Дни</button>
+      <button class="interactive" data-logview="week" role="tab" aria-pressed="false" data-tip="Часы для журнала по предметам за неделю">${CHECK}Неделя</button>
     </div></div><div id="logbody">${DAYS_HTML}</div>`;
   const $ = (id) => root.querySelector('#' + id);
 
@@ -131,14 +131,14 @@ export function mountLog(root, ctx) {
 
   function setMode(m) {
     mode = m;
-    root.querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
+    root.querySelectorAll('[data-logview]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.logview === m)));
     if (m === 'week') loadWeek();
     else { $('logbody').innerHTML = DAYS_HTML; load(); }
   }
 
   root.addEventListener('click', async (e) => {
-    const tab = e.target.closest('[data-mode]');
-    if (tab) { if (tab.dataset.mode !== mode) setMode(tab.dataset.mode); return; }
+    const tab = e.target.closest('[data-logview]');
+    if (tab) { if (tab.dataset.logview !== mode) setMode(tab.dataset.logview); return; }
     const wk = e.target.closest('[data-week]');
     if (wk) {
       weekOf = shift(weekOf || localIso(), Number(wk.dataset.week));

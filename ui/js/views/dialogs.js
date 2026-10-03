@@ -173,11 +173,14 @@ export function finishDialog(v) {
  * "Отрезок": pick one or several (lunch → nap); they run one after another. While a segment
  * runs, the picks go to its queue.
  */
-export function segmentDialog(types, running) {
+export function segmentDialog(types, running, queue = []) {
   const picked = [];
+  // While a segment runs: what already waits, each can be taken out.
+  const queued = queue.length ? `<div class="seg-queue" id="sq-now"><span class="body-m muted">Уже в очереди:</span>${queue.map((q, i) => `<span class="chip input removable">${esc(q)}<button class="x interactive" data-drop="${i}" aria-label="Убрать ${esc(q)} из очереди">${icon('close')}</button></span>`).join('')}</div>` : '';
   return dialog(`
     <h2>${running ? 'Добавить в очередь' : 'Отрезок'}</h2>
     <p class="body-m muted">${running ? 'Начнётся сразу после текущего.' : 'Обратный отсчёт; несколько подряд идут очередью. Блокировка — как на перерыве.'}</p>
+    ${queued}
     <div class="seg-types">${types.map((t, i) => `<button class="btn tonal interactive" data-t="${i}">${icon(t.alarm ? 'alarm' : t.name.toLowerCase().startsWith('обед') ? 'restaurant' : 'coffee')}${esc(t.name)} · ${t.minutes} мин</button>`).join('')}</div>
     <div class="seg-queue" id="sq" aria-live="polite"></div>
     <div class="actions">
@@ -193,7 +196,19 @@ export function segmentDialog(types, running) {
       ok.disabled = !picked.length;
     };
     draw();
-    d.addEventListener('click', (e) => {
+    d.addEventListener('click', async (e) => {
+      const drop = e.target.closest('[data-drop]');
+      if (drop) {
+        const ok = await run(() => call('drop_queued', { index: Number(drop.dataset.drop) }).then(() => true));
+        if (ok) {
+          // Indices shift after a removal: drop the chip and renumber the rest.
+          drop.closest('.chip').remove();
+          d.querySelectorAll('[data-drop]').forEach((b, i) => { b.dataset.drop = String(i); });
+          if (!d.querySelector('[data-drop]')) d.querySelector('#sq-now')?.remove();
+          snack('Убрано из очереди');
+        }
+        return;
+      }
       const t = e.target.closest('[data-t]');
       const rm = e.target.closest('[data-rm]');
       if (t) { picked.push(types[Number(t.dataset.t)]); draw(); }

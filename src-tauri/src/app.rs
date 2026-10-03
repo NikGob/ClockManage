@@ -1173,11 +1173,6 @@ pub fn primary(s: S) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn start_lunch(s: S, with_timer: bool, at_pc: bool) -> Result<(), String> {
-    s.mutate(|g, now| g.day.start_lunch(now, with_timer, at_pc))
-}
-
-#[tauri::command]
 pub fn start_single(s: S, cfg: SingleCfg) -> Result<(), String> {
     s.mutate(|g, now| g.day.start_single(now, cfg))
 }

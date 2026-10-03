@@ -4,7 +4,7 @@ plugins {
 }
 
 // versionCode grows with every CI build (the PC offers the phone an update when it is higher).
-val base = "0.4.2"
+val base = "0.4.3"
 val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
 android {
