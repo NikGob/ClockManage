@@ -90,6 +90,7 @@ object Alarms {
         }
         if (cur == null || !cur.segment) ctx.getSystemService(NotificationManager::class.java).cancel(ID_WAKE)
         status(ctx, snap)
+        TimerWidget.update(ctx)
     }
 
     private fun open(ctx: Context): PendingIntent =
