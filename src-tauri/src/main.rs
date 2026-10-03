@@ -3,6 +3,7 @@
 mod app;
 mod blocker;
 mod mcp_server;
+mod phone_server;
 mod sound;
 mod store;
 mod system;
@@ -27,6 +28,7 @@ fn cleanup() {
     blocker::clear_guard_redirects(&store::Store::new(dir.clone()).load_config().blocklist.apps);
     let _ = std::fs::remove_file(dir.join("guard.beat"));
     let _ = system::set_autostart(false);
+    system::remove_phone_firewall();
 }
 
 fn main() {
@@ -72,6 +74,7 @@ fn main() {
                 store,
                 blocker: Mutex::new(blocker::Blocker::new(dir.join("blocker.json"))),
                 mcp: mcp_server::McpServer::default(),
+                phone: phone_server::PhoneServer::default(),
                 app: handle.clone(),
                 admin: system::is_admin(),
                 overlay: Mutex::new(None),
@@ -85,6 +88,9 @@ fn main() {
                 g.cfg.mcp_port = port;
                 shared.store.save_config(&g.cfg);
             }
+
+            let cfg = shared.lock().cfg.clone();
+            shared.phone.start(shared.clone(), &cfg);
 
             windows::build_tray(&handle, shared.clone())?;
             windows::install_close_handlers(&handle);
@@ -135,6 +141,8 @@ fn main() {
             app::toggle_mini,
             app::style_titlebar,
             app::restart_firefox,
+            app::phone_pin,
+            app::phone_forget,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

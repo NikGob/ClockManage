@@ -4,6 +4,7 @@ pub mod clock;
 pub mod config;
 pub mod day;
 pub mod mcp;
+pub mod phone;
 pub mod stats;
 pub mod view;
 

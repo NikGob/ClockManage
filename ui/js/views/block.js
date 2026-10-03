@@ -42,6 +42,18 @@ export function mountBlock(root, ctx) {
       </section>
 
       <section class="section">
+        <h2>Приложения на телефоне</h2>
+        <div class="surface pad stack">
+          <div class="chips" id="phone-apps"></div>
+          <div class="add-row">
+            <div class="field"><label for="papp-in">Добавить (имя пакета Android)</label><input id="papp-in" placeholder="com.zhiliaoapp.musically" autocomplete="off"></div>
+            <button class="btn tonal interactive" id="papp-add">${icon('add')}Добавить</button>
+          </div>
+          <p class="note-text">Удобнее выбрать из списка установленных — в самом приложении на телефоне. Сайты телефон берёт из списка выше. Звонилку, настройки и лаунчер заблокировать нельзя.</p>
+        </div>
+      </section>
+
+      <section class="section">
         <h2>Пауза и доступ</h2>
         <div class="surface">
           <div class="setting">
@@ -89,6 +101,7 @@ export function mountBlock(root, ctx) {
     const locked = last.view.lock.base && last.view.lock.reason !== 'completed';
     $('sites').innerHTML = chips(cfg.blocklist.sites, 'sites', !locked);
     $('apps').innerHTML = chips(cfg.blocklist.apps, 'apps', !locked);
+    $('phone-apps').innerHTML = chips(cfg.phone.apps, 'phone', !locked);
     const pa = $('pa');
     pa.checked = cfg.pause_access;
     pa.disabled = !last.view.can.edit_pause_access;
@@ -161,24 +174,28 @@ export function mountBlock(root, ctx) {
     renderCfg();
   }
 
+  const listOf = (c, kind) => (kind === 'phone' ? c.phone.apps : c.blocklist[kind]);
+
   function addFrom(inputId, kind) {
     const inp = $(inputId);
     const val = inp.value.trim();
     if (!val) return;
-    save((c) => c.blocklist[kind].push(val), `Добавлено: ${val}`).then(() => { inp.value = ''; inp.focus(); });
+    save((c) => listOf(c, kind).push(val), `Добавлено: ${val}`).then(() => { inp.value = ''; inp.focus(); });
   }
 
   $('site-add').addEventListener('click', () => addFrom('site-in', 'sites'));
   $('app-add').addEventListener('click', () => addFrom('app-in', 'apps'));
   $('site-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') addFrom('site-in', 'sites'); });
   $('app-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') addFrom('app-in', 'apps'); });
+  $('papp-add').addEventListener('click', () => addFrom('papp-in', 'phone'));
+  $('papp-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') addFrom('papp-in', 'phone'); });
   root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-rm]');
     if (!b) return;
     const kind = b.dataset.rm;
     const i = Number(b.dataset.i);
-    const name = cfg.blocklist[kind][i];
-    save((c) => c.blocklist[kind].splice(i, 1), `Убрано: ${name}`);
+    const name = listOf(cfg, kind)[i];
+    save((c) => listOf(c, kind).splice(i, 1), `Убрано: ${name}`);
   });
   $('ff-now').addEventListener('click', async (e) => {
     const b = e.currentTarget;

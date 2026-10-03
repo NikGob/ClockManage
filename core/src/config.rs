@@ -172,6 +172,52 @@ impl Profiles {
     }
 }
 
+/// A phone paired over the local network.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct PhoneDevice {
+    pub id: String,
+    pub name: String,
+    /// Bearer token the phone sends with every request.
+    pub token: String,
+    pub paired_at: i64,
+}
+
+/// Phone sync over Wi-Fi: the PC serves the timer to the Android app in the same network.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Phone {
+    pub enabled: bool,
+    /// TCP port of the phone API (the discovery reply tells it to the phone).
+    pub port: u16,
+    /// Android package names blocked on the phone during the lock (sites come from `blocklist`).
+    pub apps: Vec<String>,
+    pub devices: Vec<PhoneDevice>,
+}
+
+pub const PHONE_PORT: u16 = 47811;
+/// UDP port the PC answers discovery broadcasts on.
+pub const PHONE_DISCOVERY_PORT: u16 = 47810;
+
+impl Default for Phone {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: PHONE_PORT,
+            apps: [
+                "org.telegram.messenger",
+                "com.discord",
+                "com.twitter.android",
+                "tv.twitch.android.app",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            devices: vec![],
+        }
+    }
+}
+
 pub const DEFAULT_PHRASE: &str =
     "Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе";
 
@@ -202,6 +248,7 @@ pub struct Config {
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub appearance: Appearance,
+    pub phone: Phone,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
     pub study_days: Option<[bool; 7]>,
@@ -239,6 +286,7 @@ impl Default for Config {
             mcp_enabled: true,
             mcp_port: 0,
             appearance: Appearance::default(),
+            phone: Phone::default(),
             study_days: None,
             plan_template: None,
         }
@@ -286,6 +334,11 @@ impl Config {
             };
             (!is_protected_app(&exe)).then_some(exe)
         });
+        if self.phone.port < 1024 {
+            self.phone.port = PHONE_PORT;
+        }
+        self.phone.apps = normalize_list(&self.phone.apps, normalize_package);
+        self.phone.devices.retain(|d| d.token.len() >= 16);
         for k in [DayKind::Full, DayKind::Light, DayKind::Off] {
             let plan = &mut self.profiles.get_mut(k).plan;
             for b in plan.iter_mut() {
@@ -318,6 +371,10 @@ impl Config {
         let new_apps = lower(&new.blocklist.apps);
         if lower(&self.blocklist.apps).iter().any(|s| !new_apps.contains(s)) {
             return Err("Во время блокировки приложения можно только добавлять.".into());
+        }
+        let new_phone = lower(&new.phone.apps);
+        if lower(&self.phone.apps).iter().any(|s| !new_phone.contains(s)) {
+            return Err("Во время блокировки приложения телефона можно только добавлять.".into());
         }
         // Today is pinned in the day state, so the week and the profiles only shape future days.
         if new.day_end_min < self.day_end_min {
@@ -374,6 +431,24 @@ const PROTECTED_APPS: [&str; 22] = [
 pub fn is_protected_app(exe: &str) -> bool {
     let e = exe.to_ascii_lowercase();
     PROTECTED_APPS.contains(&e.as_str())
+}
+
+/// Phone apps that must stay usable: calls (emergency!), system UI, settings, launchers, ClockManage.
+pub fn is_protected_package(p: &str) -> bool {
+    let p = p.to_ascii_lowercase();
+    ["com.android.systemui", "com.android.settings", "com.nikgob.clockmanage", "android"].contains(&p.as_str())
+        || ["dialer", "launcher", "emergency", "incallui", ".phone", "telecom"].iter().any(|k| p.contains(k))
+}
+
+/// `org.telegram.messenger` (trimmed); anything that is not a package name is dropped.
+pub fn normalize_package(s: &str) -> Option<String> {
+    let s = s.trim();
+    let valid = s.contains('.')
+        && !s.starts_with('.')
+        && !s.ends_with('.')
+        && s.len() <= 120
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+    (valid && !is_protected_package(s)).then(|| s.to_string())
 }
 
 /// `https://www.YouTube.com/shorts/` -> `youtube.com/shorts`.
@@ -462,6 +537,21 @@ mod tests {
         assert_eq!(c.profiles.full.plan, vec![PlanBlock::new("X", 60)]);
         let out = serde_json::to_string(&c).unwrap();
         assert!(!out.contains("study_days") && !out.contains("plan_template"));
+    }
+
+    #[test]
+    fn phone_apps_normalize_and_only_grow() {
+        let mut c = Config::default();
+        c.phone.apps = vec![" com.discord ".into(), "com.google.android.dialer".into(), "nonsense".into(), "com.discord".into()];
+        c.normalize();
+        assert_eq!(c.phone.apps, vec!["com.discord".to_string()]);
+        let ctx = EditContext { locked: true };
+        let mut n = c.clone();
+        n.phone.apps.push("com.zhiliaoapp.musically".into());
+        assert!(c.check_update(&n, ctx).is_ok());
+        n.phone.apps.clear();
+        assert!(c.check_update(&n, ctx).is_err());
+        assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
     }
 
     #[test]

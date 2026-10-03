@@ -21,6 +21,7 @@ const TIP = {
   overlay: 'Рисованная карточка поверх всех окон на каждом переходе: будильник, перерыв, закрытый блок, «Не-не-не».',
   reminder: 'Пока таймер ждёт «Начать часть», звонок повторяется с этим интервалом. После конца дня — молчит.',
   contrast: 'Инверсные цвета: тёмная плашка в светлой теме и светлая в тёмной. Не теряется ни на каком фоне.',
+  phone: 'Приложение ClockManage для Android видит таймер по Wi-Fi, может ставить паузу, начинать части и менять длину блоков. Без связи продолжает считать само. Сайты из блок-листа и выбранные приложения блокирует и на телефоне.',
   mcp: 'Локальный сервер для Claude: видит состояние таймера и статистику, может задать план. Слушает только 127.0.0.1.',
   autostart: 'Запуск при входе в Windows без окна UAC и перезапуск раз в 5 минут, если процесс убили. Во время учёбы выключить нельзя.',
 };
@@ -102,6 +103,36 @@ export function mountSettings(root, ctx) {
       </section>`;
   }
 
+  function ago(ts) {
+    if (!ts) return 'ещё не выходил на связь';
+    const min = Math.floor((Date.now() - ts) / 60000);
+    return min < 1 ? 'на связи' : min < 60 ? `был на связи ${min} мин назад` : `был на связи в ${new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  function phoneSection(ph) {
+    const on = cfg.phone.enabled;
+    const addr = ph.address ? `${ph.address}:${ph.port}` : '';
+    const state = !on ? 'Выключена' : ph.running ? `Работает${addr ? ` · ${esc(addr)}` : ''} · ПК «${esc(ph.pc_name)}»` : `Не запущена${ph.error ? ': ' + esc(ph.error) : ''}`;
+    const devices = ph.devices.map((d) => `<div class="setting">
+        <span class="badge">${icon('phone')}</span>
+        <div class="grow"><div class="t">${esc(d.name)}</div><div class="d">${ago(d.last_seen)}${d.blocker === true ? ' · блокировка на телефоне включена' : d.blocker === false ? ' · блокировка на телефоне <b>выключена</b>' : ''}</div></div>
+        <button class="btn text interactive" data-forget="${esc(d.id)}">Отключить</button></div>`).join('');
+    const pin = ph.pin ? `<div class="setting col pin-box">
+        <div class="t">PIN для телефона</div>
+        <div class="pin tnum" aria-live="polite">${esc(ph.pin.slice(0, 3))} ${esc(ph.pin.slice(3))}</div>
+        <div class="d">Открой ClockManage на телефоне в той же сети Wi-Fi, выбери этот ПК и введи PIN. Действует до ${new Date(ph.pin_until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.</div></div>` : '';
+    return `<section class="section">
+        <h2>Телефон</h2>
+        <div class="surface">
+          <div class="setting"><div class="grow"><div class="t">Синхронизация с Android${info('phone')}</div><div class="d">${state}</div></div>${sw('phone.enabled', on, 'Синхронизация с телефоном', 'phone')}</div>
+          ${devices}
+          ${pin}
+          ${on ? `<div class="setting"><div class="grow"><div class="d">Телефон и ПК должны быть в одной сети. Приложения, которые блокируются на телефоне, — на экране «Блокировка».</div></div>
+            <button class="btn tonal interactive" id="phone-pin">${icon('add')}Подключить телефон</button></div>` : ''}
+        </div>
+      </section>`;
+  }
+
   function render() {
     if (!cfg || !last) return;
     const v = last.view;
@@ -175,6 +206,8 @@ export function mountSettings(root, ctx) {
           <div class="setting"><div class="grow"><div class="t">Контрастный мини-таймер</div><div class="d">Инверсные цвета — виден на любом фоне</div></div>${sw('appearance.mini_contrast', cfg.appearance.mini_contrast, 'Контрастный мини-таймер', 'contrast')}</div>
         </div>
       </section>
+
+      ${phoneSection(m.phone)}
 
       <section class="section">
         <h2>MCP для Claude</h2>
@@ -321,6 +354,11 @@ export function mountSettings(root, ctx) {
       const port = await run(() => call('regenerate_port'), t);
       if (port) { cfg = await call('get_config'); snack(`Новый порт: ${port}. Обнови адрес в Claude.`); }
     } else if (t.id === 'opendir') call('open_data_dir');
+    else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
+    else if (t.dataset.forget) {
+      const ok = await run(() => call('phone_forget', { id: t.dataset.forget }).then(() => true), t);
+      if (ok) snack('Телефон отключён — подключить снова можно по новому PIN');
+    }
   });
 
   async function reload() {
@@ -333,7 +371,9 @@ export function mountSettings(root, ctx) {
     update(s) {
       last = s;
       const v = s.view;
-      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}`;
+      // Phone "last seen" re-renders once a minute, not on every poll of the phone.
+      const ph = { ...s.meta.phone, devices: s.meta.phone.devices.map((d) => ({ ...d, last_seen: d.last_seen && Math.floor((Date.now() - d.last_seen) / 60000) })) };
+      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}`;
       if (nsig !== sig && cfg) { sig = nsig; render(); }
     },
     show() { reload(); },

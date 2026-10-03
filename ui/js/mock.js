@@ -20,9 +20,11 @@ const cfg = {
   pause_access: q.get('pa') === '1', pause_access_min: 10,
   emergency_phrase: 'Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе',
   emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
+  phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
 let kind = q.get('kind') || 'full';
+let phonePin = null;
 let dayEnd = 1320;
 
 function blocks(now) {
@@ -90,6 +92,8 @@ function snapshot() {
     },
     meta: {
       admin: true, version: '0.1.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
+      phone: { enabled: cfg.phone.enabled, running: cfg.phone.enabled, port: 47811, address: '192.168.1.42', pc_name: 'NIK-PC', error: null, pin: phonePin, pin_until: phonePin ? t0 + 2 * MIN : null,
+        devices: [{ id: 'a1b2c3', name: 'Pixel 8', paired_at: t0 - 86400000, last_seen: Date.now() - 2 * MIN, blocker: true }] },
       blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, pause_access: cfg.pause_access, pause_access_min: 10,
       emergency_min: 10, lunch_min: 45, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
       mini_contrast: cfg.appearance.mini_contrast,
@@ -128,6 +132,7 @@ export async function invoke(cmd, args) {
       setTimeout(() => (listeners.agent || []).forEach((cb) => cb({ title: 'Агент изменил конец дня', text: `${fmt(old)} → ${fmt(dayEnd)} (превью)` })), 1500);
       return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
     }
+    case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
     case 'day_stats': return {
       date: args.date, study_day: true, started_at: '2026-09-28T13:12:00+03:00', completed_at: null, planned_min: 330, actual_min: 148,

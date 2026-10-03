@@ -17,6 +17,7 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::blocker::Blocker;
 use crate::mcp_server::{McpServer, McpStatus};
+use crate::phone_server::{PhoneServer, PhoneStatus};
 use crate::sound::{self, Sound};
 use crate::store::Store;
 use crate::system;
@@ -50,6 +51,7 @@ pub struct Shared {
     pub store: Store,
     pub blocker: Mutex<Blocker>,
     pub mcp: McpServer,
+    pub phone: PhoneServer,
     pub app: AppHandle,
     pub admin: bool,
     pub overlay: Mutex<Option<Value>>,
@@ -61,6 +63,7 @@ pub struct Meta {
     pub admin: bool,
     pub version: &'static str,
     pub mcp: McpStatus,
+    pub phone: PhoneStatus,
     pub blocker_error: Option<String>,
     pub blocking_applied: bool,
     pub sound: bool,
@@ -96,6 +99,7 @@ impl Shared {
                 admin: self.admin,
                 version: env!("CARGO_PKG_VERSION"),
                 mcp: self.mcp.status.lock().unwrap().clone(),
+                phone: self.phone.status(&g.cfg),
                 blocker_error: blocker.last_error.clone(),
                 blocking_applied: blocker.applied.active,
                 sound: g.cfg.sound,
@@ -182,8 +186,9 @@ impl Shared {
         }));
     }
 
-    /// Something was changed by the agent through MCP, not by the user: say so in the UI.
-    fn agent_notice(&self, title: &str, text: &str) {
+    /// Something was changed by the agent through MCP or from the phone, not in this window:
+    /// say so in the UI.
+    pub fn notice(&self, title: &str, text: &str) {
         let _ = self.app.emit("agent", json!({ "title": title, "text": text }));
         self.notify(title, text);
     }
@@ -681,8 +686,8 @@ pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, save_as_template: 
         Ok((res, changes))
     })?;
     let _ = shared.app.emit("config", ());
-    if by == "mcp" && !changes.is_empty() {
-        shared.agent_notice("Агент изменил план", &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
+    if by != "ui" && !changes.is_empty() {
+        shared.notice(if by == "mcp" { "Агент изменил план" } else { "Телефон изменил план" }, &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
     }
     Ok(res)
 }
@@ -716,7 +721,7 @@ pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by:
         Ok((res, notice))
     })?;
     if let (Some(text), "mcp") = (notice, by) {
-        shared.agent_notice("Агент изменил конец дня", &text);
+        shared.notice("Агент изменил конец дня", &text);
     }
     Ok(res)
 }
@@ -739,11 +744,15 @@ pub fn get_config(s: S) -> Config {
 pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
     cfg.normalize();
     let shared = s.inner().clone();
-    let (autostart_changed, mcp_changed, saved) = shared.mutate(|g, now| {
+    let (autostart_changed, mcp_changed, phone_changed, saved) = shared.mutate(|g, now| {
+        // Paired phones are managed by pairing / "forget" only: a settings screen opened before
+        // a phone was paired must not drop its token.
+        cfg.phone.devices = g.cfg.phone.devices.clone();
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
+        let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
         let old = std::mem::replace(&mut g.cfg, cfg.clone());
         if g.day.started_at.is_none() {
             let wd = g.day.weekday();
@@ -775,7 +784,7 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
             }
         }
         shared.store.save_config(&g.cfg);
-        Ok((autostart_changed, mcp_changed, g.cfg.clone()))
+        Ok((autostart_changed, mcp_changed, phone_changed, g.cfg.clone()))
     })?;
     if autostart_changed {
         system::set_autostart(saved.autostart)?;
@@ -786,6 +795,9 @@ pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
             shared.lock().cfg.mcp_port = port;
             shared.store.save_config(&shared.lock().cfg);
         }
+    }
+    if phone_changed {
+        shared.phone.start(shared.clone(), &saved);
     }
     let _ = shared.app.emit("config", ());
     let _ = shared.app.emit("state", shared.snapshot());
@@ -806,6 +818,36 @@ pub fn regenerate_port(s: S) -> Result<u16, String> {
     let _ = shared.app.emit("config", ());
     let _ = shared.app.emit("state", shared.snapshot());
     Ok(port)
+}
+
+#[derive(Serialize)]
+pub struct PinView {
+    pin: String,
+    until: Ts,
+}
+
+/// Open a 6-digit PIN for pairing a phone (two minutes).
+#[tauri::command]
+pub fn phone_pin(s: S) -> Result<PinView, String> {
+    if !s.lock().cfg.phone.enabled {
+        return Err("Сначала включи синхронизацию с телефоном.".into());
+    }
+    let (pin, until) = s.phone.new_pin();
+    let _ = s.app.emit("state", s.snapshot());
+    Ok(PinView { pin, until })
+}
+
+#[tauri::command]
+pub fn phone_forget(s: S, id: String) -> Result<(), String> {
+    s.mutate(|g, now| {
+        let name = g.cfg.phone.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).ok_or("Такого телефона нет.")?;
+        g.cfg.phone.devices.retain(|d| d.id != id);
+        s.store.save_config(&g.cfg);
+        g.day.log(now, "phone", format!("Телефон «{name}» отключён"));
+        Ok(())
+    })?;
+    let _ = s.app.emit("config", ());
+    Ok(())
 }
 
 #[tauri::command]
