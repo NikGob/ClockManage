@@ -445,11 +445,11 @@ table.t tr:last-child td { border-bottom: 0; }
 .controls:has(.btn:active) .btn:not(:active) { transform: scale(.97); }
 
 /* Phone sync */
-.setting > .badge {
-  width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none;
+.setting:not(.profile) > .badge {
+  width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; flex: none;
   background: var(--tint-soft); color: var(--md-sys-color-on-surface-variant);
 }
-.setting > .badge .icon { width: 20px; height: 20px; }
+.setting:not(.profile) > .badge .icon { width: 20px; height: 20px; }
 .pin-box { align-items: flex-start; gap: 8px; }
 .pin-box .pin { font: 500 44px/52px var(--font); letter-spacing: .08em; color: var(--md-sys-color-primary); }
 .hold { isolation: isolate; }

@@ -1,5 +1,5 @@
 import { call, on, installRipples, esc } from './api.js';
-import { snack, stagger } from './ui.js';
+import { snack, stagger, staggerFirstRender } from './ui.js';
 import { applyTheme } from './theme.js';
 import { installTooltips, hideTip } from './tooltip.js';
 import { icon } from './icons.js';
@@ -103,10 +103,11 @@ function go(id) {
   screen = r.mount(view, ctx);
   screen.show?.();
   if (snapshot) screen.update(snapshot);
-  // Contents rise in a cascade; screens that render after a fetch are caught a moment later.
-  stagger(view);
-  setTimeout(() => stagger(view), 120);
-  setTimeout(() => stagger(view), 320);
+  // Contents rise in a cascade: what is there now, and the first render of screens that load
+  // their data first (caught on insertion, before it is ever painted).
+  // A screen drawn right away is done; only an empty one waits for its first render
+  // (otherwise its regular re-renders would be animated again).
+  if (!stagger(view)) staggerFirstRender(view);
   try { localStorage.setItem('route', r.id); } catch { /* storage may be unavailable */ }
 }
 

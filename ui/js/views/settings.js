@@ -410,7 +410,7 @@ export function mountSettings(root, ctx) {
       // Phone "last seen" re-renders once a minute, not on every poll of the phone.
       const ph = { ...s.meta.phone, devices: s.meta.phone.devices.map((d) => ({ ...d, last_seen: d.last_seen && Math.floor((Date.now() - d.last_seen) / 60000) })) };
       const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}`;
-      if (nsig !== sig && cfg) { sig = nsig; render(); }
+      if (nsig !== sig) { sig = nsig; if (cfg) render(); }
     },
     show() { reload(); },
     config() { reload(); },

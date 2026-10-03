@@ -148,15 +148,47 @@ export function holdButton(btn, ms, onDone) {
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const springFast = () => getComputedStyle(document.documentElement).getPropertyValue('--spring-fast').trim() || 'cubic-bezier(.2,0,0,1)';
 
+const RISE = 'section, .prow, .day-row, .blk, .setting';
+
 /** Screen contents rise in one after another (each element only once). */
-export function stagger(root, selector = 'section, .prow, .day-row, .blk, .setting') {
-  if (reduced()) return;
-  const items = [...root.querySelectorAll(selector)].filter((el) => !el.dataset.risen && el.offsetParent).slice(0, 16);
+export function stagger(root, selector = RISE) {
+  if (reduced()) return 0;
+  return riseIn([...root.querySelectorAll(selector)]);
+}
+
+/** Returns how many elements were animated. */
+function riseIn(els) {
+  const items = els.filter((el) => !el.dataset.risen && el.offsetParent).slice(0, 16);
   const easing = springFast();
   items.forEach((el, i) => {
     el.dataset.risen = '1';
     el.animate([{ opacity: 0, transform: 'translateY(16px)' }, { opacity: 1, transform: 'none' }], { duration: 440, delay: i * 35, easing, fill: 'backwards' });
   });
+  return items.length;
+}
+
+/**
+ * The cascade for a screen that renders after a fetch: catch its first render the moment it
+ * is inserted (MutationObserver runs before the browser paints), animate it once, stop.
+ * Animating it later made the content show, vanish and rise again.
+ */
+export function staggerFirstRender(root, selector = RISE) {
+  if (reduced()) return;
+  const mo = new MutationObserver((records) => {
+    const found = [];
+    for (const r of records) {
+      r.addedNodes.forEach((n) => {
+        if (n.nodeType !== 1) return;
+        if (n.matches(selector)) found.push(n);
+        found.push(...n.querySelectorAll(selector));
+      });
+    }
+    if (!found.length) return;
+    mo.disconnect();
+    riseIn(found);
+  });
+  mo.observe(root, { childList: true, subtree: true });
+  setTimeout(() => mo.disconnect(), 1500);
 }
 
 /** A little burst of dots out of `el` (a block closed, a goal reached). */
