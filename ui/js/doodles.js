@@ -111,18 +111,65 @@ export function emptyBook(size) {
 }
 
 export function notebook(size) {
+  // A desk: an open planner (ticked rows on the left, a line being written on the right),
+  // a pencil mid-word and a mug of tea. Fills the whole frame, so it reads at dial size.
+  const sparkle = (x, y, r, cls, d) =>
+    fill(`M${x} ${y - r} Q${x + r * 0.18} ${y - r * 0.18} ${x + r} ${y} Q${x + r * 0.18} ${y + r * 0.18} ${x} ${y + r} Q${x - r * 0.18} ${y + r * 0.18} ${x - r} ${y} Q${x - r * 0.18} ${y - r * 0.18} ${x} ${y - r} Z`, cls, d);
   return frame(`
-    ${fill('M48 64 Q84 52 118 70 V182 Q84 166 48 178 Z', 'fill-s', 200)}
-    ${s('M44 62 Q82 48 120 68 Q158 48 196 62 L196 178 Q158 164 120 184 Q82 164 44 178 Z', 0, 900)}
-    ${s('M120 68 L120 184', 500, 300)}
-    ${s('M136 92 Q150 84 164 92 Q176 98 184 90', 800, 400, 'thin')}
-    ${s('M136 114 Q152 106 168 112', 1000, 300, 'thin')}
-    ${s('M60 94 Q80 86 102 92', 700, 300, 'thin')}${s('M60 114 Q76 108 96 112', 850, 300, 'thin')}
+    ${s('M6 206 Q120 214 234 206', 0, 500, 'thin')}
+    ${fill('M20 84 Q54 70 88 88 V186 Q54 170 20 182 Z', 'fill-s fade', 260)}
+    ${s('M16 82 Q54 66 90 86 Q126 66 164 82 L164 186 Q126 170 90 190 Q54 170 16 186 Z', 100, 900)}
+    ${s('M90 86 L90 190', 600, 300)}
+    ${s('M28 104 L38 104 L38 114 L28 114 Z', 800, 200, 'thin')}${s('M30 108 L33 112 L41 100', 1000, 180, 'thin')}
+    ${s('M46 110 Q62 106 80 110', 900, 220, 'thin')}
+    ${s('M28 128 L38 128 L38 138 L28 138 Z', 900, 200, 'thin')}${s('M30 132 L33 136 L41 124', 1100, 180, 'thin')}
+    ${s('M46 134 Q60 130 76 134', 1000, 220, 'thin')}
+    ${s('M28 152 L38 152 L38 162 L28 162 Z', 1000, 200, 'thin')}
+    ${s('M46 158 Q58 154 72 158', 1100, 220, 'thin')}
+    ${s('M102 106 Q126 100 152 106', 1100, 260, 'thin')}
+    ${s('M102 128 Q124 122 148 128', 1200, 260, 'thin')}
+    ${s('M102 150 Q112 146 124 149', 1300, 200, 'thin')}
     <g class="pencil">
-      ${fill('M150 150 L200 100 L214 114 L164 164 Z', 'fill-p', 1100)}
-      ${s('M146 170 L150 150 L200 100 L214 114 L164 164 Z', 1000, 600)}
-      ${s('M146 170 L156 158', 1300, 200, 'thin')}${s('M192 108 L206 122', 1400, 200, 'thin')}
-    </g>`, { size, label: 'Тетрадь и карандаш' });
+      ${fill('M130 130 L168 92 L182 106 L144 144 Z', 'fill-p fade', 1200)}
+      ${s('M126 150 L130 130 L168 92 L182 106 L144 144 Z', 1150, 500)}
+      ${s('M126 150 L136 140', 1450, 160, 'thin')}${s('M160 100 L174 114', 1500, 160, 'thin')}
+    </g>
+    ${fill('M180 138 L184 186 Q185 194 194 194 L212 194 Q221 194 222 186 L226 138 Z', 'fill-p fade', 700)}
+    ${s('M178 136 L182 186 Q183 196 194 196 L212 196 Q223 196 224 186 L228 136', 500, 600)}
+    ${s('M178 136 Q203 144 228 136', 800, 260, 'thin')}
+    ${s('M226 150 Q240 150 238 164 Q236 178 222 176', 900, 300)}
+    <g class="steam">
+      ${s('M196 124 Q190 112 198 102 Q206 92 200 82', 1300, 420, 'thin')}
+      ${s('M212 122 Q206 110 214 100 Q222 90 216 80', 1400, 420, 'thin')}
+    </g>
+    ${sparkle(44, 40, 10, 'fill-t', 1600)}${sparkle(126, 32, 7, 'fill-p', 1700)}`, { size, label: 'Тетрадь, карандаш и чай' });
+}
+
+export function hammock(size) {
+  // Day off: someone dozing in a hammock under the sun.
+  const rays = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+    const a = (i / 8) * Math.PI * 2;
+    const p = (r) => `${(198 + Math.cos(a) * r).toFixed(1)} ${(46 + Math.sin(a) * r).toFixed(1)}`;
+    return s(`M${p(24)} L${p(32)}`, 900 + i * 50, 160, 'thin');
+  }).join('');
+  const z = (x, y, k, d) => s(`M${x} ${y} L${x + k} ${y} L${x} ${y + k} L${x + k} ${y + k}`, d, 260, 'thin');
+  return frame(`
+    ${fill('M180 46 Q180 28 198 28 Q216 28 216 46 Q216 64 198 64 Q180 64 180 46 Z', 'fill-sun', 700)}
+    ${s('M178 46 Q178 26 198 26 Q218 26 218 46 Q218 66 198 66 Q178 66 178 46 Z', 600, 500)}
+    ${rays}
+    ${s('M8 214 Q120 222 232 214', 0, 500, 'thin')}
+    ${s('M40 214 L50 92', 100, 400)}${s('M200 214 L190 96', 160, 400)}
+    ${s('M28 214 L52 214', 300, 200, 'thin')}${s('M188 214 L212 214', 340, 200, 'thin')}
+    <g class="sway">
+      ${s('M50 100 L76 136', 500, 220, 'thin')}${s('M190 104 L164 136', 540, 220, 'thin')}
+      ${fill('M94 124 Q94 113 105 113 Q116 113 116 124 Q116 135 105 135 Q94 135 94 124 Z', 'fill-bg', 700)}
+      ${s('M92 124 Q92 111 105 111 Q118 111 118 124 Q118 137 105 137 Q92 137 92 124 Z', 650, 400)}
+      ${s('M99 123 Q103 127 107 123', 1050, 160, 'thin')}
+      ${fill('M76 136 Q120 186 164 136 Q120 156 76 136 Z', 'fill-p fade', 800)}
+      ${s('M74 136 Q120 188 166 136 Q120 158 74 136 Z', 700, 600)}
+      ${s('M150 140 Q156 128 164 132', 1000, 200, 'thin')}
+    </g>
+    <g class="zzz">${z(120, 98, 8, 1300)}${z(134, 80, 11, 1450)}${z(152, 58, 14, 1600)}</g>`, { size, label: 'Выходной: гамак и солнце' });
 }
 
 export function bowl(size) {
@@ -224,7 +271,7 @@ export function trophy(size) {
 
 const DOODLES = {
   nope: [fingerWag], await: [alarmClock], break: [teaCup, stretch, waterGlass], block: [checkStamp, trophy],
-  day: [finishFlag, trophy], access: [padlock], lock: [padlock], empty: [emptyBook], idle: [notebook], lunch: [bowl],
+  day: [finishFlag, trophy], access: [padlock], lock: [padlock], empty: [emptyBook], idle: [notebook], rest: [hammock], lunch: [bowl],
   segment: [bowl, stretch, teaCup], wake: [alarmClock], ask: [teaCup, notebook],
 };
 
@@ -308,7 +355,7 @@ export function wiggle(svg) {
   void svg.getBoundingClientRect();
   svg.classList.add('poke');
   // restart one-shot state animations (steam, pencil, wag…) inside it
-  svg.querySelectorAll('.pencil, .steam, .wag, .wag-arcs, .shake, .waves').forEach((g) => {
+  svg.querySelectorAll('.pencil, .steam, .wag, .wag-arcs, .shake, .waves, .sway, .zzz').forEach((g) => {
     g.style.animation = 'none';
     void g.getBoundingClientRect();
     g.style.animation = '';

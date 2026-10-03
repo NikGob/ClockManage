@@ -88,7 +88,7 @@ export function mountToday(root, ctx) {
     art.hidden = false;
     $('center').hidden = true;
     art.innerHTML = doodle(kind, 220);
-    art.className = `art ${{ await: 'ringing', lunch: 'steaming', idle: 'writing' }[kind] || ''}`;
+    art.className = `art ${{ await: 'ringing', lunch: 'steaming', idle: 'writing', rest: 'resting' }[kind] || ''}`;
     play(art);
   }
 
@@ -437,7 +437,7 @@ export function mountToday(root, ctx) {
         state = v.mode === 'single' ? '' : 'в плане';
         title = v.started ? p.title : (v.study_day ? 'Готов начать?' : 'Выходной');
         sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} учёбы · ${v.blocks.filter((b) => b.kind !== 'break').map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
-        if (!v.started && v.mode !== 'single') art = 'idle';
+        if (!v.started && v.mode !== 'single') art = v.study_day ? 'idle' : 'rest';
     }
     setArt(art);
     ring.set(frac, running);

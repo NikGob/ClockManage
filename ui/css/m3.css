@@ -392,6 +392,7 @@ dialog.m3[open] .dlg > * { animation: rise-in var(--dur-spring) var(--spring-fas
 .doodle .fill-t { fill: color-mix(in srgb, var(--md-sys-color-tertiary) 36%, var(--md-sys-color-surface-container-lowest)); }
 .doodle .fill-s { fill: var(--md-sys-color-secondary-container); }
 .doodle .fill-bg { fill: var(--md-sys-color-surface-container-lowest); }
+.doodle .fill-sun { fill: color-mix(in srgb, #f5c04a 70%, var(--md-sys-color-surface-container-lowest)); }
 .doodle .draw { stroke-dasharray: 1; stroke-dashoffset: 1; }
 .doodle.play .draw { animation: draw var(--d, 700ms) var(--ease) forwards; animation-delay: var(--delay, 0ms); }
 .doodle .pop { opacity: 0; transform-box: fill-box; transform-origin: center; }
@@ -448,8 +449,14 @@ dialog.m3[open] .dlg > * { animation: rise-in var(--dur-spring) var(--spring-fas
 @keyframes waves { 0%, 70%, 100% { opacity: 1; transform: scale(1); } 20% { opacity: .5; transform: scale(1.08); } 40% { opacity: 1; transform: scale(1.14); } }
 
 .steaming .steam { animation: steam 2.8s var(--ease) 1.4s 1; transform-box: view-box; }
-.writing .pencil { transform-box: view-box; transform-origin: 150px 165px; animation: scribble 1.6s var(--ease) 1.6s 1; }
+.writing .pencil { transform-box: view-box; transform-origin: 128px 148px; animation: scribble 1.6s var(--ease) 1.6s 1; }
 @keyframes scribble { 0%, 100% { transform: none; } 20% { transform: translate(-6px, 3px) rotate(-4deg); } 40% { transform: translate(4px, -2px) rotate(3deg); } 60% { transform: translate(-3px, 2px) rotate(-2deg); } 80% { transform: translate(2px, 0) rotate(1deg); } }
+.writing .steam { animation: steam 2.8s var(--ease) 1.9s 1; transform-box: view-box; }
+/* Day off: the hammock rocks a little from its posts, the z's drift up. */
+.resting .sway { transform-box: view-box; transform-origin: 120px 98px; animation: sway 2.6s cubic-bezier(.45, 0, .55, 1) 1.3s 2; }
+@keyframes sway { 0%, 100% { transform: none; } 30% { transform: rotate(2.5deg); } 70% { transform: rotate(-2deg); } }
+.resting .zzz { transform-box: view-box; animation: zzz 2.6s var(--ease) 1.9s 2; }
+@keyframes zzz { 0% { transform: none; opacity: 1; } 60% { transform: translate(6px, -10px); opacity: .2; } 100% { transform: none; opacity: 1; } }
 @keyframes steam { 0% { transform: none; opacity: 1; } 60% { transform: translateY(-10px); opacity: .25; } 100% { transform: none; opacity: 1; } }
 
 .locking .shackle { transform: translateY(-22px); animation: shackle var(--dur-spring) var(--spring-fast) 900ms forwards; }
