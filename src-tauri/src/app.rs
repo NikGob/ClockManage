@@ -730,6 +730,7 @@ impl McpHost for McpBridge {
             "started": g.day.started_at.is_some(),
             "day_end": fmt_day_min(g.day.day_end(&g.cfg)),
             "day_end_default": clockmanage_core::config::fmt_hm(g.cfg.day_end_min),
+            "segment_types": g.cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes, "alarm": t.alarm })).collect::<Vec<_>>(),
         })
     }
 

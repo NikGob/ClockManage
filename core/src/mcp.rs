@@ -44,7 +44,7 @@ fn tools() -> Value {
         {
             "name": "get_plan",
             "title": "План дня",
-            "description": "План сегодняшнего дня и шаблон по умолчанию, конец дня на сегодня (day_end) и из шаблона (day_end_default).",
+            "description": "План сегодняшнего дня по порядку (учебные блоки и неучебные отрезки с type: \"break\"), шаблон этого типа дня, конец дня на сегодня (day_end) и из шаблона (day_end_default), типы отрезков из настроек (segment_types: name, minutes, alarm).",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
@@ -191,7 +191,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. Используй get_session_state, чтобы узнать, что идёт сейчас, get_today_stats — фактические часы за день, set_plan — задать план дня (часы по предметам), set_day_end — разово сдвинуть конец сегодняшнего дня, finish_block — закрыть начатый блок на отработанном (только после явного «да» пользователя)."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах). set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
                 }),
             )
         }

@@ -2,44 +2,6 @@ import { call, esc, dur } from '../api.js';
 import { icon } from '../icons.js';
 import { dialog, run, snack, holdButton } from '../ui.js';
 
-export function lunchDialog(lunchMin) {
-  return dialog(`
-    <h2>Обед</h2>
-    <p class="body-m muted">Один раз за день. Учебное время не идёт.</p>
-    <div class="options" role="radiogroup" aria-label="Как обедаешь">
-      <label class="option">
-        <input type="radio" name="mode" value="free" checked>
-        <span class="t">Просто поесть</span>
-        <span class="d">Без таймера. Блокировка остаётся. Вернёшься — нажмёшь «Пообедал».</span>
-      </label>
-      <label class="option">
-        <input type="radio" name="mode" value="timer">
-        <span class="t">Таймер ${lunchMin} мин</span>
-        <span class="d">По окончании зазвонит будильник.</span>
-        <span class="sub"><input type="checkbox" class="check" name="pc" id="lunch-pc"><label for="lunch-pc">Ем за ПК — открыть YouTube, Discord и остальное на время обеда</label></span>
-      </label>
-    </div>
-    <div class="actions">
-      <button class="btn text interactive" data-close>Отмена</button>
-      <button class="btn filled interactive" data-ok>${icon('restaurant')}Начать обед</button>
-    </div>`, (d, close) => {
-    const pc = d.querySelector('[name=pc]');
-    const sync = () => {
-      const timer = d.querySelector('[name=mode]:checked').value === 'timer';
-      pc.disabled = !timer;
-      if (!timer) pc.checked = false;
-    };
-    d.querySelectorAll('[name=mode]').forEach((r) => r.addEventListener('change', sync));
-    pc.addEventListener('change', () => { if (pc.checked) d.querySelector('[value=timer]').checked = true; sync(); });
-    sync();
-    d.querySelector('[data-ok]').addEventListener('click', async (e) => {
-      const withTimer = d.querySelector('[name=mode]:checked').value === 'timer';
-      const r = await run(() => call('start_lunch', { withTimer, atPc: withTimer && pc.checked }).then(() => true), e.currentTarget);
-      if (r) close(true);
-    });
-  });
-}
-
 export function singleDialog() {
   return dialog(`
     <h2>Один таймер</h2>
