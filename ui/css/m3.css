@@ -404,6 +404,10 @@ dialog.m3[open] .dlg > * { animation: rise-in var(--dur-spring) var(--spring-fas
 @keyframes draw { to { stroke-dashoffset: 0; } }
 @keyframes pop { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
 .doodle { cursor: pointer; transform-origin: 50% 90%; }
+/* At rest: a slow float and breath. Only the svg box moves, so the filtered drawing is
+   rasterised once and composited. Comes before .poke so a poke still wins. */
+.doodle.settled { animation: doodle-float 5.2s cubic-bezier(.45, 0, .55, 1) infinite; will-change: transform; }
+@keyframes doodle-float { 0%, 100% { transform: none; } 50% { transform: translateY(-5px) rotate(-.6deg) scale(1.012); } }
 .doodle.poke { animation: poke 640ms var(--ease); }
 @keyframes poke { 0% { transform: none; } 25% { transform: scale(1.06, .92); } 55% { transform: scale(.97, 1.04); } 100% { transform: none; } }
 

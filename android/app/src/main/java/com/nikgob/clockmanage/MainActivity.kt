@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var rows: LinearLayout
     private lateinit var blocker: TextView
     private lateinit var blockerBtn: View
+    private lateinit var restrictedBtn: View
     private lateinit var appsBtn: android.widget.Button
     private lateinit var updateBox: LinearLayout
     private val rowViews = mutableListOf<Pair<TextView, ProgressBar>>()
@@ -304,6 +305,12 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Найди «ClockManage — блокировка» и включи", Toast.LENGTH_LONG).show()
         }
         bl.addWithMargins(blockerBtn, top = dp(12), width = ViewGroup.LayoutParams.WRAP_CONTENT)
+        // Android 13+ greys out accessibility for sideloaded apps until "restricted settings" are
+        // allowed on the app's info page.
+        restrictedBtn = pill("О приложении", p, "text") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", packageName, null)))
+        }
+        bl.addWithMargins(restrictedBtn, top = dp(4), width = ViewGroup.LayoutParams.WRAP_CONTENT)
         appsBtn = pill("Приложения", p, "text") { startActivity(Intent(this, AppsActivity::class.java)) }
         bl.addWithMargins(appsBtn, top = dp(4), width = ViewGroup.LayoutParams.WRAP_CONTENT)
         val notify = Switch(this).apply {
@@ -340,12 +347,16 @@ class MainActivity : Activity() {
         val on = Sync.blockerEnabled(this)
         val s = snap
         blocker.text = when {
+            !on && Build.VERSION.SDK_INT >= 33 -> "Выключена. Без неё телефон только показывает таймер.\n\n" +
+                "Если переключатель серый и пишет «Ограниченная настройка»: «О приложении» → ⋮ справа сверху → " +
+                "«Разрешить ограниченные настройки», потом включи снова."
             !on -> "Выключена. Без неё телефон только показывает таймер."
             s == null -> "Включена. Ждёт данных с ПК."
             s.blockedAt(store.now(), store.syncedAt) -> "Включена и работает: ${s.sites.size} сайтов, ${s.apps.size} приложений."
             else -> "Включена. Сейчас блокировки нет."
         }
         blockerBtn.visibility = if (on) View.GONE else View.VISIBLE
+        restrictedBtn.visibility = if (!on && Build.VERSION.SDK_INT >= 33) View.VISIBLE else View.GONE
         appsBtn.text = "Приложения (${s?.apps?.size ?: 0})"
     }
 
@@ -437,7 +448,10 @@ class MainActivity : Activity() {
         }
 
         val work = s.blocks.indices.sumOf { e?.work(it, now) ?: 0L }
-        total.text = "${Fmt.dur(work)} из ${Fmt.hours(s.blocks.filter { !it.isBreak }.sumOf { it.minutes })} учёбы"
+        val studyMin = s.blocks.filter { !it.isBreak }.sumOf { it.minutes }
+        // "0 мин из 0 ч учёбы" says nothing: an empty plan shows only its hint below.
+        total.visibility = if (studyMin > 0) View.VISIBLE else View.GONE
+        total.text = "${Fmt.dur(work)} из ${Fmt.hours(studyMin)} учёбы"
         if (shownVersion != s.version + Sync.online) {
             shownVersion = s.version + Sync.online
             buildRows(s)

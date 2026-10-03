@@ -40,8 +40,13 @@ class Store(ctx: Context) {
     }
 
     fun save(raw: String, snap: Snapshot, sentAt: Long, gotAt: Long) {
-        // The PC stamped server_now somewhere between sending and receiving: take the middle.
-        val off = snap.serverNow - (sentAt + gotAt) / 2
+        // The PC stamps server_now right before it replies. A long poll first waits up to 25 s, so
+        // "the middle of the request" would be off by half the wait: take the arrival time minus
+        // half of the pure network time. An older PC doesn't report the wait: then assume the
+        // stamp came at arrival (off by one-way latency at most, i.e. milliseconds on a LAN).
+        val total = (gotAt - sentAt).coerceAtLeast(0)
+        val held = if (snap.heldMs >= 0) snap.heldMs.coerceAtMost(total) else total
+        val off = snap.serverNow - (gotAt - (total - held) / 2)
         p.edit().putString("snap", raw).putLong("offset", off).putLong("synced", snap.serverNow).apply()
     }
 

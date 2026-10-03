@@ -1,7 +1,8 @@
 // Hand-drawn illustrations: ink strokes drawn on with stroke-dashoffset and flat fills.
 // While a doodle moves it "boils" like hand-drawn animation: jittered vector frames at 12 fps
-// plus a light pixel-crunchy displacement filter. When the motion is over it settles on the
-// clean, exact vector frame and stays still (no perpetual jitter). Clicking it wiggles again.
+// under a light pixel-crunchy displacement filter. When the motion is over the lines settle on
+// the exact vector frame but keep the crunchy texture, and the whole picture just floats softly
+// (one composited transform: no re-rendering, no jitter). Clicking it wiggles again.
 
 let uid = 0;
 
@@ -322,16 +323,20 @@ function prepare(svg) {
     end = Math.max(end, delay + dur);
   }
   svg._drawMs = end;
+  // The texture is part of the look, not of the motion: it stays on for good.
+  svg._layer.setAttribute('filter', `url(#${svg.dataset.filter})`);
   svg.addEventListener('pointerdown', () => wiggle(svg));
+  // Drop the poke class when it's over, or it would keep overriding the resting float.
+  svg.addEventListener('animationend', (e) => { if (e.animationName === 'poke') svg.classList.remove('poke'); });
 }
 
 /** Boil for `ms`, then settle on the exact clean frame. */
 function boil(svg, ms) {
   clearInterval(svg._boilT);
   clearTimeout(svg._settleT);
-  if (reduced()) return;
+  svg.classList.remove('settled');
+  if (reduced()) return settle(svg);
   let f = 0;
-  svg._layer.setAttribute('filter', `url(#${svg.dataset.filter})`);
   const tick = () => {
     f = (f + 1) % VARIANTS;
     for (const p of svg._paths) p.el.setAttribute('d', p.v[f]);
@@ -345,7 +350,8 @@ function boil(svg, ms) {
 function settle(svg) {
   clearInterval(svg._boilT);
   for (const p of svg._paths) p.el.setAttribute('d', p.d);
-  svg._layer.removeAttribute('filter');
+  svg._turb?.setAttribute('seed', '1');
+  svg.classList.add('settled');
 }
 
 /** Short squash + boil when the user pokes a doodle. */
@@ -376,6 +382,7 @@ export function play(root, { extraMs = 900, jitter = true } = {}) {
     svg.classList.add('play');
     svg._still = !jitter;
     if (jitter) boil(svg, svg._drawMs + extraMs);
+    else { svg.classList.remove('settled'); clearTimeout(svg._settleT); svg._settleT = setTimeout(() => settle(svg), svg._drawMs); }
   }
   return () => svgs.forEach((svg) => svg._paths && settle(svg));
 }

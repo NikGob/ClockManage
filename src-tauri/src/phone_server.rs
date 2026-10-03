@@ -271,13 +271,19 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
                     seen(shared, &dev, blocker);
                     let have = query(&url, "v").unwrap_or_default();
                     let wait = query(&url, "wait").and_then(|w| w.parse().ok()).unwrap_or(0u64).min(MAX_WAIT_S);
-                    let deadline = std::time::Instant::now() + Duration::from_secs(wait);
+                    let start = std::time::Instant::now();
+                    let deadline = start + Duration::from_secs(wait);
                     let mut snap = snapshot(shared);
                     while snap.version == have && std::time::Instant::now() < deadline {
                         thread::sleep(Duration::from_millis(500));
                         snap = snapshot(shared);
                     }
-                    reply(req, 200, &json!(snap));
+                    // `server_now` is stamped just before this reply, after the wait: the phone
+                    // needs the hold time to tell network latency from waiting when it measures
+                    // the clock offset.
+                    let mut v = json!(snap);
+                    v["held_ms"] = json!(start.elapsed().as_millis() as u64);
+                    reply(req, 200, &v);
                 }
                 (Method::Get, "/api/apk/info") => reply(req, 200, &json!(apk_info(shared.apk_dir.as_deref()))),
                 (Method::Get, "/api/apk") => {
