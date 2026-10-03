@@ -6,8 +6,13 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 /* ---- navigation rail (≥600px) / bar (<600px) ---- */
 .nav {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 16px 0; background: var(--md-sys-color-surface);
+  padding: 16px 0; background: var(--md-sys-color-surface); position: relative;
 }
+.nav-ind {
+  position: absolute; left: 0; top: 0; width: 56px; height: 32px; pointer-events: none;
+  border-radius: var(--shape-full); background: var(--md-sys-color-secondary-container);
+}
+.nav .dest { position: relative; z-index: 1; }
 .nav .dest {
   width: 80px; border: 0; background: transparent; padding: 0; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 8px;
@@ -24,10 +29,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .nav .dest:focus-visible { outline: none; }
 .nav .dest:focus-visible .pill { outline: var(--focus-ring); outline-offset: 2px; }
 .nav .dest[aria-current="page"] { color: var(--md-sys-color-on-surface); }
-.nav .dest[aria-current="page"] .pill {
-  background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);
-  animation: pill-in var(--dur-spring) var(--spring-fast);
-}
+.nav .dest[aria-current="page"] .pill { color: var(--md-sys-color-on-secondary-container); }
 @keyframes pill-in { from { width: 24px; } }
 .nav .dest .badge {
   position: absolute; top: 2px; right: 12px; width: 8px; height: 8px; border-radius: 50%;
@@ -229,7 +231,7 @@ body { background: var(--md-sys-color-surface); overflow: hidden; }
 .prow input.name:focus { outline: none; border-bottom: 2px solid var(--md-sys-color-primary); }
 .prow input.name:disabled { color: var(--md-sys-color-on-surface-variant); border-bottom-style: dashed; }
 .stepper { display: flex; align-items: center; gap: 4px; }
-.stepper .val { min-width: 92px; text-align: center; font: 400 18px/24px var(--font-display); }
+.stepper .val { width: 150px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; font: 400 18px/24px var(--font-display); }
 .stepper .val small { display: block; font: 400 12px/16px var(--font); color: var(--md-sys-color-on-surface-variant); }
 .prow .tools { display: flex; gap: 0; }
 .prow .progress { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; font: 400 12px/16px var(--font); color: var(--md-sys-color-on-surface-variant); }
@@ -350,8 +352,8 @@ table.t tr:last-child td { border-bottom: 0; }
 .num-step .icon-btn { width: 36px; height: 36px; }
 .num-step .icon-btn .icon { width: 20px; height: 20px; }
 
-.setting .t .info { display: inline-block; vertical-align: -2px; margin-left: 4px; width: 16px; height: 16px; color: var(--md-sys-color-outline); opacity: .6; cursor: help; transition: opacity var(--dur-effects) linear; }
-.setting .t .info .icon { width: 16px; height: 16px; }
+.setting .t .info, .setting .d .info { display: inline-block; vertical-align: -2px; margin-left: 4px; width: 16px; height: 16px; color: var(--md-sys-color-outline); opacity: .6; cursor: help; transition: opacity var(--dur-effects) linear; }
+.setting .t .info .icon, .setting .d .info .icon { width: 16px; height: 16px; }
 .setting .t .info:hover { opacity: 1; }
 .setting.off { opacity: .6; }
 
@@ -468,3 +470,42 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
 .seg-queue { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 40px; }
 .seg-queue .arrow { color: var(--md-sys-color-on-surface-variant); }
 .wk-t td:not(:first-child), .wk-t th:not(:first-child) { width: 9%; }
+
+/* ---- more motion ---- */
+.burst-dot { position: fixed; z-index: 100; border-radius: 50%; pointer-events: none; }
+/* Over time on a segment: the card breathes red. */
+.hero[data-over="true"] { animation: breathe 2.6s ease-in-out infinite; }
+@keyframes breathe { 50% { box-shadow: inset 0 0 0 6px color-mix(in srgb, var(--md-sys-color-error) 35%, transparent); } }
+.hero[data-over="true"] .big { animation: over-pulse 2.6s ease-in-out infinite; }
+@keyframes over-pulse { 50% { transform: scale(1.04); } }
+/* Phase change: the hero recolours smoothly instead of snapping. */
+.hero { transition: background-color var(--dur-effects-slow) var(--ease), color var(--dur-effects-slow) var(--ease), border-radius var(--dur-spring-slow) var(--spring); }
+/* Big filled buttons: a light sheen passes over on hover. */
+.btn.filled.xl, .btn.filled.lg { position: relative; overflow: hidden; }
+.btn.filled.xl::after, .btn.filled.lg::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; transform: translateX(-120%) skewX(-18deg);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / .22), transparent);
+}
+.btn.filled.xl:hover:not(:disabled)::after, .btn.filled.lg:hover:not(:disabled)::after { animation: sheen 900ms var(--ease) 1; }
+@keyframes sheen { to { transform: translateX(120%) skewX(-18deg); } }
+/* Chips and list items pop in when they appear. */
+.chip { animation: chip-in var(--dur-spring) var(--spring-fast) both; }
+@keyframes chip-in { from { opacity: 0; transform: scale(.8); } }
+.seg-queue .arrow { animation: chip-in var(--dur-spring) var(--spring-fast) both; display: inline-block; }
+@media (prefers-reduced-motion: reduce) {
+  .hero[data-over="true"], .hero[data-over="true"] .big, .chip, .seg-queue .arrow { animation: none; }
+  .btn.filled.xl:hover::after, .btn.filled.lg:hover::after { animation: none; }
+}
+.plan-card .row1 h2 { white-space: nowrap; }
+/* Narrow window: a segment type's name gets its own line above the controls. */
+@media (max-width: 720px) {
+  .seg-type { display: grid; grid-template-columns: 40px 1fr auto auto; grid-template-areas: "badge name name del" "step step alarm access"; row-gap: 8px; }
+  .seg-type > .badge { grid-area: badge; }
+  .seg-type > .grow { grid-area: name; }
+  .seg-type > .num-step { grid-area: step; justify-self: start; }
+  .seg-type > label:nth-of-type(1) { grid-area: alarm; }
+  .seg-type > label:nth-of-type(2) { grid-area: access; }
+  .seg-type > .icon-btn { grid-area: del; }
+  .seg-add { flex-wrap: wrap; }
+  .seg-add > .grow { flex-basis: 100%; }
+}

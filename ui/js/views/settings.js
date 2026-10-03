@@ -177,7 +177,7 @@ export function mountSettings(root, ctx) {
             <label class="sw-wrap"><span class="sw-label">Доступ</span>${sw(`segments.${i}.open_access`, sg.open_access, `Доступ на время: ${sg.name}`, 'segAccess', locked && !sg.open_access)}</label>
             <button class="icon-btn interactive" data-segdel="${i}" aria-label="Удалить ${esc(sg.name)}" ${cfg.segments.length <= 1 ? 'disabled' : ''}>${icon('delete')}</button>
           </div>`).join('')}
-          <div class="setting"><div class="grow"><div class="d">Обед, сон, прогулка — неучебное время с обратным отсчётом${info('segments')} Свой тип: «Душ 10 мин». В план дня отрезки добавляются на экране «План».</div></div>
+          <div class="setting seg-add"><div class="grow"><div class="d">Обед, сон, прогулка — неучебное время с обратным отсчётом${info('segments')}. Свой тип: «Душ 10 мин». В план дня отрезки добавляются на экране «План».</div></div>
             <button class="btn tonal interactive" data-segadd ${cfg.segments.length >= 10 ? 'disabled' : ''}>${icon('add')}Добавить тип</button></div>
         </div>
       </section>
@@ -333,7 +333,11 @@ export function mountSettings(root, ctx) {
     } else if (t.dataset.segname !== undefined) {
       const i = Number(t.dataset.segname);
       const name = t.value.trim();
-      if (name) save((c) => { c.segments[i].name = name; });
+      // Two types with one name would merge into one (and the other would vanish).
+      if (cfg.segments.some((x, j) => j !== i && x.name.toLowerCase() === name.toLowerCase())) {
+        snack(`«${name}» уже есть — выбери другое название`);
+        render();
+      } else if (name) save((c) => { c.segments[i].name = name; });
       else render();
     } else if (t.id === 'dayend') {
       const [h, mm] = t.value.split(':').map(Number);

@@ -641,8 +641,12 @@ impl DayState {
     }
 
     /// A planned segment that was not taken yet.
+    /// Not started and not waiting in the queue either.
     pub fn is_open_break(&self, i: usize) -> bool {
-        self.plan.get(i).is_some_and(|b| b.is_break() && b.minutes > 0) && self.progress[i].started_at.is_none()
+        self.plan.get(i).is_some_and(|b| b.is_break() && b.minutes > 0)
+            && self.progress[i].started_at.is_none()
+            && self.progress[i].completed_at.is_none()
+            && !self.segment_queue.iter().any(|q| q.plan_item == Some(i))
     }
 
     /// Planned segments not taken yet that stand before study block `next` in the day's order.
@@ -1315,7 +1319,7 @@ impl DayState {
         } else {
             let mut plan = self.plan.clone();
             for b in &profile.plan {
-                match plan.iter_mut().find(|p| p.name.eq_ignore_ascii_case(&b.name)) {
+                match plan.iter_mut().find(|p| p.name.eq_ignore_ascii_case(&b.name) && p.kind == b.kind) {
                     Some(p) => p.minutes = p.minutes.max(b.minutes),
                     None => plan.push(b.clone()),
                 }

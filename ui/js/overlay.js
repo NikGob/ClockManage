@@ -23,7 +23,7 @@ function render(p) {
   clearTimeout(hideTimer);
   stopBoil();
   const passive = !!p.passive;
-  scrim.className = `scrim ${passive ? 'soft' : 'full'}`;
+  scrim.className = `scrim ${passive ? 'soft' : 'full'}${p.kind === 'wake' ? ' alarm' : ''}`;
   const center = p.kind === 'nope';
   stage.classList.toggle('top', passive && !center);
   requestAnimationFrame(() => scrim.classList.add('show'));
@@ -49,7 +49,7 @@ function render(p) {
   }
 
   stage.innerHTML = `
-    <section class="card ${center ? 'bubble' : passive ? 'passive' : ''}" role="${passive ? 'status' : 'alertdialog'}" aria-labelledby="ov-title">
+    <section class="card ${center ? 'bubble' : passive ? 'passive' : ''}" data-kind="${esc(p.kind)}" role="${passive ? 'status' : 'alertdialog'}" aria-labelledby="ov-title">
       <div class="art ${ART_CLASS[p.kind] || ''}">${doodle(p.kind, center ? 200 : passive ? 112 : 260)}</div>
       <h1 id="ov-title">${esc(p.title)}</h1>
       ${p.text ? `<p class="sub">${esc(p.text)}</p>` : ''}
@@ -61,6 +61,7 @@ function render(p) {
       ${p.preview ? '<p class="preview">Предпросмотр — так будет выглядеть оповещение</p>' : ''}
     </section>`;
   const card = stage.firstElementChild;
+  [...card.children].forEach((el, i) => el.style.setProperty('--i', i));
   requestAnimationFrame(() => card.classList.add('in'));
   stopBoil = play(stage, { extraMs: { await: 3600, break: 1800 }[p.kind] ?? 1200, jitter: p.kind !== 'nope' });
   updateWaiting();

@@ -103,7 +103,7 @@ function snapshot() {
         apk: { available: true, code: 42, name: '0.4.0 (42)', size: 812345 },
         devices: [{ id: 'a1b2c3', name: 'Pixel 8', paired_at: t0 - 86400000, last_seen: Date.now() - 2 * MIN, blocker: true }] },
       blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, pause_access: cfg.pause_access, pause_access_min: 10,
-      emergency_min: 10, lunch_min: 45, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
+      emergency_min: 10, lunch_min: 45, segments: cfg.segments, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
       mini_contrast: cfg.appearance.mini_contrast,
       data_dir: 'C:\\Users\\nik\\AppData\\Roaming\\com.nikgob.clockmanage',
     },

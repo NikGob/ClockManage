@@ -64,6 +64,8 @@ pub struct Shared {
     pub admin: bool,
     pub overlay: Mutex<Option<Value>>,
     pub tray: Mutex<Option<TrayItems>>,
+    /// Monitor rect the overlay was last stretched over (resizing a WebView is slow: only on change).
+    pub overlay_rect: Mutex<Option<(i32, i32, u32, u32)>>,
     pub finish_token: Mutex<Option<FinishToken>>,
     /// Bundled Android APK + apk.json (version), served to paired phones for self-update.
     pub apk_dir: Option<std::path::PathBuf>,
@@ -83,6 +85,8 @@ pub struct Meta {
     pub pause_access_min: u32,
     pub emergency_min: u32,
     pub lunch_min: u32,
+    /// Segment types, so the "Отрезок" picker opens without a round trip.
+    pub segments: Vec<clockmanage_core::config::SegmentType>,
     pub seed: String,
     pub theme_mode: ThemeMode,
     pub variant: SchemeVariant,
@@ -119,6 +123,7 @@ impl Shared {
                 pause_access_min: g.cfg.pause_access_min,
                 emergency_min: g.cfg.emergency_min,
                 lunch_min: g.day.timing.lunch_min,
+                segments: g.cfg.segments.clone(),
                 seed: g.cfg.appearance.seed.clone(),
                 theme_mode: g.cfg.appearance.mode,
                 variant: g.cfg.appearance.variant,
@@ -176,15 +181,22 @@ impl Shared {
         *self.overlay.lock().unwrap() = Some(payload.clone());
         let Some(w) = self.app.get_webview_window("overlay") else { return };
         if let Ok(Some(m)) = w.current_monitor().or_else(|_| w.primary_monitor()) {
-            let _ = w.set_position(PhysicalPosition::new(m.position().x, m.position().y));
-            let _ = w.set_size(PhysicalSize::new(m.size().width, m.size().height));
+            let rect = (m.position().x, m.position().y, m.size().width, m.size().height);
+            let mut last = self.overlay_rect.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != Some(rect) {
+                let _ = w.set_position(PhysicalPosition::new(rect.0, rect.1));
+                let _ = w.set_size(PhysicalSize::new(rect.2, rect.3));
+                *last = Some(rect);
+            }
         }
         // Passive notices never steal focus or clicks from whatever the user is doing.
         let _ = w.set_focusable(!passive);
         let _ = w.set_ignore_cursor_events(passive);
         let _ = w.set_always_on_top(true);
-        let _ = self.app.emit_to("overlay", "overlay", &payload);
+        // Visible first, then the content: a hidden WebView2 holds animation frames back, so
+        // rendering into it first made the card appear late.
         let _ = w.show();
+        let _ = self.app.emit_to("overlay", "overlay", &payload);
         if !passive {
             let _ = w.set_focus();
         }

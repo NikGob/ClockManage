@@ -399,7 +399,7 @@ impl Config {
                 b.normalize();
             }
             plan.retain(|b| b.minutes > 0);
-            plan.truncate(12);
+            plan.truncate(16);
         }
         if self.emergency_phrase.trim().chars().count() < 30 {
             self.emergency_phrase = DEFAULT_PHRASE.into();

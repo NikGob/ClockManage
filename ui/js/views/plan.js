@@ -157,6 +157,18 @@ export function mountPlan(root, ctx) {
       }
     }
     render();
+    // Moved rows slide into their new places instead of jumping (FLIP).
+    if (b.dataset.a === 'up' || b.dataset.a === 'down') {
+      const j = b.dataset.a === 'up' ? i - 1 : i + 1;
+      const a = root.querySelector(`.prow[data-i="${j}"]`);
+      const o = root.querySelector(`.prow[data-i="${i}"]`);
+      if (a && o) {
+        const dy = o.getBoundingClientRect().top - a.getBoundingClientRect().top;
+        a.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,0,0,1)' });
+        o.animate([{ transform: `translateY(${-dy}px)` }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,0,0,1)' });
+        a.animate([{ boxShadow: '0 6px 18px rgb(0 0 0 / .18)', zIndex: 2 }, { boxShadow: 'none', zIndex: 2 }], { duration: 380 });
+      }
+    }
     root.querySelector(`.prow[data-i="${b.dataset.a === 'up' ? i - 1 : b.dataset.a === 'down' ? i + 1 : i}"] [data-a="${b.dataset.a}"]`)?.focus();
   });
   $('rows').addEventListener('input', (e) => {

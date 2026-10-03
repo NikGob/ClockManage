@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private var snap: Snapshot? = null
     private var shownVersion = ""
     private var visible = false
+    private var shownKind = ""
 
     // timer screen views
     private lateinit var status: TextView
@@ -97,8 +98,10 @@ class MainActivity : Activity() {
 
     private fun showUpdate(a: Updater.Available?) {
         updateBox.removeAllViews()
+        val was = updateBox.visibility
         updateBox.visibility = if (a == null) View.GONE else View.VISIBLE
         if (a == null) return
+        if (was != View.VISIBLE) updateBox.riseIn()
         updateBox.addWithMargins(label("Доступна версия ${a.name}", 16f, p.onContainer, bold = true))
         val info = label("С ПК по Wi-Fi, ${"%.1f".format(a.size / 1048576.0)} МБ. Настройки и подключение сохранятся.", 14f, p.onContainer)
         updateBox.addWithMargins(info, top = dp(2))
@@ -263,6 +266,7 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         col.addWithMargins(updateBox, top = dp(12))
+        col.smoothChanges()
 
         val hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -328,6 +332,8 @@ class MainActivity : Activity() {
         shownVersion = ""
         render()
         renderBlocker()
+        // The screen opens in a cascade.
+        (0 until col.childCount).forEach { col.getChildAt(it).riseIn(it * 45L) }
     }
 
     private fun renderBlocker() {
@@ -396,6 +402,17 @@ class MainActivity : Activity() {
         if (e?.kind != "segment") big.setTextColor(p.text)
         title.text = e?.title ?: ""
         sub.text = e?.subtitle ?: ""
+        // Phase changed (work -> break -> waiting…): the timer drops in anew.
+        val kind = (e?.kind ?: "") + (e?.paused ?: false)
+        if (kind != shownKind) {
+            if (shownKind.isNotEmpty()) {
+                big.scaleX = 0.8f; big.scaleY = 0.8f; big.alpha = 0f
+                big.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(420).setInterpolator(android.view.animation.OvershootInterpolator(1.6f)).start()
+                state.alpha = 0f
+                state.animate().alpha(1f).setDuration(300).start()
+            }
+            shownKind = kind
+        }
 
         // Buttons: rebuilt only when what they do changes.
         val wanted = mutableListOf<Triple<String, String, String?>>()
@@ -410,8 +427,12 @@ class MainActivity : Activity() {
         if (actions.tag != sig) {
             actions.tag = sig
             actions.removeAllViews()
-            wanted.forEach { (text, a, expect) ->
-                actions.addView(pill(text, p) { act(a, expect) }.apply { isEnabled = Sync.online; alpha = if (Sync.online) 1f else 0.5f })
+            wanted.forEachIndexed { i, (text, a, expect) ->
+                val b = pill(text, p) { act(a, expect) }.apply { isEnabled = Sync.online }
+                actions.addView(b)
+                b.scaleX = 0.6f; b.scaleY = 0.6f; b.alpha = 0f
+                b.animate().scaleX(1f).scaleY(1f).alpha(if (Sync.online) 1f else 0.5f).setStartDelay(i * 60L).setDuration(380)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(2f)).start()
             }
         }
 
@@ -429,7 +450,15 @@ class MainActivity : Activity() {
             }
             val w = e?.work(i, now) ?: 0L
             meta.text = "${w / Snapshot.MIN} из ${b.minutes} мин" + if (b.done) " · готово" else ""
-            bar.progress = ((w * 1000) / (b.minutes * Snapshot.MIN).coerceAtLeast(1)).toInt().coerceIn(0, 1000)
+            val to = ((w * 1000) / (b.minutes * Snapshot.MIN).coerceAtLeast(1)).toInt().coerceIn(0, 1000)
+            // Big jumps (a fresh list, a block closed) glide; the per-second creep is set directly.
+            if (kotlin.math.abs(to - bar.progress) > 20) {
+                android.animation.ObjectAnimator.ofInt(bar, "progress", bar.progress, to).setDuration(700).apply {
+                    interpolator = android.view.animation.DecelerateInterpolator(2f)
+                }.start()
+            } else {
+                bar.progress = to
+            }
         }
     }
 

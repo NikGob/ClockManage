@@ -165,6 +165,21 @@ pub fn pc_name() -> String {
     std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "ПК".into())
 }
 
+/// `lan_ip`, looked up at most every 30 s (the state goes to the UI every second).
+pub fn lan_ip_cached() -> Option<String> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, Option<String>)>> = Mutex::new(None);
+    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, ip)) = c.as_ref() {
+        if at.elapsed() < std::time::Duration::from_secs(30) {
+            return ip.clone();
+        }
+    }
+    let ip = lan_ip();
+    *c = Some((std::time::Instant::now(), ip.clone()));
+    ip
+}
+
 /// The LAN address of the default interface (no packet is sent: UDP connect only picks a route).
 pub fn lan_ip() -> Option<String> {
     let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;

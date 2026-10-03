@@ -68,12 +68,44 @@ fun Context.pill(text: String, p: Palette, style: String = "filled", onClick: (V
     setPadding(dp(20), 0, dp(20), 0)
     background = RippleDrawable(ColorStateList.valueOf((fg and 0x00FFFFFF) or 0x33000000), rounded(bgc, dp(24).toFloat()), rounded(Color.WHITE, dp(24).toFloat()))
     setOnClickListener(onClick)
+    pressBounce()
+}
+
+/** Press: sink a little; release: spring back with a small overshoot. Never eats the touch. */
+@android.annotation.SuppressLint("ClickableViewAccessibility")
+fun View.pressBounce() {
+    setOnTouchListener { v, e ->
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(90)
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(380)
+                .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+        }
+        false
+    }
+}
+
+/** Children appear, disappear and resize smoothly (the system animates layout changes). */
+fun ViewGroup.smoothChanges() {
+    layoutTransition = android.animation.LayoutTransition().apply {
+        enableTransitionType(android.animation.LayoutTransition.CHANGING)
+        setDuration(260)
+    }
+}
+
+/** A view arrives: rise and fade in, `delay` ms later (cascades on screen open). */
+fun View.riseIn(delay: Long = 0) {
+    alpha = 0f
+    translationY = 24f * resources.displayMetrics.density
+    animate().alpha(1f).translationY(0f).setStartDelay(delay).setDuration(420)
+        .setInterpolator(android.view.animation.PathInterpolator(0.05f, 0.7f, 0.1f, 1f)).start()
 }
 
 fun Context.card(p: Palette): LinearLayout = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
     background = rounded(p.card, dp(24).toFloat())
     setPadding(dp(20), dp(16), dp(20), dp(16))
+    smoothChanges()
 }
 
 fun ViewGroup.addWithMargins(v: View, top: Int = 0, bottom: Int = 0, width: Int = ViewGroup.LayoutParams.MATCH_PARENT): View {

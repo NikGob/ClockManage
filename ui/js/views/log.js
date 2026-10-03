@@ -1,7 +1,7 @@
 import { call, esc, minutes } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { doodle, play } from '../doodles.js';
-import { run, snack, dateLabel, kindLabel } from '../ui.js';
+import { run, snack, dateLabel, kindLabel, countUp } from '../ui.js';
 
 const fmtMin = (m) => minutes(Math.round(m));
 const hmOf = (iso) => (iso && iso.length >= 16 ? iso.slice(11, 16) : '—');
@@ -12,6 +12,7 @@ export function mountLog(root, ctx) {
   let mode = 'days';
   let weekOf = null; // any date of the shown week; null = this week
   let weekTsv = '';
+  let weekTotalShown = null;
   const DAYS_HTML = `<div class="log" id="log">
       <section class="surface days" aria-label="Дни"><div id="days" role="listbox" aria-label="Дни"></div></section>
       <section class="surface detail" id="detail" aria-live="polite"></section>
@@ -95,6 +96,7 @@ export function mountLog(root, ctx) {
 
   const hours = (h) => (h ? String(h).replace('.', ',') : '');
   const shortDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace('.', '');
+  const localIso = (t = new Date()) => `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
   const shift = (iso, d) => {
     const t = new Date(`${iso}T12:00:00`);
     t.setDate(t.getDate() + d);
@@ -106,7 +108,7 @@ export function mountLog(root, ctx) {
     try { r = await call('week_stats', { date: weekOf }); } catch (e) { $('logbody').innerHTML = `<p class="body-l">${esc(e)}</p>`; return; }
     const w = r.week;
     weekTsv = r.tsv;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localIso();
     const head = w.days.map((d, i) => `<th class="r${d === today ? ' is-today' : ''}">${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][i]}<br><span class="muted">${d.slice(8, 10)}</span></th>`).join('');
     const rows = w.subjects.map((s) => `<tr><td>${esc(s.name)}</td>${s.hours.map((h) => `<td class="r tnum">${hours(h)}</td>`).join('')}<td class="r tnum"><b>${hours(s.total)}</b></td></tr>`).join('');
     $('logbody').innerHTML = `<section class="surface week-card">
@@ -119,11 +121,12 @@ export function mountLog(root, ctx) {
       </div>
       ${w.subjects.length ? `<div class="scroll-x"><table class="t wk-t"><thead><tr><th>Предмет</th>${head}<th class="r">Итого</th></tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr><td><b>Итого</b></td>${w.day_totals.map((h) => `<td class="r tnum"><b>${hours(h)}</b></td>`).join('')}<td class="r tnum"><b>${hours(w.total)}</b></td></tr></tfoot></table></div>
+        <tfoot><tr><td><b>Итого</b></td>${w.day_totals.map((h) => `<td class="r tnum"><b>${hours(h)}</b></td>`).join('')}<td class="r tnum"><b id="wk-total">${hours(w.total)}</b></td></tr></tfoot></table></div>
         <p class="body-s muted">Часы для журнала: каждый блок округлён вниз до 0,25 ч, одинаковые предметы за день сложены. Факт за неделю — ${fmtMin(w.actual_min)}. Обед, сон и другие отрезки не входят.</p>`
         : '<p class="body-l muted">За эту неделю учебных часов нет.</p>'}
     </section>`;
     $('logbody').querySelectorAll('[data-week]').forEach((b) => b.querySelector('svg')?.style.setProperty('transform', 'rotate(-90deg)'));
+    if (weekTotalShown !== w.total) { countUp($('wk-total'), w.total, hours); weekTotalShown = w.total; }
   }
 
   function setMode(m) {
@@ -138,7 +141,7 @@ export function mountLog(root, ctx) {
     if (tab) { if (tab.dataset.mode !== mode) setMode(tab.dataset.mode); return; }
     const wk = e.target.closest('[data-week]');
     if (wk) {
-      weekOf = shift(weekOf || new Date().toISOString().slice(0, 10), Number(wk.dataset.week));
+      weekOf = shift(weekOf || localIso(), Number(wk.dataset.week));
       loadWeek();
       return;
     }

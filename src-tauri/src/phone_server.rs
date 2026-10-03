@@ -134,7 +134,7 @@ impl PhoneServer {
             enabled: cfg.phone.enabled,
             running,
             port,
-            address: running.then(crate::system::lan_ip).flatten(),
+            address: running.then(crate::system::lan_ip_cached).flatten(),
             pc_name: crate::system::pc_name(),
             error,
             pin: pin.map(|p| p.code.clone()),

@@ -74,7 +74,12 @@ object Alarms {
         val next = when {
             // A segment: its planned end, then over-time reminders (every 30 s while a nap rings,
             // to hear quickly that "Встал" was pressed on the PC).
-            cur != null && cur.segment -> if (cur.segmentEnd > now) cur.segmentEnd else now + if (cur.alarm) WAKE_RECHECK_MS else OVERRUN_MS
+            // Steps are counted from the planned end, not from "now": re-arming on every sync
+            // must not push the reminder further away.
+            cur != null && cur.segment -> if (cur.segmentEnd > now) cur.segmentEnd else {
+                val step = if (cur.alarm) WAKE_RECHECK_MS else OVERRUN_MS
+                cur.segmentEnd + ((now - cur.segmentEnd) / step + 1) * step
+            }
             else -> snap.timeline.firstOrNull { it.running && it.until!! > now }?.until
         }
         if (next != null) {

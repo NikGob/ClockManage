@@ -3,7 +3,7 @@ html, body { background: transparent !important; overflow: hidden; }
 
 .scrim {
   position: fixed; inset: 0; opacity: 0; pointer-events: none;
-  transition: opacity var(--dur-l1) var(--ease);
+  transition: opacity 200ms var(--ease);
 }
 /* Interactive alarms dim the whole screen so the choice is unmissable. */
 .scrim.full { background: color-mix(in srgb, var(--md-sys-color-surface) 90%, transparent); }
@@ -20,7 +20,10 @@ html, body { background: transparent !important; overflow: hidden; }
   max-width: 720px; pointer-events: auto;
   opacity: 0; transform: translateY(32px) scale(.9);
 }
-.card.in { animation: card-in 700ms var(--spring) forwards, fade-in 320ms var(--ease) both; }
+.card.in { animation: card-in var(--dur-spring) var(--spring-fast) forwards, fade-in 160ms var(--ease) both; }
+/* Contents follow the card in a quick cascade. */
+.card.in > * { animation: rise-in var(--dur-spring) var(--spring-fast) both; animation-delay: calc(var(--i, 0) * 45ms + 40ms); }
+@keyframes rise-in { from { opacity: 0; transform: translateY(14px); } }
 .card.out { animation: card-out 220ms var(--ease-emph-accel) forwards; }
 @keyframes card-in { to { opacity: 1; transform: none; } }
 @keyframes card-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-16px) scale(.96); } }
@@ -76,3 +79,9 @@ html, body { background: transparent !important; overflow: hidden; }
   .card { opacity: 1; transform: none; }
   .locking .shackle { transform: none; }
 }
+/* The nap alarm: the whole screen pulses until "Встал". */
+.scrim.full.alarm { animation: alarm-pulse 1.1s ease-in-out infinite; }
+@keyframes alarm-pulse { 50% { background: color-mix(in srgb, var(--md-sys-color-error-container) 92%, transparent); } }
+.card[data-kind="wake"] h1 { animation: wake-shake 1.1s ease-in-out infinite; }
+@keyframes wake-shake { 0%, 100% { transform: none; } 10% { transform: rotate(-3deg) scale(1.03); } 20% { transform: rotate(3deg) scale(1.03); } 30% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .scrim.full.alarm, .card[data-kind="wake"] h1 { animation: none; } }

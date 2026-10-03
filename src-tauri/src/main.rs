@@ -79,6 +79,7 @@ fn main() {
                 admin: system::is_admin(),
                 overlay: Mutex::new(None),
                 tray: Mutex::new(None),
+                overlay_rect: Mutex::new(None),
                 finish_token: Mutex::new(None),
                 apk_dir: handle.path().resource_dir().ok().map(|d| d.join("resources").join("android")),
             });

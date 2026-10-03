@@ -2,7 +2,7 @@ import { call, mmss, dur, esc } from '../api.js';
 import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
-import { run, snack, menu, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
+import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
 import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog } from './dialogs.js';
 
 export function endLabel(v) {
@@ -352,7 +352,7 @@ export function mountToday(root, ctx) {
     const html = v.blocks.map((b) => {
       if (b.kind === 'break') {
         return `<li class="blk seg ${b.done ? 'done' : ''}"><span class="st">${b.done ? icon('check', 's20') : icon('coffee', 's20')}</span>
-          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} мин · ${b.done ? 'прошёл' : b.started ? 'идёт' : 'отрезок'}</span></li>`;
+          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} мин · ${b.done ? (b.started ? 'прошёл' : 'пропущен') : b.started ? 'идёт' : 'отрезок'}</span></li>`;
       }
       const st = b.done ? icon('check', 's20') : '<span class="dot"></span>';
       const meta = `${Math.floor(b.work_ms / 60000)} из ${b.minutes} мин · ${b.done ? 'готово' : `часть ${Math.min(b.parts_done + 1, b.parts)}/${b.parts}`}`;
@@ -364,7 +364,10 @@ export function mountToday(root, ctx) {
       ol.innerHTML = html;
       ol.dataset.html = html;
       v.blocks.forEach((b, i) => {
-        if (b.done && prevDone[i] === false) ol.children[i]?.classList.add('just-done');
+        if (b.done && prevDone[i] === false) {
+          ol.children[i]?.classList.add('just-done');
+          burst(ol.children[i]?.querySelector('.st'));
+        }
       });
     }
     prevDone = v.blocks.map((b) => b.done);
@@ -433,7 +436,7 @@ export function mountToday(root, ctx) {
         small = true;
         state = v.mode === 'single' ? '' : 'в плане';
         title = v.started ? p.title : (v.study_day ? 'Готов начать?' : 'Выходной');
-        sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} · ${v.blocks.map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
+        sub = v.started ? '' : (v.blocks.length ? `${dur(v.planned_ms)} учёбы · ${v.blocks.filter((b) => b.kind !== 'break').map((b) => b.name).join(' · ')}` : 'Добавь блоки в план');
         if (!v.started && v.mode !== 'single') art = 'idle';
     }
     setArt(art);
@@ -489,8 +492,7 @@ export function mountToday(root, ctx) {
       case 'kind': await pickKind(b); break;
       case 'dayend': await extendDayEnd(b); break;
       case 'segment': {
-        const cfg = await call('get_config');
-        const picked = await segmentDialog(cfg.segments, v.phase.kind === 'segment');
+        const picked = await segmentDialog(last.meta.segments || [], v.phase.kind === 'segment');
         if (picked?.length) snack(picked.map((t) => t.name).join(' → ') + (v.phase.kind === 'segment' ? ' — в очереди' : ' — пошёл отсчёт'));
         break;
       }

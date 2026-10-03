@@ -1,5 +1,5 @@
 import { call, on, installRipples, esc } from './api.js';
-import { snack } from './ui.js';
+import { snack, stagger } from './ui.js';
 import { applyTheme } from './theme.js';
 import { installTooltips, hideTip } from './tooltip.js';
 import { icon } from './icons.js';
@@ -41,6 +41,31 @@ nav.innerHTML = ROUTES.map((r) => `
   </button>`).join('')
 ;
 
+// One shared indicator that slides (and stretches like a drop) between destinations.
+const ind = document.createElement('span');
+ind.className = 'nav-ind';
+nav.prepend(ind);
+let indAt = null;
+function moveIndicator(animate) {
+  const pill = nav.querySelector('[aria-current="page"] .pill');
+  if (!pill) return;
+  const n = nav.getBoundingClientRect();
+  const r = pill.getBoundingClientRect();
+  const to = { x: r.left - n.left, y: r.top - n.top, w: r.width, h: r.height };
+  const css = (b) => ({ transform: `translate(${b.x}px, ${b.y}px)`, width: `${b.w}px`, height: `${b.h}px` });
+  Object.assign(ind.style, css(to));
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (animate && indAt && !reduce) {
+    const a = indAt;
+    // Midway the drop spans both destinations, then snaps onto the new one.
+    const x0 = Math.min(a.x, to.x), y0 = Math.min(a.y, to.y);
+    const mid = { x: x0, y: y0, w: Math.max(a.x + a.w, to.x + to.w) - x0, h: Math.max(a.y + a.h, to.y + to.h) - y0 };
+    ind.animate([css(a), { ...css(mid), offset: 0.4 }, css(to)], { duration: 460, easing: 'cubic-bezier(.2, 0, 0, 1)' });
+  }
+  indAt = to;
+}
+addEventListener('resize', () => moveIndicator(false));
+
 nav.addEventListener('click', (e) => {
   const b = e.target.closest('[data-route]');
   if (b) go(b.dataset.route);
@@ -64,6 +89,7 @@ function go(id) {
     if (b.dataset.route === r.id) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
+  moveIndicator(true);
   title.textContent = r.title;
   hideTip();
   actions.innerHTML = '';
@@ -77,6 +103,10 @@ function go(id) {
   screen = r.mount(view, ctx);
   screen.show?.();
   if (snapshot) screen.update(snapshot);
+  // Contents rise in a cascade; screens that render after a fetch are caught a moment later.
+  stagger(view);
+  setTimeout(() => stagger(view), 120);
+  setTimeout(() => stagger(view), 320);
   try { localStorage.setItem('route', r.id); } catch { /* storage may be unavailable */ }
 }
 

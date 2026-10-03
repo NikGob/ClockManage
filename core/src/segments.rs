@@ -69,7 +69,6 @@ impl DayState {
             q.name = b.name.clone();
             q.plan_item = Some(i);
             self.segment_queue.push(q);
-            self.progress[i].started_at.get_or_insert(0);
         }
     }
 
@@ -151,11 +150,9 @@ impl DayState {
             return Err("В очереди нет такого отрезка.".into());
         }
         let q = self.segment_queue.remove(index);
-        // A planned one goes back to the plan as not taken.
-        if let Some(i) = q.plan_item {
-            if let Some(p) = self.progress.get_mut(i) {
-                p.started_at = None;
-            }
+        // A planned one dropped from the queue is skipped for today, not moved to a later spot.
+        if let Some(p) = q.plan_item.and_then(|i| self.progress.get_mut(i)) {
+            p.completed_at = Some(now);
         }
         self.log(now, "segment_queue", format!("Из очереди убран: {}", q.name));
         Ok(())
@@ -361,6 +358,28 @@ mod tests {
         // not during work
         d.start_next(s0 + 5 * SEC).unwrap();
         assert!(d.start_segments(s0 + 6 * SEC, vec![QueuedSegment::of(&c, "Обед", None)]).is_err());
+    }
+
+    #[test]
+    fn queued_planned_segment_is_not_shown_as_taken() {
+        let mut c = cfg();
+        c.profiles.full.plan = vec![PlanBlock::new("Математика", 45), PlanBlock::brk("Обед", 40), PlanBlock::brk("Сон", 20), PlanBlock::new("Экстернат", 45)];
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.tick(start() + 45 * MIN, &c);
+        assert_eq!(d.segment().unwrap().name, "Обед");
+        // "Сон" waits in the queue: not taken, not open, counted once in the forecast
+        assert!(d.progress[2].started_at.is_none());
+        assert!(!d.is_open_break(2));
+        let f = d.forecast(start() + 45 * MIN, &c);
+        assert_eq!(f.segments_left_ms, 60 * MIN);
+        // dropping it from the queue skips it for today
+        d.drop_queued(start() + 46 * MIN, 0).unwrap();
+        assert!(!d.is_open_break(2));
+        assert!(d.is_block_done(2));
+        assert_eq!(d.forecast(start() + 46 * MIN, &c).segments_left_ms, 39 * MIN);
+        d.end_segment(start() + 85 * MIN).unwrap();
+        assert!(matches!(d.phase, Phase::Await { next: 3, .. }));
     }
 
     #[test]
