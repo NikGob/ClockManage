@@ -6,14 +6,16 @@
 
 let uid = 0;
 
-function frame(inner, { size = 240, label = '' } = {}) {
+// `over` sits above the textured layer: no boil, no filter, so it can move all the time
+// without re-rendering the drawing under it.
+function frame(inner, { size = 240, label = '', over = '' } = {}) {
   const id = `crunch${++uid}`;
   return `<svg class="doodle" viewBox="0 0 240 240" width="${size}" height="${size}" role="img" aria-label="${label}" data-filter="${id}">
   <defs><filter id="${id}" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
     <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="1" seed="1"/>
     <feDisplacementMap in="SourceGraphic" scale="3.2" xChannelSelector="R" yChannelSelector="G"/>
   </filter></defs>
-  <g class="layer">${inner}</g></svg>`;
+  <g class="layer">${inner}</g>${over}</svg>`;
 }
 
 // stroke helper: draw-on path with delay (ms) and duration
@@ -153,7 +155,7 @@ export function hammock(size) {
     const p = (r) => `${(198 + Math.cos(a) * r).toFixed(1)} ${(46 + Math.sin(a) * r).toFixed(1)}`;
     return s(`M${p(24)} L${p(32)}`, 900 + i * 50, 160, 'thin');
   }).join('');
-  const z = (x, y, k, d) => s(`M${x} ${y} L${x + k} ${y} L${x} ${y + k} L${x + k} ${y + k}`, d, 260, 'thin');
+  const z = (i, x, y, k, d) => `<g class="z z${i}">${s(`M${x} ${y} L${x + k} ${y} L${x} ${y + k} L${x + k} ${y + k}`, d, 260, 'thin')}</g>`;
   return frame(`
     ${fill('M180 46 Q180 28 198 28 Q216 28 216 46 Q216 64 198 64 Q180 64 180 46 Z', 'fill-sun', 700)}
     ${s('M178 46 Q178 26 198 26 Q218 26 218 46 Q218 66 198 66 Q178 66 178 46 Z', 600, 500)}
@@ -170,7 +172,7 @@ export function hammock(size) {
       ${s('M74 136 Q120 188 166 136 Q120 158 74 136 Z', 700, 600)}
       ${s('M150 140 Q156 128 164 132', 1000, 200, 'thin')}
     </g>
-    <g class="zzz">${z(120, 98, 8, 1300)}${z(134, 80, 11, 1450)}${z(152, 58, 14, 1600)}</g>`, { size, label: 'Выходной: гамак и солнце' });
+    `, { size, label: 'Выходной: гамак и солнце', over: `<g class="zzz">${z(0, 120, 98, 8, 1300)}${z(1, 134, 80, 11, 1450)}${z(2, 152, 58, 14, 1600)}</g>` });
 }
 
 export function bowl(size) {
@@ -361,7 +363,7 @@ export function wiggle(svg) {
   void svg.getBoundingClientRect();
   svg.classList.add('poke');
   // restart one-shot state animations (steam, pencil, wag…) inside it
-  svg.querySelectorAll('.pencil, .steam, .wag, .wag-arcs, .shake, .waves, .sway, .zzz').forEach((g) => {
+  svg.querySelectorAll('.pencil, .steam, .wag, .wag-arcs, .shake, .waves, .sway, .zzz .z').forEach((g) => {
     g.style.animation = 'none';
     void g.getBoundingClientRect();
     g.style.animation = '';
