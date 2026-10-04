@@ -472,10 +472,11 @@ fn norm_phrase(s: &str) -> String {
 
 impl DayState {
     pub fn new(now: Ts, cfg: &Config) -> Self {
-        let kind = cfg.week[clock::weekday_index(now, cfg.tz_offset_min)];
-        let plan = cfg.profile(kind).plan.clone();
+        let date = clock::local_date(now, cfg.tz_offset_min);
+        let kind = cfg.kind_on(date);
+        let plan = cfg.plan_on(date).clone();
         Self {
-            date: clock::local_date(now, cfg.tz_offset_min),
+            date,
             kind,
             study_day: cfg.profile(kind).block,
             progress: vec![BlockProgress::default(); plan.len()],
@@ -1927,6 +1928,67 @@ mod tests {
         let f = d.forecast(start(), &c);
         assert!(!f.fits);
         assert_eq!(f.margin_ms, (240 - 300) * MIN);
+    }
+
+    fn full_with_breaks() -> Vec<PlanBlock> {
+        vec![
+            PlanBlock::new("Экстернат", 180),
+            PlanBlock::brk("Обед", 45),
+            PlanBlock::brk("Сон", 20),
+            PlanBlock::new("Словацкий", 90),
+            PlanBlock::new("Математика", 60),
+        ]
+    }
+
+    #[test]
+    fn next_days_start_with_their_own_plan() {
+        let mut c = cfg();
+        let sunday = t("2026-10-04T09:00:00Z");
+        let monday = t("2026-10-05T06:00:00Z");
+        let tuesday = t("2026-10-06T06:00:00Z");
+        let sun = DayState::new(sunday, &c);
+        // On Sunday the agent sets Monday's template and a one-off plan for Tuesday.
+        c.profiles.full.plan = full_with_breaks();
+        let tue = NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+        c.plan_overrides.insert(tue, vec![PlanBlock::new("Словацкий", 120)]);
+        let c: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(c.plan_overrides[&tue], vec![PlanBlock::new("Словацкий", 120)]);
+        // Sunday is untouched: still a day off with the day-off template.
+        assert_eq!((sun.kind, sun.plan.len()), (DayKind::Off, 0));
+        assert!(c.profile(DayKind::Off).plan.is_empty());
+        let mon = DayState::new(monday, &c);
+        assert_eq!(mon.kind, DayKind::Full);
+        assert_eq!(mon.plan, full_with_breaks());
+        assert_eq!(mon.progress.len(), 5);
+        let mut c = c;
+        assert!(!c.drop_overrides_through(mon.date));
+        let d = DayState::new(tuesday, &c);
+        assert_eq!((d.kind, d.plan.clone()), (DayKind::Full, vec![PlanBlock::new("Словацкий", 120)]));
+        assert!(c.drop_overrides_through(d.date));
+        assert!(c.plan_overrides.is_empty());
+    }
+
+    #[test]
+    fn late_start_forecast_shows_the_overrun_at_once() {
+        let mut c = cfg();
+        c.profiles.full.plan = full_with_breaks();
+        // Work 330 + breaks 70 (5 short, 1 between) + lunch and nap 65 = 7 h 45 min; ends 22:00.
+        let late = t("2026-09-28T14:00:00Z"); // 17:00 MSK
+        let mut d = DayState::new(late, &c);
+        let f = d.forecast(late, &c);
+        assert_eq!((f.work_left_ms, f.breaks_left_ms, f.segments_left_ms), (330 * MIN, 70 * MIN, 65 * MIN));
+        assert!(!f.fits);
+        assert_eq!(f.margin_ms, -165 * MIN);
+        d.start_day(late, &c).unwrap();
+        let f = d.forecast(late, &c);
+        assert!(!f.fits);
+        assert_eq!(f.margin_ms, -165 * MIN);
+        // The same plan started at 13:00 fits with 75 min to spare.
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        let f = d.forecast(start(), &c);
+        assert!(f.fits);
+        assert_eq!(f.margin_ms, 75 * MIN);
     }
 
     #[test]

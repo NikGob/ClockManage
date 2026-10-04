@@ -4,6 +4,7 @@
 
 use serde_json::{json, Value};
 
+use crate::config::{DayKind, WEEKDAYS};
 use crate::day::PlanBlock;
 
 pub const SERVER_NAME: &str = "clockmanage";
@@ -14,13 +15,47 @@ pub trait McpHost {
     fn day_stats(&self, date: Option<&str>) -> Result<Value, String>;
     /// Journal hours of the week containing `date` (default: this week).
     fn week_stats(&self, date: Option<&str>) -> Result<Value, String>;
-    fn get_plan(&self) -> Value;
-    fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String>;
+    /// Today's plan, the templates and the week; with `date` also the plan of that day.
+    fn get_plan(&self, date: Option<&str>) -> Result<Value, String>;
+    /// `date` None (or today) = today's plan; a later date = the plan that day starts with.
+    fn set_plan(&self, req: PlanRequest) -> Result<Value, String>;
+    /// Template of a profile, any day.
+    fn set_template(&self, profile: DayKind, plan: Vec<PlanBlock>) -> Result<Value, String>;
+    /// Profile of some weekdays (0 = Monday).
+    fn set_week_schedule(&self, days: Vec<(usize, DayKind)>) -> Result<Value, String>;
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String>;
     /// Without a token: preview + one-time token. With the token: close the block.
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String>;
     /// End-of-block line; `name` None = the latest closed block.
     fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String>;
+}
+
+/// Arguments of `set_plan`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanRequest {
+    pub plan: Vec<PlanBlock>,
+    pub save_as_template: bool,
+    /// YYYY-MM-DD; None = today.
+    pub date: Option<String>,
+    /// Drop the plan set ahead for `date`: that day starts with its profile's template again.
+    pub use_template: bool,
+}
+
+fn plan_item_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string", "description": "Предмет, например «Математика», или отрезок («Обед», «Сон»)" },
+            "minutes": { "type": "integer", "minimum": 1 },
+            "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" },
+            "type": { "type": "string", "enum": ["study", "break"], "description": "break — неучебный отрезок (обед, сон, прогулка); по умолчанию study" }
+        },
+        "required": ["name"]
+    })
+}
+
+fn profile_schema() -> Value {
+    json!({ "type": "string", "enum": ["full", "light", "off"] })
 }
 
 fn tools() -> Value {
@@ -57,34 +92,64 @@ fn tools() -> Value {
         {
             "name": "get_plan",
             "title": "План дня",
-            "description": "План сегодняшнего дня по порядку (учебные блоки и неучебные отрезки с type: \"break\"), шаблон этого типа дня, конец дня на сегодня (day_end) и из шаблона (day_end_default), типы отрезков из настроек (segment_types: name, minutes, alarm).",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "description": "План сегодняшнего дня по порядку (today: учебные блоки и неучебные отрезки с type: \"break\"), профиль сегодняшнего дня (profile) и его шаблон (template), конец дня на сегодня (day_end) и из настроек (day_end_default), типы отрезков (segment_types: name, minutes, alarm). Ещё: templates — шаблоны всех профилей (full/light/off: plan и blocking — включается ли блокировка); week — профиль каждого дня недели (mon…sun); upcoming — следующие 7 дней: date, weekday, profile, plan и source (\"date\" — план задан на эту дату через set_plan с date, \"template\" — шаблон профиля). С date — ещё day: план и профиль этого дня.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "date": { "type": "string", "description": "YYYY-MM-DD — какой день показать в day (сегодня или позже)" } },
+                "additionalProperties": false
+            },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "set_plan",
             "title": "Задать план дня",
-            "description": "Заменяет план сегодняшнего дня списком пунктов по порядку дня (сопоставляются со старыми по имени и типу). Учебный блок: {name, minutes|hours}. Неучебный отрезок (обед, сон, прогулка…): {name, minutes, type: \"break\"} — стоит на своём месте: когда закрывается блок перед ним, вместо перерыва между блоками запускается этот отрезок с обратным отсчётом (для «Сон» в конце — будильник). Отрезки не входят в учебные часы и journal_hours, но учитываются в plan_forecast. Можно добавлять, удлинять, урезать и удалять ещё не начатое. Начатый блок (и уже прошедший отрезок) нельзя удалить или переименовать, а пока действует блокировка начатый блок нельзя урезать меньше отработанного. Отработанное время не стирается. В ответе changes — что изменилось.",
+            "description": "Без date — заменяет план сегодняшнего дня списком пунктов по порядку дня (сопоставляются со старыми по имени и типу). Учебный блок: {name, minutes|hours}. Неучебный отрезок (обед, сон, прогулка…): {name, minutes, type: \"break\"} — стоит на своём месте: когда закрывается блок перед ним, вместо перерыва между блоками запускается этот отрезок с обратным отсчётом (для «Сон» в конце — будильник). Отрезки не входят в учебные часы и journal_hours, но учитываются в plan_forecast. Можно добавлять, удлинять, урезать и удалять ещё не начатое. Начатый блок (и уже прошедший отрезок) нельзя удалить или переименовать, а пока действует блокировка начатый блок нельзя урезать меньше отработанного. Отработанное время не стирается. В ответе changes — что изменилось. С date позже сегодняшнего — план только на тот день: он начнётся с этого плана вместо шаблона своего профиля, сегодняшний план и шаблоны не меняются (до 60 дней вперёд; профиль дня — по расписанию недели, см. get_plan → week). use_template: true с date — убрать план, заданный на эту дату (день начнётся с шаблона).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "blocks": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": { "type": "string", "description": "Предмет, например «Математика»" },
-                                "minutes": { "type": "integer", "minimum": 1 },
-                                "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" },
-                                "type": { "type": "string", "enum": ["study", "break"], "description": "break — неучебный отрезок (обед, сон, прогулка); по умолчанию study" }
-                            },
-                            "required": ["name"]
-                        }
-                    },
-                    "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном профиля сегодняшнего дня (Полный/Лёгкий/Выходной)" }
+                    "blocks": { "type": "array", "minItems": 1, "maxItems": 16, "items": plan_item_schema() },
+                    "date": { "type": "string", "description": "YYYY-MM-DD; по умолчанию сегодня. Позже сегодняшнего — план на тот день" },
+                    "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном профиля этого дня (сегодняшнего или дня из date): Полный/Лёгкий/Выходной" },
+                    "use_template": { "type": "boolean", "description": "Только с date: убрать план, заданный на эту дату; blocks тогда не нужен" }
                 },
-                "required": ["blocks"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_template",
+            "title": "Задать шаблон профиля",
+            "description": "Заменяет шаблон профиля дня — план, с которого начинается каждый день этого профиля. В любой день и даже во время учёбы: начатый сегодняшний день не меняется. Если сегодня этот же профиль, день ещё не начат и его план совпадал со старым шаблоном, сегодняшний план тоже станет новым (как на экране «План»; в ответе today_plan_updated). Даты, для которых план задан отдельно (set_plan с date), начнутся со своего плана — они в ответе в overridden_dates. Формат blocks тот же, что в set_plan, включая отрезки type: \"break\"; пустой массив — пустой шаблон.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "string", "enum": ["full", "light", "off"], "description": "full — Полный, light — Лёгкий, off — Выходной" },
+                    "blocks": { "type": "array", "maxItems": 16, "items": plan_item_schema() }
+                },
+                "required": ["profile", "blocks"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_week_schedule",
+            "title": "Профили дней недели",
+            "description": "Какой профиль у дней недели (full — Полный, light — Лёгкий, off — Выходной). Меняются только перечисленные дни. Текущее расписание — get_plan → week. Если меняется сегодняшний день недели, а день ещё не начат, сегодня тоже переключается на новый профиль и его шаблон; начатый день не меняется. В ответе week — расписание целиком.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "object",
+                        "description": "Например {\"mon\": \"full\", \"sat\": \"light\"}",
+                        "properties": {
+                            "mon": profile_schema(), "tue": profile_schema(), "wed": profile_schema(), "thu": profile_schema(),
+                            "fri": profile_schema(), "sat": profile_schema(), "sun": profile_schema()
+                        },
+                        "additionalProperties": false,
+                        "minProperties": 1
+                    }
+                },
+                "required": ["days"],
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
@@ -155,8 +220,11 @@ fn tool_result(r: Result<Value, String>) -> Value {
     }
 }
 
-fn parse_plan(args: &Value) -> Result<(Vec<PlanBlock>, bool), String> {
+fn parse_blocks(args: &Value) -> Result<Vec<PlanBlock>, String> {
     let blocks = args.get("blocks").and_then(Value::as_array).ok_or("Нужен массив blocks.")?;
+    if blocks.len() > 16 {
+        return Err("Не больше 16 пунктов плана в день.".into());
+    }
     let mut plan = vec![];
     for b in blocks {
         let name = b.get("name").and_then(Value::as_str).ok_or("У блока нет name.")?;
@@ -179,8 +247,42 @@ fn parse_plan(args: &Value) -> Result<(Vec<PlanBlock>, bool), String> {
         let m = minutes.round() as u32;
         plan.push(if is_break { PlanBlock::brk(name, m) } else { PlanBlock::new(name, m) });
     }
-    let save = args.get("save_as_template").and_then(Value::as_bool).unwrap_or(false);
-    Ok((plan, save))
+    Ok(plan)
+}
+
+fn parse_plan(args: &Value) -> Result<PlanRequest, String> {
+    let flag = |k: &str| args.get(k).and_then(Value::as_bool).unwrap_or(false);
+    let date = args.get("date").and_then(Value::as_str).map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
+    let use_template = flag("use_template");
+    if use_template && date.is_none() {
+        return Err("use_template работает только с date: какой день вернуть к шаблону.".into());
+    }
+    let plan = if use_template { vec![] } else { parse_blocks(args)? };
+    if plan.is_empty() && !use_template {
+        return Err("В плане нужен хотя бы один пункт.".into());
+    }
+    Ok(PlanRequest { plan, save_as_template: flag("save_as_template") && !use_template, date, use_template })
+}
+
+fn parse_template(args: &Value) -> Result<(DayKind, Vec<PlanBlock>), String> {
+    let p = args.get("profile").and_then(Value::as_str).ok_or("Нужен profile: full, light или off.")?;
+    let kind = DayKind::from_key(p).ok_or(format!("profile бывает full, light или off, а не «{p}»."))?;
+    Ok((kind, parse_blocks(args)?))
+}
+
+fn parse_week(args: &Value) -> Result<Vec<(usize, DayKind)>, String> {
+    let days = args.get("days").and_then(Value::as_object).ok_or("Нужен объект days, например {\"mon\": \"full\"}.")?;
+    let mut out = vec![];
+    for (k, v) in days {
+        let i = WEEKDAYS.iter().position(|d| d == k).ok_or(format!("День недели — mon…sun, а не «{k}»."))?;
+        let p = v.as_str().unwrap_or("");
+        let kind = DayKind::from_key(p).ok_or(format!("{k}: профиль бывает full, light или off, а не «{p}»."))?;
+        out.push((i, kind));
+    }
+    if out.is_empty() {
+        return Err("В days нет ни одного дня.".into());
+    }
+    Ok(out)
 }
 
 fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
@@ -204,7 +306,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах). set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. get_plan — план на сегодня, шаблоны всех профилей, расписание недели и планы следующих 7 дней. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах); с date — план на будущий день, сегодняшний не трогается. set_template — шаблон любого профиля (full/light/off). set_week_schedule — какой профиль у дней недели. set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
                 }),
             )
         }
@@ -216,9 +318,11 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
             let res = match name {
                 "get_session_state" => Ok(host.session_state()),
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
-                "get_plan" => Ok(host.get_plan()),
+                "get_plan" => host.get_plan(args.get("date").and_then(Value::as_str)),
                 "get_week_stats" => host.week_stats(args.get("date").and_then(Value::as_str)),
-                "set_plan" => parse_plan(&args).and_then(|(p, s)| host.set_plan(p, s)),
+                "set_plan" => parse_plan(&args).and_then(|r| host.set_plan(r)),
+                "set_template" => parse_template(&args).and_then(|(k, p)| host.set_template(k, p)),
+                "set_week_schedule" => parse_week(&args).and_then(|d| host.set_week_schedule(d)),
                 "set_block_note" => match args.get("note").and_then(Value::as_str) {
                     Some(n) => host.set_block_note(args.get("name").and_then(Value::as_str), n),
                     None => Err("Нужен note.".into()),
@@ -258,7 +362,7 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    struct Fake(RefCell<Vec<PlanBlock>>);
+    struct Fake(RefCell<Vec<PlanBlock>>, RefCell<Vec<Value>>);
     impl McpHost for Fake {
         fn session_state(&self) -> Value {
             json!({"phase": "work"})
@@ -269,11 +373,20 @@ mod tests {
         fn week_stats(&self, d: Option<&str>) -> Result<Value, String> {
             Ok(json!({ "week_of": d }))
         }
-        fn get_plan(&self) -> Value {
-            json!(*self.0.borrow())
+        fn get_plan(&self, d: Option<&str>) -> Result<Value, String> {
+            Ok(json!({ "today": *self.0.borrow(), "date": d }))
         }
-        fn set_plan(&self, p: Vec<PlanBlock>, _: bool) -> Result<Value, String> {
-            *self.0.borrow_mut() = p;
+        fn set_plan(&self, r: PlanRequest) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "date": r.date, "use_template": r.use_template, "save": r.save_as_template }));
+            *self.0.borrow_mut() = r.plan;
+            Ok(json!({"ok": true}))
+        }
+        fn set_template(&self, k: DayKind, p: Vec<PlanBlock>) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "template": k, "plan": p }));
+            Ok(json!({"ok": true}))
+        }
+        fn set_week_schedule(&self, d: Vec<(usize, DayKind)>) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "week": d }));
             Ok(json!({"ok": true}))
         }
         fn set_day_end(&self, t: &str, r: Option<&str>) -> Result<Value, String> {
@@ -292,7 +405,7 @@ mod tests {
 
     #[test]
     fn initialize_and_call() {
-        let h = Fake(RefCell::new(vec![]));
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
         let r = handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#, &h).unwrap();
         assert!(r.contains("2025-03-26"));
         assert!(handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, &h).is_none());
@@ -328,5 +441,54 @@ mod tests {
         assert!(r.contains("needs_confirmation") && r.contains("Математика"));
         let r = handle(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"finish_block","arguments":{"confirm_token":"abc"}}}"#, &h).unwrap();
         assert!(r.contains("\"isError\":false") && r.contains("abc"));
+    }
+
+    fn call(h: &Fake, name: &str, args: Value) -> Value {
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
+        let r: Value = serde_json::from_str(&handle(&body.to_string(), h).unwrap()).unwrap();
+        r["result"].clone()
+    }
+
+    #[test]
+    fn plans_for_other_days() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &h).unwrap();
+        assert!(r.contains("set_template") && r.contains("set_week_schedule"));
+
+        // A plan for Monday, from Sunday.
+        let r = call(&h, "set_plan", json!({ "date": "2026-10-05", "blocks": [{ "name": "Экстернат", "minutes": 180 }] }));
+        assert_eq!(r["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap()["date"], "2026-10-05");
+        // use_template needs a date; with it blocks are not needed.
+        assert_eq!(call(&h, "set_plan", json!({ "use_template": true }))["isError"], true);
+        assert_eq!(call(&h, "set_plan", json!({ "date": "2026-10-05", "use_template": true }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap()["use_template"], true);
+        assert_eq!(call(&h, "set_plan", json!({ "blocks": [] }))["isError"], true);
+
+        // The template of any profile, breaks included.
+        let blocks = json!([
+            { "name": "Экстернат", "minutes": 180 },
+            { "name": "Обед", "minutes": 45, "type": "break" },
+            { "name": "Сон", "minutes": 20, "type": "break" },
+            { "name": "Словацкий", "minutes": 90 },
+            { "name": "Математика", "minutes": 60 }
+        ]);
+        let r = call(&h, "set_template", json!({ "profile": "full", "blocks": blocks }));
+        assert_eq!(r["isError"], false);
+        let last = h.1.borrow().last().unwrap().clone();
+        assert_eq!(last["template"], "full");
+        assert_eq!(last["plan"][1]["type"], "break");
+        assert_eq!(call(&h, "set_template", json!({ "profile": "off", "blocks": [] }))["isError"], false);
+        assert_eq!(call(&h, "set_template", json!({ "profile": "weekend", "blocks": [] }))["isError"], true);
+
+        // The week schedule: only the listed days.
+        let r = call(&h, "set_week_schedule", json!({ "days": { "mon": "full", "sun": "light" } }));
+        assert_eq!(r["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap()["week"], json!([[0, "full"], [6, "light"]]));
+        assert_eq!(call(&h, "set_week_schedule", json!({ "days": { "monday": "full" } }))["isError"], true);
+        assert_eq!(call(&h, "set_week_schedule", json!({ "days": {} }))["isError"], true);
+
+        let r = call(&h, "get_plan", json!({ "date": "2026-10-05" }));
+        assert_eq!(r["structuredContent"]["date"], "2026-10-05");
     }
 }

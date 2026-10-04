@@ -4,11 +4,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
-use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode};
+use clockmanage_core::chrono::{self, Datelike, NaiveDate};
+use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
 use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, Event, Forecast, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
-use clockmanage_core::{mcp::McpHost, Config, DayState};
+use clockmanage_core::mcp::{McpHost, PlanRequest};
+use clockmanage_core::{Config, DayState};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::menu::MenuItem;
@@ -522,6 +524,9 @@ fn ticker(shared: Arc<Shared>) {
                 g.day.finalize(now);
                 shared.store.save_day(&g.day);
                 g.day = DayState::new(now, &g.cfg);
+                if g.cfg.drop_overrides_through(g.day.date) {
+                    shared.store.save_config(&g.cfg);
+                }
                 g.force_emit = true;
             }
             let events = g.day.tick(now, &g.cfg);
@@ -742,9 +747,11 @@ impl McpHost for McpBridge {
         Ok(v)
     }
 
-    fn get_plan(&self) -> Value {
+    fn get_plan(&self, date: Option<&str>) -> Result<Value, String> {
         let g = self.0.lock();
-        json!({
+        let today = g.day.date;
+        let mut v = json!({
+            "date": today.format("%Y-%m-%d").to_string(),
             "today": g.day.plan,
             "profile": g.day.kind,
             "template": g.cfg.profile(g.day.kind).plan,
@@ -752,11 +759,88 @@ impl McpHost for McpBridge {
             "day_end": fmt_day_min(g.day.day_end(&g.cfg)),
             "day_end_default": clockmanage_core::config::fmt_hm(g.cfg.day_end_min),
             "segment_types": g.cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes, "alarm": t.alarm })).collect::<Vec<_>>(),
-        })
+            "templates": templates_json(&g.cfg),
+            "week": week_json(&g.cfg),
+            "upcoming": (1..=7).map(|n| day_ahead_json(&g.cfg, today + chrono::Days::new(n))).collect::<Vec<_>>(),
+        });
+        if let Some(d) = date {
+            let d = parse_plan_date(d)?;
+            v["day"] = if d == today {
+                json!({ "date": d.format("%Y-%m-%d").to_string(), "weekday": WEEKDAYS[g.day.weekday()], "profile": g.day.kind, "plan": g.day.plan, "source": "today" })
+            } else if d < today {
+                return Err(format!("{d} уже прошёл — план прошлых дней смотри в get_today_stats с date."));
+            } else {
+                day_ahead_json(&g.cfg, d)
+            };
+        }
+        Ok(v)
     }
 
-    fn set_plan(&self, plan: Vec<PlanBlock>, save_as_template: bool) -> Result<Value, String> {
-        apply_plan(&self.0, plan, save_as_template, "mcp")
+    fn set_plan(&self, req: PlanRequest) -> Result<Value, String> {
+        let (today, template) = {
+            let g = self.0.lock();
+            (g.day.date, g.cfg.profile(g.day.kind).plan.clone())
+        };
+        match req.date.as_deref().map(parse_plan_date).transpose()? {
+            Some(d) if d != today => apply_plan_ahead(&self.0, d, req, "mcp"),
+            // Today back to its template: a plain set_plan, with the usual rules for started blocks.
+            Some(_) if req.use_template => apply_plan(&self.0, template, false, "mcp"),
+            _ => apply_plan(&self.0, req.plan, req.save_as_template, "mcp"),
+        }
+    }
+
+    fn set_template(&self, profile: DayKind, plan: Vec<PlanBlock>) -> Result<Value, String> {
+        let (mut next, before) = {
+            let g = self.0.lock();
+            (g.cfg.clone(), g.day.plan.clone())
+        };
+        next.profiles.get_mut(profile).plan = plan;
+        let saved = apply_config(&self.0, next)?;
+        let today_updated = self.0.lock().day.plan != before;
+        let overridden: Vec<String> = saved
+            .plan_overrides
+            .keys()
+            .filter(|d| saved.kind_on(**d) == profile)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .collect();
+        let days: Vec<&str> = (0..7).filter(|&i| saved.week[i] == profile).map(|i| WEEKDAYS[i]).collect();
+        self.0.notice(&format!("Агент изменил шаблон «{}»", profile.label()), &plan_line(&saved.profile(profile).plan));
+        Ok(json!({
+            "ok": true,
+            "profile": profile,
+            "template": saved.profile(profile).plan,
+            "weekdays": days,
+            "today_plan_updated": today_updated,
+            "overridden_dates": overridden,
+            "upcoming": upcoming_json(&self.0),
+        }))
+    }
+
+    fn set_week_schedule(&self, days: Vec<(usize, DayKind)>) -> Result<Value, String> {
+        let (mut next, kind_before) = {
+            let g = self.0.lock();
+            (g.cfg.clone(), g.day.kind)
+        };
+        let mut changed = vec![];
+        for (i, k) in days {
+            if next.week[i] != k {
+                changed.push(format!("{} → {}", WEEKDAYS[i], k.label()));
+                next.week[i] = k;
+            }
+        }
+        let saved = apply_config(&self.0, next)?;
+        let kind_now = self.0.lock().day.kind;
+        if !changed.is_empty() {
+            self.0.notice("Агент изменил неделю", &changed.join(", "));
+        }
+        Ok(json!({
+            "ok": true,
+            "changed": changed,
+            "week": week_json(&saved),
+            "today_profile": kind_now,
+            "today_profile_changed": kind_now != kind_before,
+            "upcoming": upcoming_json(&self.0),
+        }))
     }
 
     fn set_day_end(&self, time: &str, reason: Option<&str>) -> Result<Value, String> {
@@ -866,6 +950,101 @@ fn forecast_json(f: &Forecast, tz: i32) -> Value {
     })
 }
 
+fn templates_json(cfg: &Config) -> Value {
+    let mut v = json!({});
+    for k in DayKind::ALL {
+        v[k.key()] = json!({ "label": k.label(), "plan": cfg.profile(k).plan, "blocking": cfg.profile(k).block });
+    }
+    v
+}
+
+fn week_json(cfg: &Config) -> Value {
+    let mut v = json!({});
+    for (i, d) in WEEKDAYS.iter().enumerate() {
+        v[*d] = json!(cfg.week[i]);
+    }
+    v
+}
+
+/// What a day after today starts with.
+fn day_ahead_json(cfg: &Config, d: NaiveDate) -> Value {
+    json!({
+        "date": d.format("%Y-%m-%d").to_string(),
+        "weekday": WEEKDAYS[d.weekday().num_days_from_monday() as usize],
+        "profile": cfg.kind_on(d),
+        "plan": cfg.plan_on(d),
+        "source": if cfg.plan_overrides.contains_key(&d) { "date" } else { "template" },
+    })
+}
+
+fn upcoming_json(shared: &Shared) -> Vec<Value> {
+    let g = shared.lock();
+    (1..=7).map(|n| day_ahead_json(&g.cfg, g.day.date + chrono::Days::new(n))).collect()
+}
+
+fn parse_plan_date(s: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| format!("Дата — YYYY-MM-DD, а не «{s}»."))
+}
+
+fn plan_line(plan: &[PlanBlock]) -> String {
+    if plan.is_empty() {
+        return "пусто".into();
+    }
+    plan.iter().map(|b| format!("{} {}", b.name, b.minutes)).collect::<Vec<_>>().join(" · ")
+}
+
+/// A plan for a later day (MCP `set_plan` with `date`): today's plan stays as it is.
+pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest, by: &str) -> Result<Value, String> {
+    let (cfg, today, before) = {
+        let g = shared.lock();
+        (g.cfg.clone(), g.day.date, g.day.plan.clone())
+    };
+    if date < today {
+        return Err(format!("{date} уже прошёл — план можно задать на сегодня или позже."));
+    }
+    if (date - today).num_days() > MAX_PLAN_AHEAD_DAYS {
+        return Err(format!("План можно задать не дальше чем на {MAX_PLAN_AHEAD_DAYS} дней вперёд."));
+    }
+    let kind = cfg.kind_on(date);
+    let mut plan = req.plan;
+    for b in &mut plan {
+        b.normalize();
+    }
+    if req.save_as_template {
+        // Through the settings path: today follows an untouched template of the same profile.
+        let mut next = cfg;
+        next.profiles.get_mut(kind).plan = plan.clone();
+        apply_config(shared, next)?;
+    }
+    let (plan, source, today_changed) = shared.mutate(|g, _| {
+        if req.use_template {
+            g.cfg.plan_overrides.remove(&date);
+        } else {
+            g.cfg.plan_overrides.insert(date, plan);
+        }
+        shared.store.save_config(&g.cfg);
+        let source = if g.cfg.plan_overrides.contains_key(&date) { "date" } else { "template" };
+        Ok((g.cfg.plan_on(date).clone(), source, g.day.plan != before))
+    })?;
+    let _ = shared.app.emit("config", ());
+    if by == "mcp" {
+        let label = date.format("%d.%m");
+        let text = if req.use_template { format!("{label}: снова шаблон «{}»", kind.label()) } else { format!("{label}: {}", plan_line(&plan)) };
+        shared.notice("Агент задал план на другой день", &text);
+    }
+    Ok(json!({
+        "ok": true,
+        "date": date.format("%Y-%m-%d").to_string(),
+        "weekday": WEEKDAYS[date.weekday().num_days_from_monday() as usize],
+        "profile": kind,
+        "plan": plan,
+        "source": source,
+        "saved_as_template": req.save_as_template,
+        "today_plan_changed": today_changed,
+        "note": format!("День {date} начнётся с этого плана (профиль «{}»).{}", kind.label(), if today_changed { "" } else { " Сегодняшний план не менялся." }),
+    }))
+}
+
 /// Set today's plan from the UI (`by = "ui"`) or the agent (`"mcp"`).
 pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, save_as_template: bool, by: &str) -> Result<Value, String> {
     let (res, changes) = shared.mutate(|g, now| {
@@ -942,13 +1121,20 @@ pub fn get_config(s: S) -> Config {
 }
 
 #[tauri::command]
-pub fn save_config(s: S, mut cfg: Config) -> Result<Config, String> {
+pub fn save_config(s: S, cfg: Config) -> Result<Config, String> {
+    apply_config(s.inner(), cfg)
+}
+
+/// Save a whole config (settings screen, templates, the agent's templates and week) under the
+/// lock rules; today follows a re-assigned weekday or an untouched template.
+pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, String> {
     cfg.normalize();
-    let shared = s.inner().clone();
+    let shared = shared.clone();
     let (autostart_changed, mcp_changed, phone_changed, saved) = shared.mutate(|g, now| {
         // Paired phones are managed by pairing / "forget" only: a settings screen opened before
-        // a phone was paired must not drop its token.
+        // a phone was paired must not drop its token. Plans set ahead for dates come from MCP.
         cfg.phone.devices = g.cfg.phone.devices.clone();
+        cfg.plan_overrides = g.cfg.plan_overrides.clone();
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
         let autostart_changed = cfg.autostart != g.cfg.autostart;

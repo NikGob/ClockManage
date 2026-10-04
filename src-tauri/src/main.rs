@@ -58,6 +58,9 @@ fn main() {
             let now = clock::now_ts();
             let day = app::load_today(&store, &cfg, now);
             store.save_day(&day);
+            if cfg.drop_overrides_through(day.date) {
+                store.save_config(&cfg);
+            }
             let autostart = cfg.autostart;
             let (mcp_enabled, mcp_port) = (cfg.mcp_enabled, cfg.mcp_port);
 
