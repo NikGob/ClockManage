@@ -44,6 +44,12 @@ class TimerWidget : AppWidgetProvider() {
                 v.setChronometer(R.id.w_chrono, SystemClock.elapsedRealtime() + leftMs, null, running)
                 v.setChronometerCountDown(R.id.w_chrono, true)
             }
+            fun countup(elapsedMs: Long) {
+                v.setViewVisibility(R.id.w_chrono, View.VISIBLE)
+                v.setViewVisibility(R.id.w_big, View.GONE)
+                v.setChronometer(R.id.w_chrono, SystemClock.elapsedRealtime() - elapsedMs, null, true)
+                v.setChronometerCountDown(R.id.w_chrono, false)
+            }
             fun big(text: String) {
                 v.setViewVisibility(R.id.w_chrono, View.GONE)
                 v.setViewVisibility(R.id.w_big, View.VISIBLE)
@@ -58,6 +64,7 @@ class TimerWidget : AppWidgetProvider() {
                     when {
                         e.paused -> countdown(e.remaining(now), false)
                         e.running -> countdown(e.until!! - now, true)
+                        e.segment && e.stopwatch -> countup(e.elapsed(now))
                         e.segment -> countdown(e.segmentEnd - now, true) // negative after the planned end
                         e.kind == "await" -> big("Пора")
                         e.kind == "done" -> big("✓")
@@ -68,6 +75,8 @@ class TimerWidget : AppWidgetProvider() {
                         e.paused -> "пауза"
                         e.kind == "work" -> "работа"
                         e.kind == "break" || e.kind == "lunch_break" -> "перерыв"
+                        e.segment && e.prep -> "подготовка ко сну"
+                        e.segment && e.stopwatch -> "без времени"
                         e.segment -> if (e.alarm) "сон" else "отрезок"
                         e.kind == "await" -> "перерыв окончен"
                         e.kind == "done" -> "день закрыт"

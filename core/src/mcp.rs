@@ -39,6 +39,8 @@ pub struct PlanRequest {
     pub date: Option<String>,
     /// Drop the plan set ahead for `date`: that day starts with its profile's template again.
     pub use_template: bool,
+    /// Per plan item: close this started block as it is (today only).
+    pub close: Vec<bool>,
 }
 
 fn plan_item_schema() -> Value {
@@ -54,6 +56,16 @@ fn plan_item_schema() -> Value {
     })
 }
 
+/// A plan item of today's `set_plan`: also "close as is".
+fn today_item_schema() -> Value {
+    let mut s = plan_item_schema();
+    s["properties"]["close"] = json!({
+        "type": "boolean",
+        "description": "Только сегодня и только для начатого и ещё не закрытого учебного блока: закрыть его как есть — план блока станет фактически отработанным (целые минуты, вниз), остаток снимается из плана, день идёт дальше как после конца блока. minutes тогда не нужны. Если отработано меньше минуты — блок просто удаляется."
+    });
+    s
+}
+
 fn profile_schema() -> Value {
     json!({ "type": "string", "enum": ["full", "light", "off"] })
 }
@@ -63,14 +75,14 @@ fn tools() -> Value {
         {
             "name": "get_session_state",
             "title": "Текущее состояние таймера",
-            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/отрезок/пауза/ожидание (phase: work | break | segment | await | idle | done), сколько осталось, действует ли блокировка. Во время отрезка — segment {type, planned_min, elapsed_min, overrun_min, alarm, queue}. В blocks отрезки плана помечены type: \"break\". plan_forecast считает и отрезки: идущий, очередь и запланированные. Время — миллисекунды и готовые строки.",
+            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/отрезок/пауза/ожидание (phase: work | break | segment | await | idle | done), сколько осталось, действует ли блокировка. blocks[].done_min — отработано целыми минутами вниз: это же число — нижний предел, до которого set_plan может урезать начатый блок. Во время отрезка — segment {type, planned_min, elapsed_min, overrun_min, alarm, prep, prep_min, stopwatch, queue}: prep — идёт подготовка (у сна: кофе, дойти до кровати), отсчёта нет, ждём «Лёг» — тогда elapsed_min/overrun_min про подготовку; stopwatch — отрезок «без времени», секундомер вверх, overrun_min считается от planned_min. В blocks отрезки плана помечены type: \"break\"; taken — уже взят (идёт, прошёл или ждёт в очереди; в том числе взят вручную раньше своего места — тогда сам он второй раз не запустится). plan_forecast считает и отрезки (с подготовкой): идущий, очередь и запланированные. Время — миллисекунды и готовые строки.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "get_today_stats",
             "title": "Статистика дня",
-            "description": "Статистика дня. blocks[] — только учебные блоки: planned_min, actual_min, journal_hours (actual_min вниз до 0,25 ч), note (строка «что было скучно / куда отвлекался»); journal_total — сумма journal_hours. breaks[] — неучебные отрезки (обед, сон, прогулка, свои): {type, planned_min, actual_min, overrun_min, start, end}; в учебные часы и journal_hours не входят. Ещё: паузы (короче 10 с не пишутся), доступ на паузе, аварийные доступы, сдвиги конца дня (day_end_changes). Без аргумента — сегодня.",
+            "description": "Статистика дня. blocks[] — только учебные блоки: planned_min, actual_min, journal_hours (actual_min вниз до 0,25 ч), note (строка «что было скучно / куда отвлекался»); journal_total — сумма journal_hours. breaks[] — неучебные отрезки (обед, сон, прогулка, свои): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; в учебные часы и journal_hours не входят. У отрезка с подготовкой (сон) actual_min — только сам сон от «Лёг» (lay_at), prep_min — подготовка отдельно (null — подготовки не было); закончен до «Лёг» — actual_min 0. stopwatch: true — шёл «без времени» (секундомер), overrun_min всё равно от planned_min. Ещё: паузы (короче 10 с не пишутся), доступ на паузе, аварийные доступы, сдвиги конца дня (day_end_changes). Без аргумента — сегодня.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, по умолчанию сегодня (МСК)" } },
@@ -103,11 +115,11 @@ fn tools() -> Value {
         {
             "name": "set_plan",
             "title": "Задать план дня",
-            "description": "Без date — заменяет план сегодняшнего дня списком пунктов по порядку дня (сопоставляются со старыми по имени и типу). Учебный блок: {name, minutes|hours}. Неучебный отрезок (обед, сон, прогулка…): {name, minutes, type: \"break\"} — стоит на своём месте: когда закрывается блок перед ним, вместо перерыва между блоками запускается этот отрезок с обратным отсчётом (для «Сон» в конце — будильник). Отрезки не входят в учебные часы и journal_hours, но учитываются в plan_forecast. Можно добавлять, удлинять, урезать и удалять ещё не начатое. Начатый блок (и уже прошедший отрезок) нельзя удалить или переименовать, а пока действует блокировка начатый блок нельзя урезать меньше отработанного. Отработанное время не стирается. В ответе changes — что изменилось. С date позже сегодняшнего — план только на тот день: он начнётся с этого плана вместо шаблона своего профиля, сегодняшний план и шаблоны не меняются (до 60 дней вперёд; профиль дня — по расписанию недели, см. get_plan → week). use_template: true с date — убрать план, заданный на эту дату (день начнётся с шаблона).",
+            "description": "Без date — заменяет план сегодняшнего дня списком пунктов по порядку дня. Пункты сопоставляются со старыми по имени (регистр не важен) и типу в любом порядке: переставлять можно всё — неначатые и начатые блоки, отрезки; отработанное едет вместе с блоком. Учебный блок: {name, minutes|hours}. Неучебный отрезок (обед, сон, прогулка…): {name, minutes, type: \"break\"} — стоит на своём месте: когда закрывается блок перед ним, вместо перерыва между блоками запускается этот отрезок (у сна сначала подготовка без отсчёта до кнопки «Лёг», будильник — от «Лёг»). Отрезок, взятый вручную раньше своего места, гасит запланированный того же типа. Отрезки не входят в учебные часы и journal_hours, но учитываются в plan_forecast (с подготовкой). Правила. Неначатое — добавлять, удлинять, урезать, удалять. Отрезки, даже прошедшие, можно удалять — их запись в breaks[] остаётся. Начатый блок нельзя удалить или переименовать — кроме блока, где отработано меньше 1 минуты (случайный старт): он удаляется. Пока действует блокировка, начатый блок нельзя урезать ниже отработанного; предел — целые минуты вниз, ровно done_min из get_session_state (10 мин 40 с → можно 10). Закрыть начатый блок как есть — пункт {name, close: true}: план блока = отработанное, остаток снимается, день идёт дальше; так закрывай только по просьбе пользователя (текущий блок без явной просьбы — через finish_block, он спросит). Всё или ничего: при ошибке план не меняется. Отработанное время не стирается. В ответе changes (added | removed | shortened | lengthened | moved | closed) и plan_forecast. С date позже сегодняшнего — план только на тот день: он начнётся с этого плана вместо шаблона своего профиля, сегодняшний план и шаблоны не меняются (до 60 дней вперёд; профиль дня — по расписанию недели, см. get_plan → week). use_template: true с date — убрать план, заданный на эту дату (день начнётся с шаблона).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "blocks": { "type": "array", "minItems": 1, "maxItems": 16, "items": plan_item_schema() },
+                    "blocks": { "type": "array", "minItems": 1, "maxItems": 16, "items": today_item_schema() },
                     "date": { "type": "string", "description": "YYYY-MM-DD; по умолчанию сегодня. Позже сегодняшнего — план на тот день" },
                     "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном профиля этого дня (сегодняшнего или дня из date): Полный/Лёгкий/Выходной" },
                     "use_template": { "type": "boolean", "description": "Только с date: убрать план, заданный на эту дату; blocks тогда не нужен" }
@@ -187,7 +199,7 @@ fn tools() -> Value {
         {
             "name": "finish_block",
             "title": "Закрыть блок сейчас",
-            "description": "Закрывает начатый блок прямо сейчас на фактически отработанных минутах: planned_min блока становится равным actual_min (с округлением до минуты), день идёт дальше как после обычного конца блока (перерыв между блоками или конец дня), всё пишется в лог. Убирает гонку «урезать set_plan, пока таймер идёт». ДВА ШАГА. Первый вызов (без confirm_token) ничего не меняет: возвращает предпросмотр (сколько отработано, сколько уйдёт из плана) и одноразовый confirm_token на 2 минуты. Перед вторым вызовом ОБЯЗАТЕЛЬНО задай пользователю прямой вопрос из поля ask_user и дождись явного «да». Только потом вызови finish_block с confirm_token. Не подтверждай за пользователя, не делай второй вызов по своей инициативе и не трактуй общие фразы («давай дальше», «ок») как согласие.",
+            "description": "Закрывает начатый блок прямо сейчас на фактически отработанных минутах: planned_min блока становится равным отработанному в целых минутах вниз (как done_min), нужна хотя бы 1 минута — блок с меньшим просто удаляется через set_plan. День идёт дальше как после обычного конца блока (перерыв между блоками или конец дня), всё пишется в лог. Убирает гонку «урезать set_plan, пока таймер идёт». ДВА ШАГА. Первый вызов (без confirm_token) ничего не меняет: возвращает предпросмотр (сколько отработано, сколько уйдёт из плана) и одноразовый confirm_token на 2 минуты. Перед вторым вызовом ОБЯЗАТЕЛЬНО задай пользователю прямой вопрос из поля ask_user и дождись явного «да». Только потом вызови finish_block с confirm_token. Не подтверждай за пользователя, не делай второй вызов по своей инициативе и не трактуй общие фразы («давай дальше», «ок») как согласие. Если пользователь сам просит перекроить день и закрыть блок в том же шаге — set_plan с close: true.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -221,24 +233,41 @@ fn tool_result(r: Result<Value, String>) -> Value {
 }
 
 fn parse_blocks(args: &Value) -> Result<Vec<PlanBlock>, String> {
+    let (plan, close) = parse_items(args)?;
+    if close.iter().any(|c| *c) {
+        return Err("close работает только в set_plan на сегодня: закрыть можно начатый блок сегодняшнего дня.".into());
+    }
+    Ok(plan)
+}
+
+/// Plan items and their "close as is" flags.
+fn parse_items(args: &Value) -> Result<(Vec<PlanBlock>, Vec<bool>), String> {
     let blocks = args.get("blocks").and_then(Value::as_array).ok_or("Нужен массив blocks.")?;
     if blocks.len() > 16 {
         return Err("Не больше 16 пунктов плана в день.".into());
     }
     let mut plan = vec![];
+    let mut close = vec![];
     for b in blocks {
         let name = b.get("name").and_then(Value::as_str).ok_or("У блока нет name.")?;
-        let minutes = if let Some(m) = b.get("minutes").and_then(Value::as_f64) {
-            m
-        } else if let Some(h) = b.get("hours").and_then(Value::as_f64) {
-            h * 60.0
-        } else {
-            return Err(format!("У блока «{name}» нет minutes или hours."));
-        };
+        let closing = b.get("close").and_then(Value::as_bool).unwrap_or(false);
         let is_break = match b.get("type").and_then(Value::as_str).unwrap_or("study") {
             "break" => true,
             "study" => false,
             other => return Err(format!("«{name}»: type бывает \"study\" или \"break\", а не «{other}».")),
+        };
+        if closing && is_break {
+            return Err(format!("«{name}»: close закрывает учебный блок, а это отрезок (type: \"break\")."));
+        }
+        let minutes = if let Some(m) = b.get("minutes").and_then(Value::as_f64) {
+            m
+        } else if let Some(h) = b.get("hours").and_then(Value::as_f64) {
+            h * 60.0
+        } else if closing {
+            // Closing sets the length to the minutes worked.
+            1.0
+        } else {
+            return Err(format!("У блока «{name}» нет minutes или hours."));
         };
         let max = if is_break { 240.0 } else { 480.0 };
         if !(1.0..=max).contains(&minutes) {
@@ -246,8 +275,9 @@ fn parse_blocks(args: &Value) -> Result<Vec<PlanBlock>, String> {
         }
         let m = minutes.round() as u32;
         plan.push(if is_break { PlanBlock::brk(name, m) } else { PlanBlock::new(name, m) });
+        close.push(closing);
     }
-    Ok(plan)
+    Ok((plan, close))
 }
 
 fn parse_plan(args: &Value) -> Result<PlanRequest, String> {
@@ -257,11 +287,15 @@ fn parse_plan(args: &Value) -> Result<PlanRequest, String> {
     if use_template && date.is_none() {
         return Err("use_template работает только с date: какой день вернуть к шаблону.".into());
     }
-    let plan = if use_template { vec![] } else { parse_blocks(args)? };
+    let (plan, close) = if use_template { (vec![], vec![]) } else { parse_items(args)? };
     if plan.is_empty() && !use_template {
         return Err("В плане нужен хотя бы один пункт.".into());
     }
-    Ok(PlanRequest { plan, save_as_template: flag("save_as_template") && !use_template, date, use_template })
+    let save_as_template = flag("save_as_template") && !use_template;
+    if save_as_template && close.iter().any(|c| *c) {
+        return Err("close и save_as_template вместе нельзя: шаблон получил бы урезанный блок. Сначала закрой блок, шаблон задай отдельно (set_template).".into());
+    }
+    Ok(PlanRequest { plan, save_as_template, date, use_template, close })
 }
 
 fn parse_template(args: &Value) -> Result<(DayKind, Vec<PlanBlock>), String> {
@@ -306,7 +340,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. get_plan — план на сегодня, шаблоны всех профилей, расписание недели и планы следующих 7 дней. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах); с date — план на будущий день, сегодняшний не трогается. set_template — шаблон любого профиля (full/light/off). set_week_schedule — какой профиль у дней недели. set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. get_plan — план на сегодня, шаблоны всех профилей, расписание недели и планы следующих 7 дней. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах; переставлять можно всё, блок со случайным стартом меньше минуты — удалять, начатый — закрыть как есть через close: true по просьбе пользователя); с date — план на будущий день, сегодняшний не трогается. Отработанное везде в целых минутах вниз: done_min = предел урезания. set_template — шаблон любого профиля (full/light/off). set_week_schedule — какой профиль у дней недели. set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
                 }),
             )
         }
@@ -377,7 +411,7 @@ mod tests {
             Ok(json!({ "today": *self.0.borrow(), "date": d }))
         }
         fn set_plan(&self, r: PlanRequest) -> Result<Value, String> {
-            self.1.borrow_mut().push(json!({ "date": r.date, "use_template": r.use_template, "save": r.save_as_template }));
+            self.1.borrow_mut().push(json!({ "date": r.date, "use_template": r.use_template, "save": r.save_as_template, "close": r.close }));
             *self.0.borrow_mut() = r.plan;
             Ok(json!({"ok": true}))
         }
@@ -447,6 +481,21 @@ mod tests {
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
         let r: Value = serde_json::from_str(&handle(&body.to_string(), h).unwrap()).unwrap();
         r["result"].clone()
+    }
+
+    #[test]
+    fn set_plan_closes_a_block_as_is() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &h).unwrap();
+        assert!(r.contains("\"close\""));
+        // close needs no minutes
+        let r = call(&h, "set_plan", json!({ "blocks": [{ "name": "Математика", "close": true }, { "name": "Экстернат", "minutes": 150 }] }));
+        assert_eq!(r["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap()["close"], json!([true, false]));
+        // not for a segment, not into a template
+        assert_eq!(call(&h, "set_plan", json!({ "blocks": [{ "name": "Обед", "type": "break", "close": true }] }))["isError"], true);
+        assert_eq!(call(&h, "set_plan", json!({ "blocks": [{ "name": "A", "close": true }], "save_as_template": true }))["isError"], true);
+        assert_eq!(call(&h, "set_template", json!({ "profile": "full", "blocks": [{ "name": "A", "minutes": 5, "close": true }] }))["isError"], true);
     }
 
     #[test]

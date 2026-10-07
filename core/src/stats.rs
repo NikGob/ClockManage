@@ -41,12 +41,22 @@ pub struct BreakStats {
     #[serde(rename = "type")]
     pub kind: String,
     pub planned_min: u32,
+    /// The segment itself; for a nap — the sleep from "Лёг", without the preparation.
     pub actual_min: f64,
     /// Minutes over the planned length (0 when it ended in time).
     pub overrun_min: f64,
+    /// Start of the segment (of the preparation, when it had one).
     pub start: String,
     /// `None` while it is still running.
     pub end: Option<String>,
+    /// Preparation as it ran (coffee, getting to bed); `None` for a segment without one.
+    pub prep_min: Option<f64>,
+    /// Preparation planned by the segment type.
+    pub prep_planned_min: Option<u32>,
+    /// "Лёг": where the countdown started (`None`: no preparation, or ended before lying down).
+    pub lay_at: Option<String>,
+    /// "Без времени": counted with a stopwatch, no countdown.
+    pub stopwatch: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -319,17 +329,27 @@ fn breaks(d: &DayState, now: clock::Ts, tz: i32) -> Vec<BreakStats> {
             overrun_min: if l.with_timer { m((end - l.start - planned as i64 * MIN).max(0)) } else { 0.0 },
             start: iso(l.start),
             end: l.end.map(iso),
+            prep_min: None,
+            prep_planned_min: None,
+            lay_at: None,
+            stopwatch: !l.with_timer,
         }
     });
     let segs = d.segments.iter().map(|s| {
-        let end = s.end.unwrap_or(now);
+        let actual = s.actual_ms(now);
+        let prep = s.prep_min > 0;
         BreakStats {
             kind: s.name.clone(),
             planned_min: s.planned_min,
-            actual_min: m(end - s.start),
-            overrun_min: m((end - s.start - s.planned_ms()).max(0)),
+            actual_min: m(actual),
+            // Ended on the preparation: nothing ran over.
+            overrun_min: if prep && s.lay_at.is_none() { 0.0 } else { m((actual - s.planned_ms()).max(0)) },
             start: iso(s.start),
             end: s.end.map(iso),
+            prep_min: prep.then(|| m(s.prep_ms(now))),
+            prep_planned_min: prep.then_some(s.prep_min),
+            lay_at: s.lay_at.map(iso),
+            stopwatch: s.open_ended,
         }
     });
     legacy.chain(segs).collect()
@@ -362,7 +382,14 @@ pub fn to_csv(days: &[DayStats]) -> String {
             row([&d.date, "emergency", "", &e.at, &e.until, "", &e.minutes.to_string(), if e.ended_early { "ended_early" } else { "" }]);
         }
         for b in &d.breaks {
-            row([&d.date, "break", &b.kind, &b.start, b.end.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &format!("overrun_min={}", b.overrun_min)]);
+            let mut details = format!("overrun_min={}", b.overrun_min);
+            if let Some(p) = b.prep_min {
+                details.push_str(&format!(" prep_min={p} lay_at={}", b.lay_at.as_deref().unwrap_or("")));
+            }
+            if b.stopwatch {
+                details.push_str(" stopwatch");
+            }
+            row([&d.date, "break", &b.kind, &b.start, b.end.as_deref().unwrap_or(""), &b.planned_min.to_string(), &b.actual_min.to_string(), &details]);
         }
         for c in &d.day_end_changes {
             row([&d.date, "day_end_change", "", &c.at, "", "", "", &format!("{}->{} by={} reason={}", c.from, c.to, c.by, c.reason.as_deref().unwrap_or(""))]);

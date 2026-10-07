@@ -152,7 +152,8 @@ export function finishDialog(v) {
   if (!b) return Promise.resolve(false);
   const worked = b.work_ms / 60000;
   const workedTxt = String(Math.round(worked * 10) / 10).replace('.', ',');
-  const to = Math.max(1, Math.round(worked));
+  // Whole minutes, rounded down: the backend closes on exactly this.
+  const to = Math.max(1, Math.floor(worked));
   const cut = Math.max(0, b.minutes - to);
   return dialog(`
     <h2>Закрыть «${esc(b.name)}» сейчас?</h2>
@@ -179,8 +180,12 @@ export function segmentDialog(types, running, queue = []) {
   const queued = queue.length ? `<div class="seg-queue" id="sq-now"><span class="body-m muted">Уже в очереди:</span>${queue.map((q, i) => `<span class="chip input removable">${esc(q)}<button class="x interactive" data-drop="${i}" aria-label="Убрать ${esc(q)} из очереди">${icon('close')}</button></span>`).join('')}</div>` : '';
   return dialog(`
     <h2>${running ? 'Добавить в очередь' : 'Отрезок'}</h2>
-    <p class="body-m muted">${running ? 'Начнётся сразу после текущего.' : 'Обратный отсчёт; несколько подряд идут очередью. Блокировка — как на перерыве.'}</p>
+    <p class="body-m muted">${running ? 'Начнётся сразу после текущего.' : 'Несколько подряд идут очередью. Блокировка — как на перерыве.'}</p>
     ${queued}
+    <div class="segmented" role="group" aria-label="Как считать" id="seg-mode">
+      <button class="interactive" data-mode="timer" aria-pressed="true">${icon('schedule')}По таймеру</button>
+      <button class="interactive" data-mode="stopwatch" aria-pressed="false">${icon('timer')}Без времени</button>
+    </div>
     <div class="seg-types">${types.map((t, i) => `<button class="btn tonal interactive" data-t="${i}">${icon(t.alarm ? 'alarm' : t.name.toLowerCase().startsWith('обед') ? 'restaurant' : 'coffee')}${esc(t.name)} · ${t.minutes} мин</button>`).join('')}</div>
     <div class="seg-queue" id="sq" aria-live="polite"></div>
     <div class="actions">
@@ -189,12 +194,22 @@ export function segmentDialog(types, running, queue = []) {
     </div>`, (d, close) => {
     const sq = d.querySelector('#sq');
     const ok = d.querySelector('[data-ok]');
+    // The mode applies to the types picked from now on: lunch without a timer → a nap with one.
+    let stopwatch = false;
+    const label = (t) => (t.stopwatch ? `${t.name} без времени` : `${t.name} ${t.minutes} мин${t.prep_min ? ` + ${t.prep_min} на подготовку` : ''}`);
     const draw = () => {
       sq.innerHTML = picked.length
-        ? picked.map((t, i) => `<span class="chip input removable">${esc(t.name)} ${t.minutes} мин<button class="x interactive" data-rm="${i}" aria-label="Убрать">${icon('close')}</button></span>`).join('<span class="arrow">→</span>')
-        : '<span class="body-m muted">Нажми на тип — можно несколько: обед → сон</span>';
+        ? picked.map((t, i) => `<span class="chip input removable">${esc(label(t))}<button class="x interactive" data-rm="${i}" aria-label="Убрать">${icon('close')}</button></span>`).join('<span class="arrow">→</span>')
+        : `<span class="body-m muted">${stopwatch ? 'Секундомер вверх, без напоминаний о конце; факт попадёт в статистику.' : 'Нажми на тип — можно несколько: обед → сон'}</span>`;
       ok.disabled = !picked.length;
     };
+    d.querySelector('#seg-mode').addEventListener('click', (e) => {
+      const m = e.target.closest('[data-mode]');
+      if (!m) return;
+      stopwatch = m.dataset.mode === 'stopwatch';
+      d.querySelectorAll('#seg-mode [data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === m)));
+      draw();
+    });
     draw();
     d.addEventListener('click', async (e) => {
       const drop = e.target.closest('[data-drop]');
@@ -211,11 +226,16 @@ export function segmentDialog(types, running, queue = []) {
       }
       const t = e.target.closest('[data-t]');
       const rm = e.target.closest('[data-rm]');
-      if (t) { picked.push(types[Number(t.dataset.t)]); draw(); }
+      if (t) {
+        const ty = types[Number(t.dataset.t)];
+        const prep = ty.prep_min ?? (ty.alarm ? 10 : 0);
+        picked.push({ ...ty, stopwatch, prep_min: stopwatch ? 0 : prep });
+        draw();
+      }
       if (rm) { picked.splice(Number(rm.dataset.rm), 1); draw(); }
     });
     ok.addEventListener('click', async (e) => {
-      const items = picked.map((t) => ({ name: t.name, minutes: t.minutes }));
+      const items = picked.map((t) => ({ name: t.name, minutes: t.minutes, stopwatch: !!t.stopwatch }));
       const r = await run(() => call('start_segments', { items }).then(() => true), e.currentTarget);
       if (r) close(picked);
     });

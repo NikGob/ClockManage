@@ -15,13 +15,20 @@ class Entry(
     val elapsedMs: Long,
     val durMs: Long,
     val blocksWork: LongArray,
-    /** A segment whose end is a loud alarm (a nap). */
+    /** A segment whose end is a loud alarm (a nap). Never set while [prep]. */
     val alarm: Boolean,
+    /** A nap still getting ready: [segmentEnd] is the end of the preparation, a reminder to lie
+     *  down; nothing counts down until "Лёг". */
+    val prep: Boolean,
+    /** A segment "без времени": a stopwatch from [from], no end and no reminders. */
+    val stopwatch: Boolean,
 ) {
     val running get() = until != null && !paused
     val segment get() = kind == "segment"
     /** Planned end of a segment (it then runs over until the user ends it). */
     val segmentEnd get() = from + durMs
+    /** A segment that reminds at [segmentEnd]: not a stopwatch. */
+    val segmentTimed get() = segment && !stopwatch
 
     fun remaining(now: Long): Long = when {
         paused -> (durMs - elapsedMs).coerceAtLeast(0)
@@ -130,6 +137,8 @@ class Snapshot(
                         e.getString("subtitle"), e.intOrNull("block"), e.getBoolean("paused"),
                         e.getLong("elapsed_ms"), e.getLong("dur_ms"), LongArray(w.length()) { w.getLong(it) },
                         e.optBoolean("alarm", false),
+                        e.optBoolean("prep", false),
+                        e.optBoolean("stopwatch", false),
                     )
                 }
             }

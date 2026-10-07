@@ -32,6 +32,10 @@ function render(p) {
   if (p.kind === 'wake') {
     // Only "Встал" stops the alarm: no "hide", no Escape.
     actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('alarm')}${esc(p.action || 'Встал')}</button>`);
+  } else if (p.kind === 'prep') {
+    // Getting ready is over: the nap starts from "Лёг", never by itself.
+    actions.push(`<button class="btn filled xl interactive" data-act="lay_down">${icon('bed')}${esc(p.action || 'Лёг')}</button>`);
+    actions.push('<button class="btn text lg interactive" data-act="hide">Ещё пару минут</button>');
   } else if (p.kind === 'segment') {
     actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('check')}${esc(p.action || 'Закончил')}</button>`);
     actions.push('<button class="btn text lg interactive" data-act="hide">Ещё немного</button>');
@@ -98,11 +102,12 @@ stage.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   if (performance.now() < armedAt) return;
-  if (b.dataset.act === 'end_segment' || b.dataset.act === 'seg') {
+  if (b.dataset.act === 'end_segment' || b.dataset.act === 'seg' || b.dataset.act === 'lay_down') {
     b.setAttribute('aria-busy', 'true');
     try {
       if (!current?.preview && !current?.demo) {
         if (b.dataset.act === 'seg') await call('start_segments', { items: [{ name: b.dataset.name }] });
+        else if (b.dataset.act === 'lay_down') await call('lay_down');
         else await call('end_segment');
       }
     } catch (err) {
@@ -150,6 +155,7 @@ on('state', (s) => {
   // Started from elsewhere (tray, mini window) — the alarm is no longer relevant.
   if (current?.kind === 'await' && !current.preview && !current.demo && s.view.phase.kind !== 'await') hide();
   if (['wake', 'segment'].includes(current?.kind) && !current.preview && !current.demo && s.view.phase.kind !== 'segment') hide();
+  if (current?.kind === 'prep' && !current.preview && !current.demo && !s.view.phase.prep) hide();
 });
 
 (async () => {

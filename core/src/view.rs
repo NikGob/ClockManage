@@ -20,10 +20,16 @@ pub struct PhaseView {
     pub paused: bool,
     /// When waiting: how long already.
     pub waiting_ms: i64,
-    /// Segment: its end is a loud alarm (a nap).
+    /// Segment: its end is a loud alarm (a nap). Never rings while `prep`.
     pub alarm: bool,
     /// Segment: what is queued after it ("Сон 20 мин").
     pub queue: Vec<String>,
+    /// Segment: still getting ready — waits for "Лёг"; `dur_ms` / `remaining_ms` are the
+    /// preparation (negative remaining = the preparation is over, time to lie down).
+    pub prep: bool,
+    /// Segment: "без времени" — a stopwatch; `elapsed_ms` counts up, `remaining_ms` < 0 = over
+    /// the usual length.
+    pub stopwatch: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +45,8 @@ pub struct BlockView {
     pub note: Option<String>,
     /// study | break (a planned segment: no parts, no work)
     pub kind: crate::day::ItemKind,
+    /// A planned segment waiting in the queue (taken, will run next).
+    pub queued: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,8 +90,12 @@ pub struct Can {
     pub undo_skip: bool,
     /// "Отрезок": start a segment now, or queue one behind the running segment.
     pub segment: bool,
-    /// "Закончил" / "Встал".
+    /// "Закончил" / "Встал" (on the preparation: "не буду спать").
     pub end_segment: bool,
+    /// "Лёг": the running segment is still getting ready.
+    pub lay_down: bool,
+    /// The running segment may switch between a countdown and a stopwatch.
+    pub segment_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -222,12 +234,19 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         Phase::Segment { rec, next } => {
             let r = &d.segments[*rec];
             let (name, part, parts) = d.part_info(*next);
-            let queue: Vec<String> = d.segment_queue.iter().map(|q| format!("{} {} мин", q.name, q.minutes)).collect();
-            let elapsed = now - r.start;
+            let queue: Vec<String> = d
+                .segment_queue
+                .iter()
+                .map(|q| if q.open_ended { format!("{} без времени", q.name) } else { format!("{} {} мин", q.name, q.minutes) })
+                .collect();
+            let prep = r.in_prep();
+            let (dur_ms, elapsed) = if prep { (r.prep_min as i64 * MIN, now - r.start) } else { (r.planned_ms(), now - r.countdown_from()) };
             PhaseView {
                 kind: "segment".into(),
                 title: r.name.clone(),
-                subtitle: if !queue.is_empty() {
+                subtitle: if prep {
+                    format!("Подготовка · потом {} {} мин — нажми «Лёг», когда ляжешь", r.name.to_lowercase(), r.planned_min)
+                } else if !queue.is_empty() {
                     format!("Потом: {}", queue.join(" → "))
                 } else if d.first_open_block().is_some() && parts > 0 {
                     format!("Дальше: {name}, часть {part} из {parts}")
@@ -235,15 +254,17 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
                     "Учебные блоки на сегодня закрыты".into()
                 },
                 block: current,
-                dur_ms: r.planned_ms(),
+                dur_ms,
                 elapsed_ms: elapsed,
                 // Negative = over time.
-                remaining_ms: r.planned_ms() - elapsed,
+                remaining_ms: dur_ms - elapsed,
                 running: true,
                 paused: false,
                 waiting_ms: 0,
                 alarm: r.alarm,
                 queue,
+                prep,
+                stopwatch: r.open_ended,
             }
         }
         Phase::Done => PhaseView {
@@ -276,6 +297,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             started: d.progress[i].started_at.is_some(),
             note: d.progress[i].note.clone(),
             kind: b.kind,
+            queued: d.segment_queue.iter().any(|q| q.plan_item == Some(i)),
         })
         .collect();
 
@@ -300,6 +322,8 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.first_open_block().is_some(),
         segment: d.can_start_segment(),
         end_segment: matches!(d.phase, Phase::Segment { .. }),
+        lay_down: d.segment().is_some_and(|r| r.in_prep()),
+        segment_mode: d.segment().is_some_and(|r| !r.in_prep() && !r.alarm),
         pause: running && !lunch_break,
         resume: paused,
         start_next: matches!(d.phase, Phase::Await { .. } | Phase::Break { .. } | Phase::Lunch { .. }),
@@ -320,7 +344,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         undo_skip: d.skip_undo.as_ref().is_some_and(|u| now - u.at <= crate::day::SKIP_UNDO_MS)
             && matches!(d.phase, Phase::Work { since: Some(_), .. })
             && d.pause.is_none(),
-        finish_block: d.finish_target(None).is_ok_and(|i| d.block_work_live(i, now) >= 30 * crate::clock::SEC),
+        finish_block: d.finish_target(None).is_ok_and(|i| d.block_work_live(i, now) >= MIN),
     };
 
     View {

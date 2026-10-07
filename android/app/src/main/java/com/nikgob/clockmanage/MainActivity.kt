@@ -406,9 +406,21 @@ class MainActivity : Activity() {
             "await" -> { state.text = "ждём тебя"; big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
             "segment" -> {
                 val left = e.remaining(now)
-                state.text = if (left < 0) "превышено" else if (e.alarm) "сон · будильник" else "отрезок"
-                big.text = if (left < 0) "+" + Fmt.mmss(-left) else Fmt.mmss(left)
-                big.setTextColor(if (left < 0) p.error else p.text)
+                if (e.stopwatch) {
+                    // "Без времени": counts up.
+                    state.text = if (left < 0) "без времени · дольше обычного" else "без времени"
+                    big.text = Fmt.mmss(e.elapsed(now))
+                    big.setTextColor(p.text)
+                } else {
+                    state.text = when {
+                        e.prep -> if (left < 0) "пора ложиться" else "подготовка"
+                        left < 0 -> "превышено"
+                        e.alarm -> "сон · будильник"
+                        else -> "отрезок"
+                    }
+                    big.text = if (left < 0) "+" + Fmt.mmss(-left) else Fmt.mmss(left)
+                    big.setTextColor(if (left < 0) p.error else p.text)
+                }
                 big.textSize = 72f
             }
             "lunch" -> { state.text = "обед"; big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
@@ -441,6 +453,10 @@ class MainActivity : Activity() {
             e.paused -> wanted += Triple("Продолжить", "resume", null)
             e.kind == "work" || e.kind == "break" -> wanted += Triple("Пауза", "pause", null)
             e.kind == "await" || e.kind == "lunch" -> wanted += Triple("Начать", "start_next", e.kind)
+            e.segment && e.prep -> {
+                wanted += Triple("Лёг", "lay_down", "segment")
+                wanted += Triple("Не буду спать", "end_segment", "segment")
+            }
             e.segment -> wanted += Triple(if (e.alarm) "Встал" else "Закончил", "end_segment", "segment")
         }
         val sig = wanted.joinToString { it.second } + Sync.online

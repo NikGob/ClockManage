@@ -275,7 +275,7 @@ export function trophy(size) {
 const DOODLES = {
   nope: [fingerWag], await: [alarmClock], break: [teaCup, stretch, waterGlass], block: [checkStamp, trophy],
   day: [finishFlag, trophy], access: [padlock], lock: [padlock], empty: [emptyBook], idle: [notebook], rest: [hammock], lunch: [bowl],
-  segment: [bowl, stretch, teaCup], wake: [alarmClock], ask: [teaCup, notebook],
+  segment: [bowl, stretch, teaCup], prep: [hammock, teaCup], wake: [alarmClock], ask: [teaCup, notebook],
 };
 
 /** Hand-drawn scene for a moment; moments with several scenes pick one at random. */

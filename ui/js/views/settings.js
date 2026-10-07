@@ -16,7 +16,8 @@ const TIP = {
   seg: 'Блок режется на части такой длины. Хвост короче 15 мин приклеивается к последней части: 50 мин — это одна часть.',
   short: 'Отдых между частями одного блока. Не съедает учебное время. Во время учёбы его можно только сократить.',
   between: 'Отдых после закрытого блока, перед следующим. Во время учёбы — только короче.',
-  segments: 'Неучебные отрезки с обратным отсчётом: кнопка «Отрезок» в перерыве или пункт плана. За 5 минут и в конце — уведомление, потом каждые 5 минут — на сколько превышено. Блокировка — как на перерыве. Во время учёбы — только короче.',
+  segments: 'Неучебные отрезки с обратным отсчётом: кнопка «Отрезок» в перерыве или пункт плана. За 5 минут и в конце — уведомление, потом каждые 5 минут — на сколько превышено. При старте можно выбрать «Без времени» — секундомер вверх. Блокировка — как на перерыве. Во время учёбы — только короче.',
+  segPrep: 'Время собраться перед отсчётом: кофе, дойти до кровати. Отрезок ждёт кнопку «Лёг», а когда подготовка выходит — только напоминает. Отсчёт и будильник идут от «Лёг». 0 — отсчёт сразу.',
   segAlarm: 'Конец — громкий будильник, который звонит, пока не нажмёшь «Встал» (даже если звук выключен). Без предупреждения за 5 минут. Для сна.',
   segAccess: 'На время отрезка (до его планового конца) заблокированное открыто — как «ем за ПК». Включается только вне учёбы.',
   sound: 'Звонок на конце перерыва, мягкий сигнал на конце работы и фанфары на закрытии блока.',
@@ -173,6 +174,7 @@ export function mountSettings(root, ctx) {
             <span class="badge">${icon(sg.alarm ? 'alarm' : 'coffee')}</span>
             <div class="grow"><input class="seg-name" data-segname="${i}" value="${esc(sg.name)}" maxlength="24" aria-label="Название отрезка"></div>
             ${stepper(`segments.${i}.minutes`, { min: 1, max: 240, step: 5, unit: 'мин', label: `Минут: ${sg.name}`, ceil: locked ? sg.minutes : Infinity })}
+            <div class="sw-wrap prep-wrap" ${tipAttr('segPrep')}><span class="sw-label">Подготовка</span>${stepper(`segments.${i}.prep_min`, { min: 0, max: 60, step: 5, unit: 'мин', label: `Подготовка: ${sg.name}`, ceil: locked ? (sg.prep_min ?? 0) : Infinity })}</div>
             <label class="sw-wrap"><span class="sw-label">Будильник</span>${sw(`segments.${i}.alarm`, sg.alarm, `Будильник: ${sg.name}`, 'segAlarm')}</label>
             <label class="sw-wrap"><span class="sw-label">Доступ</span>${sw(`segments.${i}.open_access`, sg.open_access, `Доступ на время: ${sg.name}`, 'segAccess', locked && !sg.open_access)}</label>
             <button class="icon-btn interactive" data-segdel="${i}" aria-label="Удалить ${esc(sg.name)}" ${cfg.segments.length <= 1 ? 'disabled' : ''}>${icon('delete')}</button>
@@ -388,7 +390,7 @@ export function mountSettings(root, ctx) {
       save((c) => {
         let name = 'Свой';
         for (let n = 2; c.segments.some((x) => x.name.toLowerCase() === name.toLowerCase()); n++) name = `Свой ${n}`;
-        c.segments.push({ name, minutes: 15, alarm: false, open_access: false });
+        c.segments.push({ name, minutes: 15, alarm: false, open_access: false, prep_min: 0 });
       }).then(() => box.querySelector('.seg-type:last-of-type .seg-name')?.select());
     }
     else if (t.dataset.forget) {

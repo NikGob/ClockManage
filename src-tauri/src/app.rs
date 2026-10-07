@@ -6,7 +6,7 @@ use std::time::Duration;
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::chrono::{self, Datelike, NaiveDate};
 use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
-use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, Event, Forecast, PlanBlock, QueuedSegment, SingleCfg};
+use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, same_name, worked_min, Event, Forecast, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
 use clockmanage_core::mcp::{McpHost, PlanRequest};
@@ -214,6 +214,20 @@ impl Shared {
         }));
     }
 
+    /// Getting ready for a nap is over: "Лёг" starts the countdown (nothing starts by itself).
+    fn prep_overlay(&self, name: &str, over_ms: i64) {
+        self.show_overlay(json!({
+            "kind": "prep", "passive": false,
+            "title": "Пора ложиться",
+            "text": if over_ms > 0 {
+                format!("Подготовка ко сну идёт уже на {} дольше. {name} начнётся, когда нажмёшь «Лёг».", fmt_dur(over_ms))
+            } else {
+                format!("Подготовка окончена. {name} и будильник пойдут от «Лёг».")
+            },
+            "action": "Лёг",
+        }));
+    }
+
     /// End of another segment: "Закончил" or keep going.
     fn segment_overlay(&self, name: &str, over_ms: i64, v: &View) {
         self.show_overlay(json!({
@@ -252,6 +266,8 @@ impl Shared {
             ("Пауза", true)
         } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
             ("Начать следующую часть", true)
+        } else if v.can.lay_down {
+            ("Лёг", true)
         } else if v.can.end_segment {
             (if v.phase.alarm { "Встал" } else { "Закончить отрезок" }, true)
         } else if v.can.start_day {
@@ -383,6 +399,15 @@ impl Shared {
                         self.segment_overlay(name, *over_ms, &snap.view);
                     }
                 }
+                Event::SegmentPrepOver { name, over_ms } => {
+                    self.play(Sound::Ping);
+                    self.notify("Пора ложиться", &format!("Подготовка окончена — нажми «Лёг», и пойдёт отсчёт: {}.", name.to_lowercase()));
+                    self.prep_overlay(name, *over_ms);
+                }
+                Event::SegmentLong { name, elapsed_ms } => {
+                    // A stopwatch segment: no alarm, just a quiet word that it is still on.
+                    self.notify(&format!("{name} идёт уже {}", fmt_dur(*elapsed_ms)), "Без времени. Нажми «Закончил», когда вернёшься.");
+                }
                 Event::AskWhatNow => {
                     self.play(Sound::Ping);
                     let types = self.lock().cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes })).collect::<Vec<_>>();
@@ -457,6 +482,8 @@ fn tray_tooltip(v: &View) -> String {
         "work" | "break" | "lunch_break" => {
             format!("{} — {}{}", p.title, mmss(p.remaining_ms), if p.paused { " (пауза)" } else { "" })
         }
+        "segment" if p.prep => format!("{} — подготовка, {}", p.title, if p.remaining_ms < 0 { "пора ложиться".into() } else { mmss(p.remaining_ms) }),
+        "segment" if p.stopwatch => format!("{} — без времени, {}", p.title, mmss(p.elapsed_ms)),
         "segment" if p.remaining_ms < 0 => format!("{} — превышено на {}", p.title, mmss(-p.remaining_ms)),
         "segment" => format!("{} — {}", p.title, mmss(p.remaining_ms)),
         _ => p.title.clone(),
@@ -549,7 +576,7 @@ fn ticker(shared: Arc<Shared>) {
         // Nap over: the alarm rings back to back until "Встал" — even with sounds turned off,
         // it is the alarm clock.
         let p = &snap.view.phase;
-        if p.kind == "segment" && p.alarm && p.remaining_ms <= 0 && now - last_ring >= 3_400 {
+        if p.kind == "segment" && p.alarm && !p.prep && !p.stopwatch && p.remaining_ms <= 0 && now - last_ring >= 3_400 {
             last_ring = now;
             sound::play(Sound::Alarm);
         }
@@ -700,11 +727,11 @@ impl McpHost for McpBridge {
             "current_block": v.phase.block.and_then(|i| v.blocks.get(i)).map(|b| b.name.clone()),
             "blocks": v.blocks.iter().map(|b| if b.kind.is_study() {
                 json!({
-                    "name": b.name, "planned_min": b.minutes, "done_min": b.work_ms / MIN,
+                    "name": b.name, "planned_min": b.minutes, "done_min": worked_min(b.work_ms),
                     "parts": b.parts, "parts_done": b.parts_done, "done": b.done, "current": b.current
                 })
             } else {
-                json!({ "name": b.name, "type": "break", "planned_min": b.minutes, "done": b.done, "taken": b.started })
+                json!({ "name": b.name, "type": "break", "planned_min": b.minutes, "done": b.done, "taken": b.started || b.queued, "queued": b.queued })
             }).collect::<Vec<_>>(),
             "worked": fmt_dur(v.work_ms),
             "planned": fmt_dur(v.planned_ms),
@@ -713,14 +740,21 @@ impl McpHost for McpBridge {
             "day_end_default": v.day_end_base,
             "day_end_next_day": v.day_end_next_day,
             "plan_forecast": forecast_json(&v.forecast, s.meta.tz_offset_min),
-            "segment": (v.phase.kind == "segment").then(|| json!({
-                "type": v.phase.title,
-                "planned_min": v.phase.dur_ms / MIN,
-                "elapsed_min": v.phase.elapsed_ms / MIN,
-                "overrun_min": (-v.phase.remaining_ms).max(0) / MIN,
-                "alarm": v.phase.alarm,
-                "queue": v.phase.queue,
-            })),
+            "segment": (v.phase.kind == "segment").then(|| {
+                let (planned, prep_min) = segment_minutes(&self.0);
+                json!({
+                    "type": v.phase.title,
+                    "planned_min": planned,
+                    // While getting ready: minutes of the preparation and how far past it.
+                    "elapsed_min": v.phase.elapsed_ms / MIN,
+                    "overrun_min": (-v.phase.remaining_ms).max(0) / MIN,
+                    "alarm": v.phase.alarm,
+                    "prep": v.phase.prep,
+                    "prep_min": prep_min,
+                    "stopwatch": v.phase.stopwatch,
+                    "queue": v.phase.queue,
+                })
+            }),
         })
     }
 
@@ -784,8 +818,8 @@ impl McpHost for McpBridge {
         match req.date.as_deref().map(parse_plan_date).transpose()? {
             Some(d) if d != today => apply_plan_ahead(&self.0, d, req, "mcp"),
             // Today back to its template: a plain set_plan, with the usual rules for started blocks.
-            Some(_) if req.use_template => apply_plan(&self.0, template, false, "mcp"),
-            _ => apply_plan(&self.0, req.plan, req.save_as_template, "mcp"),
+            Some(_) if req.use_template => apply_plan(&self.0, template, &[], false, "mcp"),
+            _ => apply_plan(&self.0, req.plan, &req.close, req.save_as_template, "mcp"),
         }
     }
 
@@ -860,7 +894,11 @@ impl McpHost for McpBridge {
             let worked = g.day.block_work_live(i, now);
             let b = g.day.plan[i].clone();
             drop(g);
-            let to_min = (((worked + MIN / 2) / MIN) as u32).max(1);
+            if worked < MIN {
+                return Err(format!("По «{}» отработано меньше минуты — закрывать нечего. Если он сегодня не нужен, убери его через set_plan: такой блок удаляется.", b.name));
+            }
+            // The same rounding as the close itself and done_min: whole minutes, down.
+            let to_min = worked_min(worked).max(1);
             let token = {
                 use rand::Rng;
                 format!("{:08x}", rand::thread_rng().gen::<u32>())
@@ -899,7 +937,7 @@ pub fn apply_block_note(shared: &Arc<Shared>, block: Option<usize>, name: Option
     shared.mutate(|g, now| {
         let i = match (block, name.map(str::trim).filter(|n| !n.is_empty())) {
             (Some(i), _) => i,
-            (None, Some(n)) => g.day.plan.iter().position(|b| b.name.eq_ignore_ascii_case(n)).ok_or(format!("В плане нет блока «{n}»."))?,
+            (None, Some(n)) => g.day.plan.iter().position(|b| !b.is_break() && same_name(&b.name, n)).ok_or(format!("В плане нет блока «{n}»."))?,
             (None, None) => g
                 .day
                 .pending_note()
@@ -938,6 +976,12 @@ pub fn apply_finish(shared: &Arc<Shared>, name: Option<&str>, by: &str) -> Resul
     Ok(res)
 }
 
+/// Planned minutes of the running segment and its preparation (0 without one).
+fn segment_minutes(shared: &Shared) -> (u32, u32) {
+    let g = shared.lock();
+    g.day.segment().map(|r| (r.planned_min, r.prep_min)).unwrap_or((0, 0))
+}
+
 fn forecast_json(f: &Forecast, tz: i32) -> Value {
     json!({
         "plan_left_min": (f.work_left_ms + MIN - 1) / MIN,
@@ -946,7 +990,7 @@ fn forecast_json(f: &Forecast, tz: i32) -> Value {
         "segments_left_min": (f.segments_left_ms + MIN - 1) / MIN,
         "fits": f.fits,
         "margin_min": f.margin_ms.div_euclid(MIN),
-        "note": "Если продолжать прямо сейчас без пауз. Отрезки (обед, сон…) учтены: идущий, очередь и запланированные в плане.",
+        "note": "Если продолжать прямо сейчас без пауз. Отрезки (обед, сон…) учтены: идущий, очередь и запланированные в плане, с подготовкой ко сну.",
     })
 }
 
@@ -1002,6 +1046,9 @@ pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest,
     if date < today {
         return Err(format!("{date} уже прошёл — план можно задать на сегодня или позже."));
     }
+    if req.close.iter().any(|c| *c) {
+        return Err("close закрывает начатый блок сегодняшнего дня — в плане на другой день закрывать нечего.".into());
+    }
     if (date - today).num_days() > MAX_PLAN_AHEAD_DAYS {
         return Err(format!("План можно задать не дальше чем на {MAX_PLAN_AHEAD_DAYS} дней вперёд."));
     }
@@ -1045,11 +1092,13 @@ pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest,
     }))
 }
 
-/// Set today's plan from the UI (`by = "ui"`) or the agent (`"mcp"`).
-pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, save_as_template: bool, by: &str) -> Result<Value, String> {
-    let (res, changes) = shared.mutate(|g, now| {
+/// Set today's plan from the UI (`by = "ui"`), the phone or the agent (`"mcp"`); `close[j]`
+/// closes started block `j` as it is.
+pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, close: &[bool], save_as_template: bool, by: &str) -> Result<Value, String> {
+    let (res, changes, events) = shared.mutate(|g, now| {
         let locked = g.day.plan_lock(now, &g.cfg);
-        let changes = g.day.set_plan(now, plan.clone(), locked)?;
+        let (cfg, day) = (&g.cfg, &mut g.day);
+        let (changes, events) = day.edit_plan(now, cfg, plan.clone(), close, locked, by)?;
         if save_as_template {
             let kind = g.day.kind;
             g.cfg.profiles.get_mut(kind).plan = g.day.plan.clone();
@@ -1063,8 +1112,12 @@ pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, save_as_template: 
             "changed": changes.iter().map(fmt_change).collect::<Vec<_>>(),
             "plan_forecast": forecast_json(&g.day.forecast(now, &g.cfg), g.cfg.tz_offset_min),
         });
-        Ok((res, changes))
+        Ok((res, changes, events))
     })?;
+    if !events.is_empty() {
+        let snap = shared.snapshot();
+        shared.react(&events, &snap);
+    }
     let _ = shared.app.emit("config", ());
     if by != "ui" && !changes.is_empty() {
         shared.notice(if by == "mcp" { "Агент изменил план" } else { "Телефон изменил план" }, &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
@@ -1297,13 +1350,22 @@ pub fn set_block_note(s: S, block: usize, note: Option<String>) -> Result<(), St
 pub struct SegmentPick {
     name: String,
     minutes: Option<u32>,
+    /// "Без времени": a stopwatch instead of a countdown.
+    #[serde(default)]
+    stopwatch: bool,
 }
 
 /// Start segments now (or queue them behind the running one): lunch → nap.
 #[tauri::command]
 pub fn start_segments(s: S, items: Vec<SegmentPick>) -> Result<(), String> {
     let r = s.mutate(|g, now| {
-        let items = items.iter().map(|i| QueuedSegment::of(&g.cfg, &i.name, i.minutes)).collect();
+        let items = items
+            .iter()
+            .map(|i| {
+                let q = QueuedSegment::of(&g.cfg, &i.name, i.minutes);
+                if i.stopwatch { q.stopwatch() } else { q }
+            })
+            .collect();
         g.day.start_segments(now, items)
     });
     if r.is_ok() {
@@ -1319,6 +1381,22 @@ pub fn end_segment(s: S) -> Result<(), String> {
         hide_overlay_window(&s.app);
     }
     r
+}
+
+/// "Лёг": the nap's countdown and alarm start now.
+#[tauri::command]
+pub fn lay_down(s: S) -> Result<(), String> {
+    let r = s.mutate(|g, now| g.day.lay_down(now));
+    if r.is_ok() {
+        hide_overlay_window(&s.app);
+    }
+    r
+}
+
+/// The running segment: a stopwatch ("без времени") or back to the countdown.
+#[tauri::command]
+pub fn set_segment_mode(s: S, stopwatch: bool) -> Result<(), String> {
+    s.mutate(|g, now| g.day.set_segment_mode(now, stopwatch))
 }
 
 #[tauri::command]
@@ -1340,6 +1418,10 @@ pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
         shared.mutate(|g, now| g.day.pause(now, &g.cfg))
     } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
         let r = shared.mutate(|g, now| g.day.start_next(now));
+        hide_overlay_window(&shared.app);
+        r
+    } else if v.can.lay_down {
+        let r = shared.mutate(|g, now| g.day.lay_down(now));
         hide_overlay_window(&shared.app);
         r
     } else if v.can.end_segment {
@@ -1370,7 +1452,7 @@ pub fn stop_single(s: S) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(), String> {
-    apply_plan(s.inner(), blocks, save_template, "ui").map(|_| ())
+    apply_plan(s.inner(), blocks, &[], save_template, "ui").map(|_| ())
 }
 
 #[tauri::command]

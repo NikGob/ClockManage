@@ -230,8 +230,15 @@ export function mountToday(root, ctx) {
         if (c.segment) B('segment', 'Отрезок', 'tonal lg', 'restaurant');
         break;
       case 'segment':
-        B('end_segment', p.alarm ? 'Встал' : `Закончил ${p.title.toLowerCase()}`, 'filled xl', p.alarm ? 'alarm' : 'check');
+        if (c.lay_down) {
+          // Getting ready: the countdown and the alarm start only from "Лёг".
+          B('lay_down', 'Лёг', 'filled xl', 'bed');
+          B('end_segment', p.alarm ? 'Не буду спать' : 'Отменить', 'text lg', 'close');
+        } else {
+          B('end_segment', p.alarm ? 'Встал' : `Закончил ${p.title.toLowerCase()}`, 'filled xl', p.alarm ? 'alarm' : 'check');
+        }
         if (c.segment) B('segment', 'В очередь', 'outlined lg', 'add');
+        if (c.segment_mode) B('seg_mode', p.stopwatch ? 'По таймеру' : 'Без времени', 'text lg', p.stopwatch ? 'schedule' : 'timer');
         break;
       case 'lunch':
         B('start_next', 'Пообедал — начать', 'filled xl', 'play');
@@ -351,8 +358,9 @@ export function mountToday(root, ctx) {
     }
     const html = v.blocks.map((b) => {
       if (b.kind === 'break') {
+        const st = b.done ? (b.started ? 'прошёл' : 'пропущен') : b.started ? 'идёт' : b.queued ? 'в очереди' : 'отрезок';
         return `<li class="blk seg ${b.done ? 'done' : ''}"><span class="st">${b.done ? icon('check', 's20') : icon('coffee', 's20')}</span>
-          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} мин · ${b.done ? (b.started ? 'прошёл' : 'пропущен') : b.started ? 'идёт' : 'отрезок'}</span></li>`;
+          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} мин · ${st}</span></li>`;
       }
       const st = b.done ? icon('check', 's20') : '<span class="dot"></span>';
       const meta = `${Math.floor(b.work_ms / 60000)} из ${b.minutes} мин · ${b.done ? 'готово' : `часть ${Math.min(b.parts_done + 1, b.parts)}/${b.parts}`}`;
@@ -396,7 +404,7 @@ export function mountToday(root, ctx) {
     const hero = $('hero');
     hero.dataset.kind = p.kind;
     hero.dataset.paused = String(!!p.paused);
-    hero.dataset.over = String(p.kind === 'segment' && p.remaining_ms < 0);
+    hero.dataset.over = String(p.kind === 'segment' && p.remaining_ms < 0 && !p.stopwatch);
     lockLine(v, s.meta);
     kindChip(v);
 
@@ -413,10 +421,18 @@ export function mountToday(root, ctx) {
         break;
       case 'segment': {
         const over = p.remaining_ms < 0;
+        if (p.stopwatch) {
+          // "Без времени": counts up; the ring fills to the usual length and stays full.
+          frac = p.dur_ms ? Math.min(1, p.elapsed_ms / p.dur_ms) : 0;
+          running = true;
+          big = mmss(p.elapsed_ms);
+          state = over ? `без времени · дольше обычного` : 'без времени';
+          break;
+        }
         frac = over ? 1 : p.elapsed_ms / p.dur_ms;
         running = !over;
         big = over ? `+${mmss(-p.remaining_ms)}` : mmss(p.remaining_ms);
-        state = over ? 'превышено' : p.alarm ? 'сон · будильник' : 'отрезок';
+        state = p.prep ? (over ? 'пора ложиться' : 'подготовка') : over ? 'превышено' : p.alarm ? 'сон · будильник' : 'отрезок';
         break;
       }
       case 'await':
@@ -497,6 +513,16 @@ export function mountToday(root, ctx) {
         break;
       }
       case 'end_segment': await run(() => call('end_segment'), b); break;
+      case 'lay_down': {
+        const ok = await run(() => call('lay_down').then(() => true), b);
+        if (ok) snack(`${v.phase.title}: отсчёт пошёл${v.phase.alarm ? ', в конце будильник' : ''}`);
+        break;
+      }
+      case 'seg_mode': {
+        const ok = await run(() => call('set_segment_mode', { stopwatch: !v.phase.stopwatch }).then(() => true), b);
+        if (ok) snack(v.phase.stopwatch ? 'Снова обратный отсчёт' : 'Без времени — секундомер, без напоминаний о конце');
+        break;
+      }
       case 'single': await singleDialog(); break;
       case 'note_save':
       case 'note_skip': {

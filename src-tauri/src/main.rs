@@ -153,6 +153,8 @@ fn main() {
             app::set_block_note,
             app::start_segments,
             app::end_segment,
+            app::lay_down,
+            app::set_segment_mode,
             app::drop_queued,
             app::week_stats,
         ])
