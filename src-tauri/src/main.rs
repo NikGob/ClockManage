@@ -58,6 +58,9 @@ fn main() {
             let now = clock::now_ts();
             let day = app::load_today(&store, &cfg, now);
             store.save_day(&day);
+            if cfg.drop_overrides_through(day.date) {
+                store.save_config(&cfg);
+            }
             let autostart = cfg.autostart;
             let (mcp_enabled, mcp_port) = (cfg.mcp_enabled, cfg.mcp_port);
 
@@ -150,6 +153,8 @@ fn main() {
             app::set_block_note,
             app::start_segments,
             app::end_segment,
+            app::lay_down,
+            app::set_segment_mode,
             app::drop_queued,
             app::week_stats,
         ])

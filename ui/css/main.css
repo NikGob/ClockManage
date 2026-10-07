@@ -500,10 +500,11 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
 .plan-card .row1 h2 { white-space: nowrap; }
 /* Narrow window: a segment type's name gets its own line above the controls. */
 @media (max-width: 720px) {
-  .seg-type { display: grid; grid-template-columns: 40px 1fr auto auto; grid-template-areas: "badge name name del" "step step alarm access"; row-gap: 8px; }
+  .seg-type { display: grid; grid-template-columns: 40px 1fr auto auto; grid-template-areas: "badge name name del" "step step alarm access" "prep prep prep prep"; row-gap: 8px; }
   .seg-type > .badge { grid-area: badge; }
   .seg-type > .grow { grid-area: name; }
   .seg-type > .num-step { grid-area: step; justify-self: start; }
+  .seg-type > .prep-wrap { grid-area: prep; flex-direction: row; justify-self: start; gap: 8px; }
   .seg-type > label:nth-of-type(1) { grid-area: alarm; }
   .seg-type > label:nth-of-type(2) { grid-area: access; }
   .seg-type > .icon-btn { grid-area: del; }

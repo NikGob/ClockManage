@@ -72,28 +72,30 @@ export function mountPlan(root, ctx) {
           <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${SEG_STEP} мин" ${r.minutes + SEG_STEP > 240 || taken ? 'disabled' : ''}>${icon('add')}</button>
         </div>
         <div class="tools">
-          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 || taken ? 'disabled' : ''}>${icon('up')}</button>
-          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 || taken ? 'disabled' : ''}>${icon('down')}</button>
-          <button class="icon-btn interactive" data-a="del" aria-label="Удалить" ${taken ? 'disabled' : ''}>${icon('delete')}</button>
+          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
+          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
+          <button class="icon-btn interactive" data-a="del" aria-label="Удалить" data-tip="${taken ? 'Из плана уйдёт, а в журнале отрезок останется' : ''}">${icon('delete')}</button>
         </div></div>`;
       }
       const o = tpl ? null : r.orig;
-      // Started block during the lock: not below the time already worked; never deleted.
+      // Started block during the lock: not below the whole minutes worked. A block with less than
+      // a minute (a misclick start) may go; any other started block stays — close it instead.
       const minMinutes = o ? minFor(r) : STEP;
-      const canDelete = tpl || !(r.progress?.started || r.progress?.work_ms > 0);
+      const noise = !(r.progress?.work_ms >= 60000);
+      const canDelete = tpl || !(r.progress?.started || r.progress?.work_ms > 0) || noise;
       const parts = partsPreview(r.minutes, seg);
       const doneMin = r.progress ? Math.floor(r.progress.work_ms / 60000) : 0;
       const cls = r.fresh ? 'prow fresh' : 'prow';
       return `<div class="${cls}" data-i="${i}">
-        <input class="name" value="${esc(r.name)}" aria-label="Название блока ${i + 1}" maxlength="40" ${locked && o && r.progress?.started ? 'disabled' : ''}>
+        <input class="name" value="${esc(r.name)}" aria-label="Название блока ${i + 1}" maxlength="40" ${o && r.progress?.started && !noise ? 'disabled' : ''}>
         <div class="stepper" role="group" aria-label="Длительность">
           <button class="icon-btn interactive" data-a="minus" aria-label="Меньше на ${STEP} мин" ${r.minutes <= minMinutes ? 'disabled' : ''}>${icon('remove')}</button>
           <div class="val tnum${r.bump ? ' bump' : ''}">${hoursLabel(r.minutes)}<small>${parts.join(' + ')} мин</small></div>
           <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${STEP} мин" ${r.minutes + STEP > 480 ? 'disabled' : ''}>${icon('add')}</button>
         </div>
         <div class="tools">
-          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 || (locked && !tpl) ? 'disabled' : ''}>${icon('up')}</button>
-          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 || (locked && !tpl) ? 'disabled' : ''}>${icon('down')}</button>
+          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
+          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
           <button class="icon-btn interactive" data-a="del" aria-label="Удалить" ${canDelete ? '' : 'disabled'}>${icon('delete')}</button>
         </div>
         ${r.progress?.started ? `<div class="progress"><div class="linear" style="--v:${Math.min(1, doneMin / r.minutes)}"></div><span class="tnum">${doneMin} из ${r.minutes} мин${r.progress.done ? ' · готово' : ''}</span></div>` : ''}
@@ -105,7 +107,8 @@ export function mountPlan(root, ctx) {
 
   function minFor(r) {
     const touched = !!(r.progress?.started || r.progress?.work_ms > 0);
-    return locked && touched ? Math.max(1, Math.ceil(r.progress.work_ms / 60000)) : STEP;
+    // Whole minutes worked, rounded down — the same limit the backend and the agent see.
+    return locked && touched ? Math.max(1, Math.floor(r.progress.work_ms / 60000)) : STEP;
   }
 
   function markDirty() {

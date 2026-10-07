@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::clock::{Ts, MIN};
 use crate::config::Config;
-use crate::day::{DayState, Mode, Phase};
+use crate::day::{worked_min, DayState, Mode, Phase};
 use crate::view;
 
 /// How far ahead the timeline is simulated.
@@ -37,7 +37,13 @@ pub struct Entry {
     /// Work of every plan block at `from`; the running block adds `now - from`.
     pub blocks_work_ms: Vec<i64>,
     /// Segment whose end is a loud alarm (a nap): the phone rings at `from + dur_ms`.
+    /// Always false while getting ready (`prep`): the alarm counts from "Лёг".
     pub alarm: bool,
+    /// Segment still getting ready: `from + dur_ms` is the end of the preparation — a reminder
+    /// to lie down, not the alarm. Waits for "Лёг".
+    pub prep: bool,
+    /// Segment "без времени": a stopwatch from `from`, no countdown and no end notices.
+    pub stopwatch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -73,6 +79,8 @@ pub struct PhoneCan {
     pub edit_plan: bool,
     /// "Закончил" / "Встал" for the running segment.
     pub end_segment: bool,
+    /// "Лёг": the running segment is getting ready.
+    pub lay_down: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -111,13 +119,16 @@ fn entry(d: &DayState, cfg: &Config, t: Ts) -> Entry {
             (d.pause.as_ref().map(|p| p.since).unwrap_or(t), None, true, *elapsed_ms, *dur_ms)
         }
         Phase::Await { since, .. } | Phase::Lunch { since, .. } => (*since, None, false, 0, 0),
-        // Waits for the user, but has a planned end: the phone counts down to `from + dur_ms`.
-        Phase::Segment { rec, .. } => (d.segments[*rec].start, None, false, 0, d.segments[*rec].planned_ms()),
+        // Waits for the user, but has a planned end: the phone counts down to `from + dur_ms`
+        // (the preparation while getting ready, then the segment from "Лёг").
+        Phase::Segment { rec, .. } => (d.segments[*rec].countdown_from(), None, false, 0, v.dur_ms),
         Phase::Done => (d.completed_at.unwrap_or(0), None, false, 0, 0),
         Phase::Idle => (0, None, false, 0, 0),
     };
     Entry {
-        alarm: v.alarm,
+        alarm: v.alarm && !v.prep && !v.stopwatch,
+        prep: v.prep,
+        stopwatch: v.stopwatch,
         from,
         until,
         kind: v.kind,
@@ -183,7 +194,8 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
                 parts: d.block_parts(i),
                 parts_done: p.parts_done,
                 kind: b.kind,
-                min_minutes: if locked && touched { ((d.block_work_live(i, now) + MIN - 1) / MIN).max(1) as u32 } else { 1 },
+                // The same floor as everywhere: whole minutes worked, rounded down.
+                min_minutes: if locked && touched && !b.is_break() { worked_min(d.block_work_live(i, now)).max(1) } else { 1 },
             }
         })
         .collect();
@@ -209,6 +221,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
             start_next: matches!(v.phase.kind.as_str(), "await" | "lunch"),
             edit_plan: d.mode == Mode::Plan,
             end_segment: v.can.end_segment,
+            lay_down: v.can.lay_down,
         },
         sites: cfg.blocklist.sites.clone(),
         apps: cfg.phone.apps.clone(),
@@ -292,8 +305,9 @@ mod tests {
         let s = t("2026-09-28T10:00:00Z");
         let mut d = crate::DayState::new(s, &c);
         d.start_day(s, &c).unwrap();
-        let snap = snapshot(&d, &c, s + 20 * MIN + 1);
-        assert_eq!(snap.blocks[0].min_minutes, 21);
+        // 20 min and a bit: 20, like done_min and the "can't cut below" limit.
+        let snap = snapshot(&d, &c, s + 20 * MIN + 40_000);
+        assert_eq!(snap.blocks[0].min_minutes, 20);
         assert_eq!(snap.blocks[1].min_minutes, 1);
         assert!(snap.lock.blocked);
     }

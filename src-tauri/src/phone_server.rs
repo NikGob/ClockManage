@@ -397,10 +397,13 @@ fn action(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
             "resume" => g.day.resume(now),
             "start_next" => g.day.start_next(now),
             "end_segment" => g.day.end_segment(now),
+            "lay_down" => g.day.lay_down(now),
+            "segment_stopwatch" => g.day.set_segment_mode(now, true),
+            "segment_timer" => g.day.set_segment_mode(now, false),
             _ => Err("Неизвестное действие.".into()),
         }
     });
-    if r.is_ok() && act == "start_next" {
+    if r.is_ok() && matches!(act, "start_next" | "end_segment" | "lay_down") {
         crate::app::hide_overlay_window(&shared.app);
     }
     r
@@ -416,7 +419,7 @@ fn plan(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
     let mut blocks: Vec<PlanBlock> = shared.lock().day.plan.clone();
     let blk = blocks.get_mut(i).ok_or("Нет такого блока.")?;
     blk.minutes = minutes as u32;
-    crate::app::apply_plan(shared, blocks, false, "phone").map(|_| ())
+    crate::app::apply_plan(shared, blocks, &[], false, "phone").map(|_| ())
 }
 
 /// `{"apps": ["org.telegram.messenger", ...]}`: phone block list (during the lock only grows).

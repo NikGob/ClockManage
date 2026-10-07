@@ -1,5 +1,8 @@
 //! Persistent user configuration (config.json).
 
+use std::collections::BTreeMap;
+
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::day::PlanBlock;
@@ -102,6 +105,21 @@ pub enum DayKind {
 }
 
 impl DayKind {
+    pub const ALL: [DayKind; 3] = [DayKind::Full, DayKind::Light, DayKind::Off];
+
+    /// "full" | "light" | "off" — the same names as in config.json.
+    pub fn key(self) -> &'static str {
+        match self {
+            DayKind::Full => "full",
+            DayKind::Light => "light",
+            DayKind::Off => "off",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<DayKind> {
+        DayKind::ALL.into_iter().find(|k| k.key() == s.trim())
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             DayKind::Full => "Полный",
@@ -176,23 +194,42 @@ pub struct SegmentType {
     pub alarm: bool,
     /// Blocked sites/apps open while it runs (until its planned end), like the old "ем за ПК".
     pub open_access: bool,
+    /// Time to get ready before the countdown (coffee, getting to bed): the segment waits for
+    /// "Лёг", only reminds when this is up. 0 = the countdown starts at once. Configs from
+    /// before 0.4.7 have none: an alarm segment (a nap) gets [`DEFAULT_PREP_MIN`].
+    pub prep_min: Option<u32>,
+}
+
+impl SegmentType {
+    pub fn prep(&self) -> u32 {
+        self.prep_min.unwrap_or(if self.alarm { DEFAULT_PREP_MIN } else { 0 })
+    }
 }
 
 impl Default for SegmentType {
     fn default() -> Self {
-        Self { name: "Отрезок".into(), minutes: 15, alarm: false, open_access: false }
+        Self { name: "Отрезок".into(), minutes: 15, alarm: false, open_access: false, prep_min: None }
     }
 }
 
 pub fn default_segments(lunch_min: u32) -> Vec<SegmentType> {
     vec![
-        SegmentType { name: "Обед".into(), minutes: lunch_min, alarm: false, open_access: false },
-        SegmentType { name: "Сон".into(), minutes: 20, alarm: true, open_access: false },
-        SegmentType { name: "Прогулка".into(), minutes: 15, alarm: false, open_access: false },
+        SegmentType { name: "Обед".into(), minutes: lunch_min, ..Default::default() },
+        SegmentType { name: "Сон".into(), minutes: 20, alarm: true, prep_min: Some(DEFAULT_PREP_MIN), ..Default::default() },
+        SegmentType { name: "Прогулка".into(), minutes: 15, ..Default::default() },
     ]
 }
 
 pub const MAX_SEGMENT_MIN: u32 = 240;
+/// Preparation before a nap unless the type says otherwise.
+pub const DEFAULT_PREP_MIN: u32 = 10;
+pub const MAX_PREP_MIN: u32 = 60;
+
+/// Weekday keys, Monday..Sunday (the order of `Config::week`).
+pub const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+/// How many days ahead a plan may be set for one date.
+pub const MAX_PLAN_AHEAD_DAYS: i64 = 60;
 
 /// A phone paired over the local network.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -275,6 +312,9 @@ pub struct Config {
     #[serde(default = "Vec::new")]
     pub segments: Vec<SegmentType>,
     pub phone: Phone,
+    /// Plans set ahead for particular dates (MCP `set_plan` with `date`): that day starts with
+    /// it instead of its profile's template. Dropped once that date's day exists.
+    pub plan_overrides: BTreeMap<NaiveDate, Vec<PlanBlock>>,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
     pub study_days: Option<[bool; 7]>,
@@ -314,6 +354,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             segments: default_segments(45),
             phone: Phone::default(),
+            plan_overrides: BTreeMap::new(),
             study_days: None,
             plan_template: None,
         }
@@ -331,6 +372,23 @@ pub struct EditContext {
 impl Config {
     pub fn profile(&self, k: DayKind) -> &DayProfile {
         self.profiles.get(k)
+    }
+
+    /// Kind of a day on `date` by the week schedule.
+    pub fn kind_on(&self, date: NaiveDate) -> DayKind {
+        self.week[date.weekday().num_days_from_monday() as usize]
+    }
+
+    /// The plan a day on `date` starts with: the one set ahead for that date, else the template.
+    pub fn plan_on(&self, date: NaiveDate) -> &Vec<PlanBlock> {
+        self.plan_overrides.get(&date).unwrap_or(&self.profile(self.kind_on(date)).plan)
+    }
+
+    /// Drop plans set ahead for `date` and earlier: those days have their own plan now.
+    pub fn drop_overrides_through(&mut self, date: NaiveDate) -> bool {
+        let n = self.plan_overrides.len();
+        self.plan_overrides.retain(|d, _| *d > date);
+        n != self.plan_overrides.len()
     }
 
     /// The segment type called `name` (case-insensitive).
@@ -378,7 +436,8 @@ impl Config {
             if name.is_empty() || segs.iter().any(|s| s.name.to_lowercase() == name.to_lowercase()) {
                 continue;
             }
-            segs.push(SegmentType { name, minutes: t.minutes.clamp(1, MAX_SEGMENT_MIN), ..t.clone() });
+            let prep_min = Some(t.prep().min(MAX_PREP_MIN));
+            segs.push(SegmentType { name, minutes: t.minutes.clamp(1, MAX_SEGMENT_MIN), prep_min, ..t.clone() });
         }
         segs.truncate(10);
         self.segments = segs;
@@ -387,13 +446,18 @@ impl Config {
         }
         self.phone.apps = normalize_list(&self.phone.apps, normalize_package);
         self.phone.devices.retain(|d| d.token.len() >= 16);
-        for k in [DayKind::Full, DayKind::Light, DayKind::Off] {
-            let plan = &mut self.profiles.get_mut(k).plan;
+        let p = &mut self.profiles;
+        let plans = [&mut p.full.plan, &mut p.light.plan, &mut p.off.plan].into_iter().chain(self.plan_overrides.values_mut());
+        for plan in plans {
             for b in plan.iter_mut() {
                 b.normalize();
             }
             plan.retain(|b| b.minutes > 0);
             plan.truncate(16);
+        }
+        self.plan_overrides.retain(|_, p| !p.is_empty());
+        while self.plan_overrides.len() > MAX_PLAN_AHEAD_DAYS as usize {
+            self.plan_overrides.pop_last();
         }
         if self.emergency_phrase.trim().chars().count() < 30 {
             self.emergency_phrase = DEFAULT_PHRASE.into();
@@ -443,8 +507,8 @@ impl Config {
         }
         for t in &new.segments {
             match self.segment_type(&t.name) {
-                Some(old) if t.minutes > old.minutes => {
-                    return Err(format!("Во время учёбы отрезок «{}» можно только сократить.", old.name));
+                Some(old) if t.minutes > old.minutes || t.prep() > old.prep() => {
+                    return Err(format!("Во время учёбы отрезок «{}» можно только сократить (и его подготовку тоже).", old.name));
                 }
                 Some(old) if t.open_access && !old.open_access => {
                     return Err("Доступ на время отрезка включается только вне блокировки.".into());
@@ -621,6 +685,9 @@ mod tests {
         assert_eq!(c.segments.len(), 3);
         assert_eq!(c.segment_type("обед").unwrap().minutes, 60);
         assert!(c.segment_type("Сон").unwrap().alarm);
+        // A nap gets 10 minutes to get ready, other segments start their countdown at once.
+        assert_eq!(c.segment_type("Сон").unwrap().prep_min, Some(10));
+        assert_eq!(c.segment_type("Обед").unwrap().prep_min, Some(0));
         let ctx = EditContext { locked: true };
         let mut n = c.clone();
         n.segments[0].minutes = 30;
@@ -633,6 +700,25 @@ mod tests {
         n.segments[0].open_access = true;
         assert!(c.check_update(&n, ctx).is_err());
         assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
+        let mut n = c.clone();
+        n.segments[1].prep_min = Some(20);
+        assert!(c.check_update(&n, ctx).is_err());
+        n.segments[1].prep_min = Some(5);
+        assert!(c.check_update(&n, ctx).is_ok());
+    }
+
+    #[test]
+    fn nap_from_an_old_config_gets_its_preparation() {
+        // 0.4.6 configs have no prep_min: a nap gets the default, a walk none.
+        let mut c: Config = serde_json::from_str(
+            r#"{"segments":[{"name":"Сон","minutes":20,"alarm":true},{"name":"Прогулка","minutes":15}]}"#,
+        )
+        .unwrap();
+        c.normalize();
+        assert_eq!(c.segment_type("Сон").unwrap().prep(), DEFAULT_PREP_MIN);
+        assert_eq!(c.segment_type("Прогулка").unwrap().prep(), 0);
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.segment_type("Сон").unwrap().prep_min, Some(DEFAULT_PREP_MIN));
     }
 
     #[test]

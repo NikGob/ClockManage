@@ -23,6 +23,8 @@ object Alarms {
     private const val ID_STATUS = 1
     private const val ID_ALARM = 2
     private const val ID_WAKE = 3
+    /** "Пора ложиться": cleared as soon as a sync shows the preparation is over. */
+    private const val ID_PREP = 4
     /** While the nap alarm rings, check with the PC this often (it may have been ended there). */
     private const val WAKE_RECHECK_MS = 30_000L
     /** Over-time reminder for other segments. */
@@ -76,6 +78,8 @@ object Alarms {
             // to hear quickly that "Встал" was pressed on the PC).
             // Steps are counted from the planned end, not from "now": re-arming on every sync
             // must not push the reminder further away.
+            // A stopwatch has no end: nothing to wake up for until the next sync.
+            cur != null && cur.segment && cur.stopwatch -> null
             cur != null && cur.segment -> if (cur.segmentEnd > now) cur.segmentEnd else {
                 val step = if (cur.alarm) WAKE_RECHECK_MS else OVERRUN_MS
                 cur.segmentEnd + ((now - cur.segmentEnd) / step + 1) * step
@@ -100,6 +104,7 @@ object Alarms {
             }
         }
         if (cur == null || !cur.segment) ctx.getSystemService(NotificationManager::class.java).cancel(ID_WAKE)
+        if (cur == null || !cur.prep) ctx.getSystemService(NotificationManager::class.java).cancel(ID_PREP)
         status(ctx, snap)
         TimerWidget.update(ctx)
     }
@@ -133,8 +138,12 @@ object Alarms {
             .setCategory(Notification.CATEGORY_STATUS)
         if (e.running) {
             b.setUsesChronometer(true).setChronometerCountDown(true).setShowWhen(true).setWhen(e.until!! - s.offset)
+        } else if (e.segment && e.stopwatch) {
+            // "Без времени": counts up from the start.
+            b.setUsesChronometer(true).setChronometerCountDown(false).setShowWhen(true).setWhen(e.from - s.offset)
         } else if (e.segment) {
-            // Counts down to the planned end, then shows the over time as negative.
+            // Counts down to the planned end (of the preparation, while getting ready), then shows
+            // the over time as negative.
             b.setUsesChronometer(true).setChronometerCountDown(true).setShowWhen(true).setWhen(e.segmentEnd - s.offset)
         } else {
             b.setShowWhen(false)
@@ -143,6 +152,7 @@ object Alarms {
             e.paused -> b.addAction(Notification.Action.Builder(null, "Продолжить", actionIntent(ctx, "resume", null, 11)).build())
             e.kind == "work" -> b.addAction(Notification.Action.Builder(null, "Пауза", actionIntent(ctx, "pause", null, 12)).build())
             e.kind == "await" || e.kind == "lunch" -> b.addAction(Notification.Action.Builder(null, "Начать", actionIntent(ctx, "start_next", e.kind, 13)).build())
+            e.segment && e.prep -> b.addAction(Notification.Action.Builder(null, "Лёг", actionIntent(ctx, "lay_down", "segment", 17)).build())
             e.segment -> b.addAction(Notification.Action.Builder(null, if (e.alarm) "Встал" else "Закончил", actionIntent(ctx, "end_segment", "segment", 15)).build())
         }
         nm.notify(ID_STATUS, b.build())
@@ -170,6 +180,20 @@ object Alarms {
      */
     fun segmentOver(ctx: Context, e: Entry, overMs: Long) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (e.prep) {
+            // Getting ready is over: a reminder to lie down, never the alarm — that runs from "Лёг".
+            val n = Notification.Builder(ctx, CH_ALARM)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle("Пора ложиться")
+                .setContentText("${e.title} и будильник пойдут от «Лёг»")
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setContentIntent(open(ctx))
+                .setAutoCancel(true)
+                .addAction(Notification.Action.Builder(null, "Лёг", actionIntent(ctx, "lay_down", "segment", 18)).build())
+                .build()
+            nm.notify(ID_PREP, n)
+            return
+        }
         val over = if (overMs >= 60_000) " · +${Fmt.dur(overMs)}" else ""
         val n = Notification.Builder(ctx, if (e.alarm) CH_WAKE else CH_ALARM)
             .setSmallIcon(R.drawable.ic_stat)
@@ -190,6 +214,7 @@ object Alarms {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.cancel(ID_ALARM)
         nm.cancel(ID_WAKE)
+        nm.cancel(ID_PREP)
     }
 }
 
@@ -201,7 +226,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val now = s.now()
         val e = snap.entryAt(now)
         if (e != null && e.kind == "await" && now - e.from < 60_000) Alarms.breakOver(ctx, e)
-        if (e != null && e.segment && now >= e.segmentEnd && Store(ctx).notify) Alarms.segmentOver(ctx, e, now - e.segmentEnd)
+        if (e != null && e.segmentTimed && now >= e.segmentEnd && Store(ctx).notify) Alarms.segmentOver(ctx, e, now - e.segmentEnd)
         Alarms.schedule(ctx, snap)
         val done = goAsync()
         Sync.kick(ctx, force = true) { done.finish() }

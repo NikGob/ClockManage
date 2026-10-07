@@ -53,8 +53,20 @@ function render(s) {
       break;
     case 'segment': {
       const over = p.remaining_ms < 0;
+      if (p.stopwatch) {
+        frac = p.dur_ms ? Math.min(1, p.elapsed_ms / p.dur_ms) : 0;
+        setTime(mmss(p.elapsed_ms));
+        label = `${p.title} · без времени`;
+        btn = ['check', `Закончил ${p.title.toLowerCase()}`];
+        break;
+      }
       frac = over ? 1 : p.elapsed_ms / p.dur_ms;
       setTime(over ? `+${mmss(-p.remaining_ms)}` : mmss(p.remaining_ms));
+      if (p.prep) {
+        label = over ? `${p.title} · пора ложиться` : `${p.title} · подготовка`;
+        btn = ['bed', 'Лёг'];
+        break;
+      }
       label = over ? `${p.title} · превышено` : p.title;
       btn = p.alarm ? ['alarm', 'Встал'] : ['check', `Закончил ${p.title.toLowerCase()}`];
       break;
