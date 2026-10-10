@@ -47,7 +47,7 @@ impl Default for BlockList {
                 "discordapp.com",
                 "discord.gg",
                 "youtube.com/shorts",
-                "2ch.su/b",
+                "2ch.su",
             ]
             .iter()
             .map(|s| s.to_string())
