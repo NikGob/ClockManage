@@ -144,21 +144,26 @@ pub fn match_blocked_tab(exe: &str, title: &str, sites: &[String]) -> Option<Str
     })
 }
 
-/// Chromium URLBlocklist format: `x.com` (domain + subdomains) or `youtube.com/shorts`.
+/// Chromium URLBlocklist format: `x.com` (domain + subdomains) or `youtube.com/shorts/`.
+/// Chromium matches a path as a plain prefix, so a path rule ends with `/`: `2ch.su/b/` must
+/// not close `2ch.su/bo/` (the phone matches whole path segments too).
 pub fn chromium_rules(sites: &[String]) -> Vec<String> {
-    sites.to_vec()
+    sites.iter().map(|s| if s.contains('/') { format!("{s}/") } else { s.clone() }).collect()
 }
 
-/// Firefox WebsiteFilter match patterns.
+/// Firefox WebsiteFilter match patterns; a path rule covers the path itself and below it.
 pub fn firefox_rules(sites: &[String]) -> Vec<String> {
     let mut v = vec![];
     for s in sites {
-        let (host, path) = match s.split_once('/') {
-            Some((h, p)) => (h, format!("/{p}*")),
-            None => (s.as_str(), "/*".to_string()),
+        let paths = match s.split_once('/') {
+            Some((_, p)) => vec![format!("/{p}"), format!("/{p}/*")],
+            None => vec!["/*".to_string()],
         };
-        v.push(format!("*://{host}{path}"));
-        v.push(format!("*://*.{host}{path}"));
+        let host = s.split('/').next().unwrap_or(s);
+        for path in paths {
+            v.push(format!("*://{host}{path}"));
+            v.push(format!("*://*.{host}{path}"));
+        }
     }
     v
 }
@@ -757,6 +762,10 @@ mod tests {
     #[test]
     fn firefox_patterns() {
         let r = firefox_rules(&["youtube.com/shorts".into()]);
-        assert!(r.contains(&"*://*.youtube.com/shorts*".to_string()));
+        assert!(r.contains(&"*://*.youtube.com/shorts/*".to_string()) && r.contains(&"*://youtube.com/shorts".to_string()));
+        // A path rule closes its own path segment only: /b, not /bo.
+        let r = firefox_rules(&["2ch.su/b".into(), "x.com".into()]);
+        assert_eq!(r, ["*://2ch.su/b", "*://*.2ch.su/b", "*://2ch.su/b/*", "*://*.2ch.su/b/*", "*://x.com/*", "*://*.x.com/*"]);
+        assert_eq!(chromium_rules(&["2ch.su/b".into(), "x.com".into()]), ["2ch.su/b/", "x.com"]);
     }
 }
