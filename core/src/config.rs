@@ -47,6 +47,7 @@ impl Default for BlockList {
                 "discordapp.com",
                 "discord.gg",
                 "youtube.com/shorts",
+                "2ch.su",
             ]
             .iter()
             .map(|s| s.to_string())
@@ -413,18 +414,7 @@ impl Config {
         self.reminder_sec = self.reminder_sec.clamp(15, 600);
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
         self.blocklist.sites = normalize_list(&self.blocklist.sites, normalize_site);
-        self.blocklist.apps = normalize_list(&self.blocklist.apps, |s| {
-            // Only a bare file name: "C:\x\Steam.exe" -> "Steam.exe".
-            let s = s.trim().rsplit(['\\', '/']).next().unwrap_or("").trim();
-            let exe = if s.is_empty() {
-                return None;
-            } else if s.to_ascii_lowercase().ends_with(".exe") {
-                s.to_string()
-            } else {
-                format!("{s}.exe")
-            };
-            (!is_protected_app(&exe)).then_some(exe)
-        });
+        self.blocklist.apps = normalize_list(&self.blocklist.apps, normalize_app);
         // Configs from before 0.3 have no segment types: start from the defaults, lunch keeps
         // its old length.
         if self.segments.is_empty() {
@@ -528,6 +518,55 @@ impl Config {
         }
         Ok(())
     }
+
+    /// Add `sites` / `apps` to the block list, or take them out. Entries are normalized like the
+    /// settings screen does; the lock rules are checked by the caller (`check_update`).
+    pub fn edit_blocklist(&mut self, remove: bool, sites: &[String], apps: &[String]) -> BlocklistChange {
+        let mut ch = BlocklistChange::default();
+        ch.sites = edit_list(&mut self.blocklist.sites, sites, normalize_site, remove, &mut ch);
+        ch.apps = edit_list(&mut self.blocklist.apps, apps, normalize_app, remove, &mut ch);
+        ch
+    }
+}
+
+/// One list of `edit_blocklist`; returns the entries added (or removed).
+fn edit_list(list: &mut Vec<String>, input: &[String], normalize: fn(&str) -> Option<String>, remove: bool, ch: &mut BlocklistChange) -> Vec<String> {
+    let mut changed: Vec<String> = vec![];
+    for raw in input {
+        let Some(n) = normalize(raw) else {
+            ch.invalid.push(raw.trim().to_string());
+            continue;
+        };
+        let at = list.iter().position(|s| s.eq_ignore_ascii_case(&n));
+        match (remove, at) {
+            (false, None) => {
+                list.push(n.clone());
+                changed.push(n);
+            }
+            (true, Some(at)) => changed.push(list.remove(at)),
+            _ if !changed.iter().chain(&ch.unchanged).any(|s| s.eq_ignore_ascii_case(&n)) => ch.unchanged.push(n),
+            _ => {}
+        }
+    }
+    changed
+}
+
+/// What `edit_blocklist` did.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct BlocklistChange {
+    /// Sites added (or removed), as stored.
+    pub sites: Vec<String>,
+    pub apps: Vec<String>,
+    /// Already in the list (adding) or not in it (removing).
+    pub unchanged: Vec<String>,
+    /// Not a site / an exe name, or a system app that is never blocked.
+    pub invalid: Vec<String>,
+}
+
+impl BlocklistChange {
+    pub fn is_empty(&self) -> bool {
+        self.sites.is_empty() && self.apps.is_empty()
+    }
 }
 
 fn normalize_list(v: &[String], f: impl Fn(&str) -> Option<String>) -> Vec<String> {
@@ -551,6 +590,19 @@ const PROTECTED_APPS: [&str; 22] = [
     "shellexperiencehost.exe", "conhost.exe", "msedgewebview2.exe", "clockmanage.exe",
     "cm-guard.exe", "system",
 ];
+
+/// Only a bare file name: "C:\x\Steam" -> "Steam.exe". System apps are dropped.
+pub fn normalize_app(s: &str) -> Option<String> {
+    let s = s.trim().rsplit(['\\', '/']).next().unwrap_or("").trim();
+    let exe = if s.is_empty() {
+        return None;
+    } else if s.to_ascii_lowercase().ends_with(".exe") {
+        s.to_string()
+    } else {
+        format!("{s}.exe")
+    };
+    (!is_protected_app(&exe)).then_some(exe)
+}
 
 pub fn is_protected_app(exe: &str) -> bool {
     let e = exe.to_ascii_lowercase();
@@ -618,6 +670,27 @@ mod tests {
         c.blocklist.apps = vec!["explorer.exe".into(), "Steam".into(), r"C:\Games\Epic.exe".into(), "ClockManage.exe".into()];
         c.normalize();
         assert_eq!(c.blocklist.apps, vec!["Steam.exe".to_string(), "Epic.exe".to_string()]);
+    }
+
+    #[test]
+    fn blocklist_edits() {
+        let mut c = Config::default();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let ch = c.edit_blocklist(false, &s(&["https://www.YouTube.com/", "X.com", "nonsense", "youtube.com"]), &s(&["Steam", r"C:\x\telegram.exe", "explorer.exe", " "]));
+        assert_eq!(ch.sites, s(&["youtube.com"]));
+        assert_eq!(ch.apps, s(&["Steam.exe"]));
+        assert_eq!(ch.unchanged, s(&["x.com", "telegram.exe"]));
+        assert_eq!(ch.invalid, s(&["nonsense", "explorer.exe", ""]));
+        assert!(c.blocklist.sites.contains(&"youtube.com".to_string()) && c.blocklist.apps.contains(&"Steam.exe".to_string()));
+
+        let before = c.clone();
+        let ch = c.edit_blocklist(true, &s(&["YOUTUBE.com", "reddit.com"]), &s(&["steam.exe"]));
+        assert_eq!((ch.sites, ch.apps, ch.unchanged), (s(&["youtube.com"]), s(&["Steam.exe"]), s(&["reddit.com"])));
+        assert!(!c.blocklist.sites.contains(&"youtube.com".to_string()));
+        // Removing is what the lock forbids.
+        assert!(before.check_update(&c, EditContext { locked: true }).is_err());
+        assert!(before.check_update(&c, EditContext { locked: false }).is_ok());
+        assert!(c.edit_blocklist(true, &[], &[]).is_empty());
     }
 
     #[test]

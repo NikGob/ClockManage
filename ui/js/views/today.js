@@ -2,7 +2,7 @@ import { call, mmss, dur, esc } from '../api.js';
 import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
-import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm } from '../ui.js';
+import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm, tsHm } from '../ui.js';
 import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog } from './dialogs.js';
 
 export function endLabel(v) {
@@ -104,6 +104,7 @@ export function mountToday(root, ctx) {
     switch (L.reason) {
       case 'study': ic = 'lock'; text = 'Блокировка включена'; when = `${endBtn(`до ${endLabel(v)}`)} или до конца плана`; break;
       case 'single': ic = 'lock'; text = 'Блокировка на время таймера'; break;
+      case 'focus': ic = 'lock'; text = 'Фокус-блокировка'; when = `до ${tsHm(L.focus_until, meta.tz_offset_min)}`; break;
       case 'pause_access': text = 'Доступ открыт на паузе'; when = left; cls = 'open'; action = 'end'; break;
       case 'emergency': text = 'Аварийный доступ'; when = left; cls = 'open'; action = 'end'; break;
       case 'lunch_at_pc': text = 'Обед за ПК — доступ открыт'; when = left; cls = 'open'; break;
@@ -120,6 +121,7 @@ export function mountToday(root, ctx) {
       case 'not_study_day': text = offText; break;
       default: text = '';
     }
+    if (L.focus_until && (L.reason === 'study' || L.reason === 'single')) when += ` · фокус до ${tsHm(L.focus_until, meta.tz_offset_min)}`;
     if (L.base && !['pause_access', 'emergency'].includes(L.reason) && v.can.emergency) action = 'emergency';
     if (!meta.admin && L.base) { text += ' · нет прав администратора'; cls = 'open'; }
     const btn = action === 'end'
@@ -300,7 +302,7 @@ export function mountToday(root, ctx) {
     let html = '';
     let warn = false;
     if (p && v.lock.base) {
-      if (meta.pause_access) {
+      if (meta.pause_access && !v.lock.focus_until) {
         const open = p.access_left_ms > 0;
         warn = !open;
         html = `<div class="row1">${icon(open ? 'lock_open' : 'lock')}

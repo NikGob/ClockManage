@@ -28,9 +28,12 @@ pub struct McpServer {
     pub status: Mutex<McpStatus>,
 }
 
+/// Below 49152: Windows uses 49152–65535 as its dynamic range, and Hyper-V / WSL / Docker
+/// reserve blocks of it at every boot, so a port there can become unbindable after a restart
+/// and the server would move to a new port behind the client's back.
 pub fn random_port() -> u16 {
     use rand::Rng;
-    rand::thread_rng().gen_range(20_000..=64_999)
+    rand::thread_rng().gen_range(20_000..=49_151)
 }
 
 fn header(name: &str, value: &str) -> Header {

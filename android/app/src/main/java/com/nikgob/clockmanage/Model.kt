@@ -78,6 +78,10 @@ class Snapshot(
     val lockBlocked: Boolean,
     val lockReason: String,
     val lockUntil: Long?,
+    /** End of the focus lock (null: none, or an older PC). */
+    val focusUntil: Long?,
+    /** The study-day / single-timer lock alone, without the focus lock. */
+    val dayLock: Boolean,
     val doneAt: Long?,
     val blocks: List<Block>,
     val timeline: List<Entry>,
@@ -95,11 +99,16 @@ class Snapshot(
 
     /**
      * Should the phone block right now? Works offline from the last snapshot: the lock lasts
-     * until the day end, an access window ends, or the plan closes by itself.
+     * until the day end, an access window ends, or the plan closes by itself. A focus lock
+     * holds until its own end, past the day end and the plan; only an open access window
+     * (emergency) lets through.
      * A snapshot older than 20 hours is not trusted at all.
      */
     fun blockedAt(now: Long, syncedAt: Long): Boolean {
         if (now - syncedAt > 20 * HOUR) return false
+        val accessOpen = lockBase && !lockBlocked && lockUntil != null && now < lockUntil
+        if (focusUntil != null && now < focusUntil && !accessOpen) return true
+        if (!dayLock) return false
         if (!lockBase || now >= dayEndAt) return false
         if (doneAt != null && now >= doneAt) return false
         if (!lockBlocked) return lockUntil != null && now >= lockUntil
@@ -157,6 +166,8 @@ class Snapshot(
                 lockBlocked = lock.getBoolean("blocked"),
                 lockReason = lock.getString("reason"),
                 lockUntil = lock.longOrNull("until"),
+                focusUntil = lock.longOrNull("focus_until"),
+                dayLock = lock.optBoolean("day_lock", lock.getBoolean("base")),
                 doneAt = o.longOrNull("done_at"),
                 blocks = blocks,
                 timeline = timeline,

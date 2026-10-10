@@ -326,6 +326,12 @@ mod platform {
         let _ = std::process::Command::new("ipconfig").arg("/flushdns").creation_flags(CREATE_NO_WINDOW).status();
     }
 
+    /// Chromium rereads policies on a Group Policy refresh or every ~15 min; signal the refresh
+    /// so a rule added mid-lock applies now (behind a VPN extension hosts does nothing).
+    fn refresh_policies() {
+        unsafe { windows_sys::Win32::System::GroupPolicy::RefreshPolicyEx(1, 0) };
+    }
+
     fn read_list(key: &RegKey) -> Vec<String> {
         let mut v = vec![];
         for i in 1.. {
@@ -411,6 +417,7 @@ mod platform {
         a.active = true;
         a.sites = sites.to_vec();
         flush_dns();
+        refresh_policies();
         if errors.is_empty() {
             Ok(())
         } else {
@@ -439,6 +446,7 @@ mod platform {
         }
         if repaired {
             flush_dns();
+            refresh_policies();
         }
         Ok(())
     }
@@ -456,6 +464,7 @@ mod platform {
         a.sites.clear();
         a.ff_rules.clear();
         flush_dns();
+        refresh_policies();
         Ok(())
     }
 
