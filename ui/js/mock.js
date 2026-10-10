@@ -81,10 +81,13 @@ function snapshot() {
   const started = STATE !== 'idle';
   const paused = STATE === 'paused';
   const access = paused && cfg.pause_access;
-  const lock = STATE === 'idle' ? { blocked: false, base: false, reason: 'not_started', until: null }
-    : STATE === 'done' ? { blocked: false, base: false, reason: 'completed', until: null }
-      : access ? { blocked: false, base: true, reason: 'pause_access', until: t0 + 7 * MIN }
-        : { blocked: true, base: true, reason: 'study', until: null };
+  // `?focus=1`: a focus lock (start_focus_lock) runs for 95 more minutes.
+  const focus_until = q.get('focus') === '1' ? t0 + 95 * MIN : null;
+  const lock = focus_until && (STATE === 'idle' || STATE === 'done') ? { blocked: true, base: true, reason: 'focus', until: null, focus_until }
+    : STATE === 'idle' ? { blocked: false, base: false, reason: 'not_started', until: null, focus_until }
+      : STATE === 'done' ? { blocked: false, base: false, reason: 'completed', until: null, focus_until }
+        : access && !focus_until ? { blocked: false, base: true, reason: 'pause_access', until: t0 + 7 * MIN, focus_until }
+          : { blocked: true, base: true, reason: 'study', until: null, focus_until };
   return {
     view: {
       now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, mode: 'plan',
@@ -113,6 +116,7 @@ function snapshot() {
       emergency_min: 10, lunch_min: 45, segments: cfg.segments, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
       mini_contrast: cfg.appearance.mini_contrast,
       data_dir: 'C:\\Users\\nik\\AppData\\Roaming\\com.nikgob.clockmanage',
+      tz_offset_min: cfg.tz_offset_min,
     },
   };
 }

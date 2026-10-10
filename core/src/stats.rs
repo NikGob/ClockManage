@@ -68,6 +68,16 @@ pub struct EmergencyStats {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct FocusStats {
+    pub at: String,
+    pub until: String,
+    pub minutes: f64,
+    pub reason: Option<String>,
+    /// ui | mcp
+    pub by: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DayEndChangeStats {
     pub at: String,
     pub from: String,
@@ -103,6 +113,8 @@ pub struct DayStats {
     pub single_timer_min: f64,
     /// One-off shifts of this day's end, oldest first.
     pub day_end_changes: Vec<DayEndChangeStats>,
+    /// Focus locks of this day; one carried over from the day before starts when this day began.
+    pub focus_locks: Vec<FocusStats>,
 }
 
 fn m(ms: i64) -> f64 {
@@ -212,6 +224,11 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
                 reason: c.reason.clone(),
                 by: c.by.clone(),
             })
+            .collect(),
+        focus_locks: d
+            .focus
+            .iter()
+            .map(|f| FocusStats { at: iso(f.at), until: iso(f.until), minutes: m(f.until - f.at), reason: f.reason.clone(), by: f.by.clone() })
             .collect(),
     }
 }

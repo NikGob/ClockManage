@@ -71,12 +71,14 @@ pub fn try_quit(app: &AppHandle, shared: &Arc<Shared>) {
     let snap = shared.snapshot();
     if snap.view.lock.base {
         use tauri_plugin_notification::NotificationExt;
-        let _ = app
-            .notification()
-            .builder()
-            .title("Выйти нельзя")
-            .body("Идёт учебный день. Блокировка снимется после всех блоков или в конце дня.")
-            .show();
+        let body = match snap.view.lock.focus_until {
+            Some(u) if snap.view.lock.reason != "study" => format!(
+                "Идёт фокус-блокировка до {}. Раньше её снимает только аварийный доступ.",
+                clockmanage_core::clock::hm(u, snap.meta.tz_offset_min)
+            ),
+            _ => "Идёт учебный день. Блокировка снимется после всех блоков или в конце дня.".to_string(),
+        };
+        let _ = app.notification().builder().title("Выйти нельзя").body(body).show();
         show_main(app);
         return;
     }
