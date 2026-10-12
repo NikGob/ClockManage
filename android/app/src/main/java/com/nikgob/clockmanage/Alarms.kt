@@ -33,14 +33,14 @@ object Alarms {
     fun channels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CH_STATUS, L("Таймер", "Timer"), NotificationManager.IMPORTANCE_LOW).apply {
-                description = L("Что идёт сейчас и сколько осталось", "What is running and how much is left")
+            NotificationChannel(CH_STATUS, tr("today_timer"), NotificationManager.IMPORTANCE_LOW).apply {
+                description = tr("android_alarm_what_is_running_and_how_much")
                 setShowBadge(false)
             },
         )
         nm.createNotificationChannel(
-            NotificationChannel(CH_ALARM, L("Конец перерыва", "Break end"), NotificationManager.IMPORTANCE_HIGH).apply {
-                description = L("Перерыв окончен — пора начинать следующую часть", "The break is over — time to start the next part")
+            NotificationChannel(CH_ALARM, tr("android_alarm_break_end"), NotificationManager.IMPORTANCE_HIGH).apply {
+                description = tr("android_alarm_the_break_is_over_time_to")
                 setSound(
                     RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
                     AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(),
@@ -49,8 +49,8 @@ object Alarms {
             },
         )
         nm.createNotificationChannel(
-            NotificationChannel(CH_WAKE, L("Будильник сна", "Nap alarm"), NotificationManager.IMPORTANCE_HIGH).apply {
-                description = L("Конец отрезка «Сон»: звонит, пока не нажмёшь «Встал»", "End of a nap: rings until you press “I’m up”")
+            NotificationChannel(CH_WAKE, tr("android_alarm_nap_alarm"), NotificationManager.IMPORTANCE_HIGH).apply {
+                description = tr("android_alarm_end_of_a_nap_rings_until")
                 setSound(
                     RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
                     AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(),
@@ -130,8 +130,8 @@ object Alarms {
         }
         val b = Notification.Builder(ctx, CH_STATUS)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle(if (e.paused) L("Пауза · ${e.title}", "Paused · ${e.title}") else e.title)
-            .setContentText(e.subtitle.ifEmpty { if (snap.lockBase) L("Блокировка включена", "Lock on") else "" })
+            .setContentTitle(if (e.paused) tr("android_alarm_paused", "title" to e.title) else e.title)
+            .setContentText(e.subtitle.ifEmpty { if (snap.lockBase) tr("app_tray_lock_on") else "" })
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open(ctx))
@@ -149,11 +149,11 @@ object Alarms {
             b.setShowWhen(false)
         }
         when {
-            e.paused -> b.addAction(Notification.Action.Builder(null, L("Продолжить", "Resume"), actionIntent(ctx, "resume", null, 11)).build())
-            e.kind == "work" -> b.addAction(Notification.Action.Builder(null, L("Пауза", "Pause"), actionIntent(ctx, "pause", null, 12)).build())
-            e.kind == "await" || e.kind == "lunch" -> b.addAction(Notification.Action.Builder(null, L("Начать", "Start"), actionIntent(ctx, "start_next", e.kind, 13)).build())
-            e.segment && e.prep -> b.addAction(Notification.Action.Builder(null, L("Лёг", "In bed"), actionIntent(ctx, "lay_down", "segment", 17)).build())
-            e.segment -> b.addAction(Notification.Action.Builder(null, if (e.alarm) L("Встал", "I’m up") else L("Закончил", "Done"), actionIntent(ctx, "end_segment", "segment", 15)).build())
+            e.paused -> b.addAction(Notification.Action.Builder(null, tr("app_resume"), actionIntent(ctx, "resume", null, 11)).build())
+            e.kind == "work" -> b.addAction(Notification.Action.Builder(null, tr("day_pause"), actionIntent(ctx, "pause", null, 12)).build())
+            e.kind == "await" || e.kind == "lunch" -> b.addAction(Notification.Action.Builder(null, tr("overlay_start"), actionIntent(ctx, "start_next", e.kind, 13)).build())
+            e.segment && e.prep -> b.addAction(Notification.Action.Builder(null, tr("app_in_bed"), actionIntent(ctx, "lay_down", "segment", 17)).build())
+            e.segment -> b.addAction(Notification.Action.Builder(null, if (e.alarm) tr("app_im_up") else tr("overlay_done"), actionIntent(ctx, "end_segment", "segment", 15)).build())
         }
         nm.notify(ID_STATUS, b.build())
     }
@@ -164,12 +164,12 @@ object Alarms {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         val n = Notification.Builder(ctx, CH_ALARM)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle(L("Перерыв окончен", "Break over"))
-            .setContentText(e.subtitle.ifEmpty { L("Пора начинать", "Time to start") })
+            .setContentTitle(tr("view_break_over"))
+            .setContentText(e.subtitle.ifEmpty { tr("android_alarm_time_to_start") })
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_ALARM)
             .setContentIntent(open(ctx))
-            .addAction(Notification.Action.Builder(null, L("Начать", "Start"), actionIntent(ctx, "start_next", "await", 14)).build())
+            .addAction(Notification.Action.Builder(null, tr("overlay_start"), actionIntent(ctx, "start_next", "await", 14)).build())
             .build()
         nm.notify(ID_ALARM, n)
     }
@@ -184,12 +184,12 @@ object Alarms {
             // Getting ready is over: a reminder to lie down, never the alarm — that runs from "Лёг".
             val n = Notification.Builder(ctx, CH_ALARM)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle(L("Пора ложиться", "Time to lie down"))
-                .setContentText(L("${e.title} и будильник пойдут от «Лёг»", "${e.title} and the alarm start from “In bed”"))
+                .setContentTitle(tr("app_time_to_lie_down"))
+                .setContentText(tr("android_alarm_and_the_alarm_start_from_in", "title" to e.title))
                 .setCategory(Notification.CATEGORY_REMINDER)
                 .setContentIntent(open(ctx))
                 .setAutoCancel(true)
-                .addAction(Notification.Action.Builder(null, L("Лёг", "In bed"), actionIntent(ctx, "lay_down", "segment", 18)).build())
+                .addAction(Notification.Action.Builder(null, tr("app_in_bed"), actionIntent(ctx, "lay_down", "segment", 18)).build())
                 .build()
             nm.notify(ID_PREP, n)
             return
@@ -197,13 +197,13 @@ object Alarms {
         val over = if (overMs >= 60_000) " · +${Fmt.dur(overMs)}" else ""
         val n = Notification.Builder(ctx, if (e.alarm) CH_WAKE else CH_ALARM)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle(if (e.alarm) L("Вставай! ${e.title} окончен$over", "Wake up! ${e.title} is over$over") else L("${e.title} окончен$over", "${e.title} is over$over"))
+            .setContentTitle(if (e.alarm) tr("android_alarm_wake_up_is_over", "title" to e.title, "over" to over) else tr("android_alarm_is_over", "title" to e.title, "over" to over))
             .setContentText(e.subtitle)
             .setCategory(Notification.CATEGORY_ALARM)
             .setContentIntent(open(ctx))
             .setFullScreenIntent(open(ctx), e.alarm)
             .setOngoing(e.alarm)
-            .addAction(Notification.Action.Builder(null, if (e.alarm) L("Встал", "I’m up") else L("Закончил", "Done"), actionIntent(ctx, "end_segment", "segment", 16)).build())
+            .addAction(Notification.Action.Builder(null, if (e.alarm) tr("app_im_up") else tr("overlay_done"), actionIntent(ctx, "end_segment", "segment", 16)).build())
             .build()
         if (e.alarm) n.flags = n.flags or Notification.FLAG_INSISTENT
         // A nap keeps one ringing notification; other segments remind again every 5 minutes.

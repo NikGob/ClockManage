@@ -67,7 +67,7 @@ object Updater {
             c.connectTimeout = 4000
             c.readTimeout = 15000
             c.setRequestProperty("Authorization", "Bearer ${s.token}")
-            if (c.responseCode != 200) return L("ПК не отдал APK (${c.responseCode})", "The PC didn’t serve the APK (${c.responseCode})")
+            if (c.responseCode != 200) return tr("android_update_the_pc_didnt_serve_the_apk", "response_code" to c.responseCode)
             val total = c.contentLengthLong.coerceAtLeast(1)
             c.inputStream.use { inp ->
                 file.outputStream().use { out ->
@@ -86,7 +86,7 @@ object Updater {
             }
             c.disconnect()
         } catch (e: Exception) {
-            return L("Не скачалось: ${e.message ?: "нет связи с ПК"}", "Download failed: ${e.message ?: "no connection to the PC"}")
+            return tr("android_update_download_failed", "error" to (e.message ?: tr("android_update_no_connection")))
         }
         return try {
             val installer = ctx.packageManager.packageInstaller
@@ -104,7 +104,7 @@ object Updater {
             }
             null
         } catch (e: Exception) {
-            L("Установка не началась: ${e.message}", "Installation didn’t start: ${e.message}")
+            tr("android_update_installation_didnt_start", "message" to e.message)
         }
     }
 }
@@ -120,8 +120,8 @@ class InstallReceiver : BroadcastReceiver() {
             }
             PackageInstaller.STATUS_SUCCESS -> Unit // the app restarts as the new version
             else -> {
-                val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: L("ошибка", "error")
-                Toast.makeText(ctx, L("Обновление не установилось: $msg", "The update didn’t install: $msg"), Toast.LENGTH_LONG).show()
+                val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: tr("android_update_error")
+                Toast.makeText(ctx, tr("android_update_the_update_didnt_install", "msg" to msg), Toast.LENGTH_LONG).show()
             }
         }
     }

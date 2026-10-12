@@ -6,7 +6,7 @@ use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::day::PlanBlock;
-use crate::i18n::{pick, LangPref};
+use crate::i18n::{tr, LangPref};
 use crate::tr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -125,9 +125,9 @@ impl DayKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            DayKind::Full => pick("Полный", "Full"),
-            DayKind::Light => pick("Лёгкий", "Light"),
-            DayKind::Off => pick("Выходной", "Day off"),
+            DayKind::Full => tr("config_full"),
+            DayKind::Light => tr("config_light"),
+            DayKind::Off => tr("config_day_off"),
         }
     }
 }
@@ -154,14 +154,14 @@ impl Default for Profiles {
         Self {
             full: DayProfile {
                 plan: vec![
-                    PlanBlock::new(pick("Математика", "Math"), 90),
-                    PlanBlock::new(pick("Словацкий", "Languages"), 90),
-                    PlanBlock::new(pick("Экстернат", "Project"), 150),
+                    PlanBlock::new(tr("config_math"), 90),
+                    PlanBlock::new(tr("config_languages"), 90),
+                    PlanBlock::new(tr("config_project"), 150),
                 ],
                 block: true,
             },
             light: DayProfile {
-                plan: vec![PlanBlock::new(pick("Математика", "Math"), 60), PlanBlock::new(pick("Словацкий", "Languages"), 60)],
+                plan: vec![PlanBlock::new(tr("config_math"), 60), PlanBlock::new(tr("config_languages"), 60)],
                 block: true,
             },
             off: DayProfile { plan: vec![], block: false },
@@ -211,15 +211,15 @@ impl SegmentType {
 
 impl Default for SegmentType {
     fn default() -> Self {
-        Self { name: pick("Отрезок", "Segment").into(), minutes: 15, alarm: false, open_access: false, prep_min: None }
+        Self { name: tr("config_segment").into(), minutes: 15, alarm: false, open_access: false, prep_min: None }
     }
 }
 
 pub fn default_segments(lunch_min: u32) -> Vec<SegmentType> {
     vec![
-        SegmentType { name: pick("Обед", "Lunch").into(), minutes: lunch_min, ..Default::default() },
-        SegmentType { name: pick("Сон", "Nap").into(), minutes: 20, alarm: true, prep_min: Some(DEFAULT_PREP_MIN), ..Default::default() },
-        SegmentType { name: pick("Прогулка", "Walk").into(), minutes: 15, ..Default::default() },
+        SegmentType { name: tr("config_lunch").into(), minutes: lunch_min, ..Default::default() },
+        SegmentType { name: tr("config_nap").into(), minutes: 20, alarm: true, prep_min: Some(DEFAULT_PREP_MIN), ..Default::default() },
+        SegmentType { name: tr("config_walk").into(), minutes: 15, ..Default::default() },
     ]
 }
 
@@ -281,10 +281,7 @@ impl Default for Phone {
 }
 
 pub fn default_phrase() -> &'static str {
-    pick(
-        "Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе",
-        "I am consciously interrupting my study day, I understand this goes to the log, and I will be back to work in ten minutes",
-    )
+    tr("config_i_am_consciously_interrupting_my_study")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -470,61 +467,60 @@ impl Config {
         }
         if new.pause_access != self.pause_access {
             return Err(tr!(
-                "Доступ на паузе меняется до начала учебного дня или после {}.",
-                "Access on pause can only be changed before the study day starts or after {}.",
-                fmt_hm(self.day_end_min)
+                "config_access_on_pause_can_only_be",
+                day_end_min = fmt_hm(self.day_end_min),
             ));
         }
         let lower = |v: &[String]| v.iter().map(|s| s.to_ascii_lowercase()).collect::<Vec<_>>();
         let new_sites = lower(&new.blocklist.sites);
         if lower(&self.blocklist.sites).iter().any(|s| !new_sites.contains(s)) {
-            return Err(tr!("Во время блокировки сайты можно только добавлять.", "While the lock is on, sites can only be added."));
+            return Err(tr!("config_while_the_lock_is_on_sites"));
         }
         let new_apps = lower(&new.blocklist.apps);
         if lower(&self.blocklist.apps).iter().any(|s| !new_apps.contains(s)) {
-            return Err(tr!("Во время блокировки приложения можно только добавлять.", "While the lock is on, apps can only be added."));
+            return Err(tr!("config_while_the_lock_is_on_apps"));
         }
         let new_phone = lower(&new.phone.apps);
         if lower(&self.phone.apps).iter().any(|s| !new_phone.contains(s)) {
-            return Err(tr!("Во время блокировки приложения телефона можно только добавлять.", "While the lock is on, phone apps can only be added."));
+            return Err(tr!("config_while_the_lock_is_on_phone"));
         }
         // Today is pinned in the day state, so the week and the profiles only shape future days.
         if new.day_end_min < self.day_end_min {
-            return Err(tr!("Во время учёбы конец дня можно только сдвинуть позже.", "During the study day the day end can only move later."));
+            return Err(tr!("config_during_the_study_day_the_day"));
         }
         if new.tz_offset_min != self.tz_offset_min {
-            return Err(tr!("Часовой пояс меняется только вне блокировки.", "The time zone can only be changed outside the lock."));
+            return Err(tr!("config_the_time_zone_can_only_be"));
         }
         if new.timing.work_segment_min != self.timing.work_segment_min {
-            return Err(tr!("Длина отрезка меняется только вне блокировки.", "The work part length can only be changed outside the lock."));
+            return Err(tr!("config_the_work_part_length_can_only"));
         }
         let t = (&new.timing, &self.timing);
         if t.0.short_break_min > t.1.short_break_min
             || t.0.between_blocks_min > t.1.between_blocks_min
             || t.0.lunch_min > t.1.lunch_min
         {
-            return Err(tr!("Во время учёбы перерывы и обед можно только сократить.", "During the study day breaks and lunch can only get shorter."));
+            return Err(tr!("config_during_the_study_day_breaks_and"));
         }
         for t in &new.segments {
             match self.segment_type(&t.name) {
                 Some(old) if t.minutes > old.minutes || t.prep() > old.prep() => {
-                    return Err(tr!("Во время учёбы отрезок «{}» можно только сократить (и его подготовку тоже).", "During the study day the segment “{}” can only get shorter (its preparation too).", old.name));
+                    return Err(tr!("config_during_the_study_day_the_segment", name = old.name));
                 }
                 Some(old) if t.open_access && !old.open_access => {
-                    return Err(tr!("Доступ на время отрезка включается только вне блокировки.", "Access during a segment can only be turned on outside the lock."));
+                    return Err(tr!("config_access_during_a_segment_can_only"));
                 }
-                None if t.open_access => return Err(tr!("Доступ на время отрезка включается только вне блокировки.", "Access during a segment can only be turned on outside the lock.")),
+                None if t.open_access => return Err(tr!("config_access_during_a_segment_can_only")),
                 _ => {}
             }
         }
         if new.emergency_min > self.emergency_min || new.emergency_phrase != self.emergency_phrase {
-            return Err(tr!("Аварийный доступ настраивается только вне блокировки.", "Emergency access can only be configured outside the lock."));
+            return Err(tr!("config_emergency_access_can_only_be_configured"));
         }
         if new.pause_access_min > self.pause_access_min {
-            return Err(tr!("Лимит доступа на паузе нельзя увеличить во время блокировки.", "The access-on-pause limit can’t be raised during the lock."));
+            return Err(tr!("config_the_access_on_pause_limit_cant"));
         }
         if !new.autostart && self.autostart {
-            return Err(tr!("Автозапуск нельзя выключить во время блокировки.", "Autostart can’t be turned off during the lock."));
+            return Err(tr!("config_autostart_cant_be_turned_off_during"));
         }
         Ok(())
     }

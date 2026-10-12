@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::config::{DayKind, WEEKDAYS};
 use crate::day::{PlanBlock, MAX_FOCUS_MIN};
-use crate::i18n::pick;
+use crate::i18n::tr;
 use crate::tr;
 
 pub const SERVER_NAME: &str = "clockmanage";
@@ -290,29 +290,29 @@ fn tool_result(r: Result<Value, String>) -> Value {
 fn parse_blocks(args: &Value) -> Result<Vec<PlanBlock>, String> {
     let (plan, close) = parse_items(args)?;
     if close.iter().any(|c| *c) {
-        return Err(tr!("close работает только в set_plan на сегодня: закрыть можно начатый блок сегодняшнего дня.", "close works only in set_plan for today: only a started block of today can be closed."));
+        return Err(tr!("mcp_close_works_only_in_set_plan"));
     }
     Ok(plan)
 }
 
 /// Plan items and their "close as is" flags.
 fn parse_items(args: &Value) -> Result<(Vec<PlanBlock>, Vec<bool>), String> {
-    let blocks = args.get("blocks").and_then(Value::as_array).ok_or(pick("Нужен массив blocks.", "blocks must be an array."))?;
+    let blocks = args.get("blocks").and_then(Value::as_array).ok_or(tr("mcp_blocks_must_be_an_array"))?;
     if blocks.len() > 16 {
-        return Err(tr!("Не больше 16 пунктов плана в день.", "No more than 16 plan items per day."));
+        return Err(tr!("mcp_no_more_than_16_plan_items"));
     }
     let mut plan = vec![];
     let mut close = vec![];
     for b in blocks {
-        let name = b.get("name").and_then(Value::as_str).ok_or(pick("У блока нет name.", "A block has no name."))?;
+        let name = b.get("name").and_then(Value::as_str).ok_or(tr("mcp_a_block_has_no_name"))?;
         let closing = b.get("close").and_then(Value::as_bool).unwrap_or(false);
         let is_break = match b.get("type").and_then(Value::as_str).unwrap_or("study") {
             "break" => true,
             "study" => false,
-            other => return Err(tr!("«{name}»: type бывает \"study\" или \"break\", а не «{other}».", "“{name}”: type is \"study\" or \"break\", not “{other}”.")),
+            other => return Err(tr!("mcp_type_is_study_or_break_not", name = name, other = other)),
         };
         if closing && is_break {
-            return Err(tr!("«{name}»: close закрывает учебный блок, а это отрезок (type: \"break\").", "“{name}”: close closes a study block, and this is a segment (type: \"break\")."));
+            return Err(tr!("mcp_close_closes_a_study_block_and", name = name));
         }
         let minutes = if let Some(m) = b.get("minutes").and_then(Value::as_f64) {
             m
@@ -322,11 +322,11 @@ fn parse_items(args: &Value) -> Result<(Vec<PlanBlock>, Vec<bool>), String> {
             // Closing sets the length to the minutes worked.
             1.0
         } else {
-            return Err(tr!("У блока «{name}» нет minutes или hours.", "Block “{name}” has no minutes or hours."));
+            return Err(tr!("mcp_block_has_no_minutes_or_hours", name = name));
         };
         let max = if is_break { 240.0 } else { 480.0 };
         if !(1.0..=max).contains(&minutes) {
-            return Err(tr!("«{name}»: длительность должна быть от 1 до {max} минут.", "“{name}”: the duration must be 1 to {max} minutes."));
+            return Err(tr!("mcp_the_duration_must_be_1_to", name = name, max = max));
         }
         let m = minutes.round() as u32;
         plan.push(if is_break { PlanBlock::brk(name, m) } else { PlanBlock::new(name, m) });
@@ -340,36 +340,36 @@ fn parse_plan(args: &Value) -> Result<PlanRequest, String> {
     let date = args.get("date").and_then(Value::as_str).map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
     let use_template = flag("use_template");
     if use_template && date.is_none() {
-        return Err(tr!("use_template работает только с date: какой день вернуть к шаблону.", "use_template works only with date: which day to return to the template."));
+        return Err(tr!("mcp_use_template_works_only_with_date"));
     }
     let (plan, close) = if use_template { (vec![], vec![]) } else { parse_items(args)? };
     if plan.is_empty() && !use_template {
-        return Err(tr!("В плане нужен хотя бы один пункт.", "The plan needs at least one item."));
+        return Err(tr!("mcp_the_plan_needs_at_least_one"));
     }
     let save_as_template = flag("save_as_template") && !use_template;
     if save_as_template && close.iter().any(|c| *c) {
-        return Err(tr!("close и save_as_template вместе нельзя: шаблон получил бы урезанный блок. Сначала закрой блок, шаблон задай отдельно (set_template).", "close and save_as_template can’t go together: the template would get a cut block. Close the block first, set the template separately (set_template)."));
+        return Err(tr!("mcp_close_and_save_as_template_cant"));
     }
     Ok(PlanRequest { plan, save_as_template, date, use_template, close })
 }
 
 fn parse_template(args: &Value) -> Result<(DayKind, Vec<PlanBlock>), String> {
-    let p = args.get("profile").and_then(Value::as_str).ok_or(pick("Нужен profile: full, light или off.", "profile is required: full, light or off."))?;
-    let kind = DayKind::from_key(p).ok_or(tr!("profile бывает full, light или off, а не «{p}».", "profile is full, light or off, not “{p}”."))?;
+    let p = args.get("profile").and_then(Value::as_str).ok_or(tr("mcp_profile_is_required_full_light_or"))?;
+    let kind = DayKind::from_key(p).ok_or(tr!("mcp_profile_is_full_light_or_off", p = p))?;
     Ok((kind, parse_blocks(args)?))
 }
 
 fn parse_week(args: &Value) -> Result<Vec<(usize, DayKind)>, String> {
-    let days = args.get("days").and_then(Value::as_object).ok_or(pick("Нужен объект days, например {\"mon\": \"full\"}.", "days must be an object, e.g. {\"mon\": \"full\"}."))?;
+    let days = args.get("days").and_then(Value::as_object).ok_or(tr("mcp_days_must_be_an_object_e"))?;
     let mut out = vec![];
     for (k, v) in days {
-        let i = WEEKDAYS.iter().position(|d| d == k).ok_or(tr!("День недели — mon…sun, а не «{k}».", "A weekday is mon…sun, not “{k}”."))?;
+        let i = WEEKDAYS.iter().position(|d| d == k).ok_or(tr!("mcp_a_weekday_is_mon_sun_not", k = k))?;
         let p = v.as_str().unwrap_or("");
-        let kind = DayKind::from_key(p).ok_or(tr!("{k}: профиль бывает full, light или off, а не «{p}».", "{k}: a profile is full, light or off, not “{p}”."))?;
+        let kind = DayKind::from_key(p).ok_or(tr!("mcp_a_profile_is_full_light_or", k = k, p = p))?;
         out.push((i, kind));
     }
     if out.is_empty() {
-        return Err(tr!("В days нет ни одного дня.", "days has no days."));
+        return Err(tr!("mcp_days_has_no_days"));
     }
     Ok(out)
 }
@@ -377,7 +377,7 @@ fn parse_week(args: &Value) -> Result<Vec<(usize, DayKind)>, String> {
 /// `sites` and `apps` of the block-list tools; at least one entry.
 fn parse_lists(args: &Value) -> Result<(Vec<String>, Vec<String>), String> {
     let list = |k: &str| -> Result<Vec<String>, String> {
-        let bad = || tr!("{k}: нужен массив строк, например [\"reddit.com\"].", "{k}: must be an array of strings, e.g. [\"reddit.com\"].");
+        let bad = || tr!("mcp_must_be_an_array_of_strings", k = k);
         match args.get(k) {
             None | Some(Value::Null) => Ok(vec![]),
             Some(Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or_else(bad)).collect(),
@@ -386,10 +386,10 @@ fn parse_lists(args: &Value) -> Result<(Vec<String>, Vec<String>), String> {
     };
     let (sites, apps) = (list("sites")?, list("apps")?);
     if sites.is_empty() && apps.is_empty() {
-        return Err(tr!("Нужен sites или apps — хотя бы одна запись.", "sites or apps is required — at least one entry."));
+        return Err(tr!("mcp_sites_or_apps_is_required_at"));
     }
     if sites.len() > 50 || apps.len() > 50 {
-        return Err(tr!("Не больше 50 сайтов и 50 приложений за раз.", "No more than 50 sites and 50 apps at once."));
+        return Err(tr!("mcp_no_more_than_50_sites_and"));
     }
     Ok((sites, apps))
 }
@@ -400,10 +400,10 @@ fn parse_focus(args: &Value) -> Result<u32, String> {
     } else if let Some(h) = args.get("hours").and_then(Value::as_f64) {
         h * 60.0
     } else {
-        return Err(tr!("Нужен minutes (или hours): на сколько включить блокировку.", "minutes (or hours) is required: how long to lock for."));
+        return Err(tr!("mcp_minutes_or_hours_is_required_how"));
     };
     if !(1.0..=MAX_FOCUS_MIN as f64).contains(&minutes) {
-        return Err(tr!("Фокус-блокировка — от 1 до {MAX_FOCUS_MIN} минут ({} ч) за раз.", "A focus lock is 1 to {MAX_FOCUS_MIN} minutes ({} h) at once.", MAX_FOCUS_MIN / 60));
+        return Err(tr!("mcp_a_focus_lock_is_1_to", max_focus_min = MAX_FOCUS_MIN / 60, MAX_FOCUS_MIN = MAX_FOCUS_MIN));
     }
     Ok(minutes.round() as u32)
 }
@@ -448,12 +448,12 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "set_week_schedule" => parse_week(&args).and_then(|d| host.set_week_schedule(d)),
                 "set_block_note" => match args.get("note").and_then(Value::as_str) {
                     Some(n) => host.set_block_note(args.get("name").and_then(Value::as_str), n),
-                    None => Err(tr!("Нужен note.", "note is required.")),
+                    None => Err(tr!("mcp_note_is_required")),
                 },
                 "finish_block" => host.finish_block(args.get("name").and_then(Value::as_str), args.get("confirm_token").and_then(Value::as_str)),
                 "set_day_end" => match args.get("time").and_then(Value::as_str) {
                     Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
-                    None => Err(tr!("Нужен time в формате ЧЧ:ММ.", "time is required, HH:MM.")),
+                    None => Err(tr!("mcp_time_is_required_hh_mm")),
                 },
                 "get_blocklist" => Ok(host.get_blocklist()),
                 "add_to_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(false, s, a)),

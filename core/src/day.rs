@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::{self, Ts, MIN};
 use crate::config::{fmt_hm, Config, DayKind, Timing};
-use crate::i18n::pick;
+use crate::i18n::tr;
 use crate::tr;
 
 /// A remainder shorter than this is merged into the previous work segment (50 min -> one part).
@@ -69,9 +69,9 @@ impl PlanBlock {
         self.name = if !name.is_empty() {
             name
         } else if self.is_break() {
-            tr!("Отрезок", "Segment")
+            tr!("config_segment")
         } else {
-            tr!("Блок", "Block")
+            tr!("day_block")
         };
         self.minutes = self.minutes.min(if self.is_break() { crate::config::MAX_SEGMENT_MIN } else { MAX_BLOCK_MIN });
     }
@@ -575,12 +575,12 @@ fn moved_items(map: &[Option<usize>]) -> Vec<usize> {
 pub fn fmt_change(c: &PlanChange) -> String {
     let (from, to) = (c.from_min.unwrap_or(0), c.to_min.unwrap_or(0));
     match c.change.as_str() {
-        "removed" => tr!("удалён «{}»", "removed “{}”", c.block),
-        "added" => tr!("добавлен «{}» {to} мин", "added “{}” {to} min", c.block),
-        "moved" if from != to => tr!("«{}» переставлен, {from}→{to} мин", "“{}” moved, {from}→{to} min", c.block),
-        "moved" => tr!("«{}» переставлен", "“{}” moved", c.block),
-        "closed" => tr!("«{}» закрыт как есть: {from}→{to} мин", "“{}” closed as is: {from}→{to} min", c.block),
-        _ => tr!("{} {from}→{to} мин", "{} {from}→{to} min", c.block),
+        "removed" => tr!("day_removed", block = c.block),
+        "added" => tr!("day_added_min", block = c.block, to = to),
+        "moved" if from != to => tr!("day_moved_min", block = c.block, from = from, to = to),
+        "moved" => tr!("day_moved", block = c.block),
+        "closed" => tr!("day_closed_as_is_min", block = c.block, from = from, to = to),
+        _ => tr!("day_min", block = c.block, from = from, to = to),
     }
 }
 
@@ -659,7 +659,7 @@ impl DayState {
             return;
         }
         self.focus.push(FocusLock { at: now, until: f.until, by: f.by.clone(), reason: f.reason.clone(), notified: false });
-        self.log(now, "focus", tr!("Фокус-блокировка продолжается до {}", "Focus lock continues until {}", clock::hm(f.until, cfg.tz_offset_min)));
+        self.log(now, "focus", tr!("day_focus_lock_continues_until", clock = clock::hm(f.until, cfg.tz_offset_min)));
     }
 
     /// State loaded from disk after the app was closed: a running timer becomes paused
@@ -690,7 +690,7 @@ impl DayState {
                     expired_notified: true,
                 });
             }
-            self.log(now, "restore", pick("Приложение было закрыто — таймер поставлен на паузу", "The app was closed — the timer is paused"));
+            self.log(now, "restore", tr("day_the_app_was_closed_the_timer"));
         }
         // Access windows never survive a restart.
         if let Some(p) = &mut self.pause {
@@ -739,7 +739,7 @@ impl DayState {
         self.segment_queue.clear();
         if !matches!(self.phase, Phase::Idle | Phase::Done) {
             self.phase = Phase::Idle;
-            self.log(end, "day_close", pick("День закрыт при смене даты", "Day closed at the date change"));
+            self.log(end, "day_close", tr("day_day_closed_at_the_date_change"));
         }
         self.saved_at = end;
     }
@@ -1001,9 +1001,9 @@ impl DayState {
 
     pub fn start_day(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
         if self.mode != Mode::Plan || self.started_at.is_some() {
-            return Err(tr!("День уже начат.", "The day has already started."));
+            return Err(tr!("day_the_day_has_already_started"));
         }
-        let first = self.first_open_block().ok_or(pick("План на сегодня пустой — добавь хотя бы один блок.", "Today's plan is empty — add at least one block."))?;
+        let first = self.first_open_block().ok_or(tr("day_todays_plan_is_empty_add_at"))?;
         self.timing = cfg.timing.clone();
         self.study_day = cfg.profile(self.kind).block;
         self.started_at = Some(now);
@@ -1014,22 +1014,22 @@ impl DayState {
             self.queue_planned(cfg, &leading);
             self.start_queued(now, first);
         }
-        let msg = if self.plan_lock(now, cfg) { pick("День начат, блокировка включена", "Day started, the lock is on") } else { pick("День начат (без блокировки)", "Day started (no lock)") };
+        let msg = if self.plan_lock(now, cfg) { tr("day_day_started_the_lock_is_on") } else { tr("day_day_started_no_lock") };
         self.log(now, "day_start", msg);
         Ok(())
     }
 
     pub fn pause(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
         if self.pause.is_some() {
-            return Err(tr!("Уже на паузе.", "Already paused."));
+            return Err(tr!("day_already_paused"));
         }
         let what = self.phase_what();
         match &mut self.phase {
             Phase::Work { elapsed_ms, since, .. } | Phase::Break { elapsed_ms, since, .. } => {
-                let s = since.take().ok_or(pick("Таймер не идёт.", "The timer isn't running."))?;
+                let s = since.take().ok_or(tr("day_the_timer_isnt_running"))?;
                 *elapsed_ms += (now - s).max(0);
             }
-            _ => return Err(tr!("Сейчас нечего ставить на паузу.", "Nothing to pause right now.")),
+            _ => return Err(tr!("day_nothing_to_pause_right_now")),
         }
         let mut access = vec![];
         if cfg.pause_access && self.base_lock(now, cfg) && self.focus_until(now).is_none() {
@@ -1048,20 +1048,20 @@ impl DayState {
         self.log(
             now,
             "pause",
-            if granted { tr!("Пауза, доступ открыт на {} мин", "Paused, access open for {} min", cfg.pause_access_min) } else { tr!("Пауза", "Pause") },
+            if granted { tr!("day_paused_access_open_for_min", pause_access_min = cfg.pause_access_min) } else { tr!("day_pause") },
         );
         Ok(())
     }
 
     pub fn resume(&mut self, now: Ts) -> Result<(), String> {
-        let p = self.pause.take().ok_or(pick("Таймер не на паузе.", "The timer isn't paused."))?;
+        let p = self.pause.take().ok_or(tr("day_the_timer_isnt_paused"))?;
         match &mut self.phase {
             Phase::Work { since, .. } | Phase::Break { since, .. } => *since = Some(now),
             _ => {}
         }
         let since = p.since;
         if self.close_pause(p, now) {
-            self.log(now, "resume", pick("Продолжение", "Resumed"));
+            self.log(now, "resume", tr("day_resumed"));
         } else if let Some(i) = self.events.iter().rposition(|e| e.kind == "pause" && e.ts == since) {
             // A blink of a pause leaves no trace in the log either.
             self.events.remove(i);
@@ -1094,22 +1094,22 @@ impl DayState {
     /// Extend pause access (the app checks the captcha before calling this).
     pub fn extend_pause_access(&mut self, now: Ts, cfg: &Config) -> Result<Ts, String> {
         if !cfg.pause_access {
-            return Err(tr!("Доступ на паузе выключен в настройках.", "Access on pause is turned off in the settings."));
+            return Err(tr!("day_access_on_pause_is_turned_off"));
         }
         if !self.base_lock(now, cfg) {
-            return Err(tr!("Блокировка сейчас не действует.", "The lock isn't active right now."));
+            return Err(tr!("day_the_lock_isnt_active_right_now"));
         }
         if self.focus_until(now).is_some() {
-            return Err(tr!("Во время фокус-блокировки доступ на паузе не открывается — только аварийный доступ.", "During a focus lock, pausing doesn't open access — only emergency access does."));
+            return Err(tr!("day_during_a_focus_lock_pausing_doesnt"));
         }
-        let p = self.pause.as_mut().ok_or(pick("Продлить можно только во время паузы.", "You can only extend it during a pause."))?;
+        let p = self.pause.as_mut().ok_or(tr("day_you_can_only_extend_it_during"))?;
         let from = p.access_until().map(|u| u.max(now)).unwrap_or(now);
         let until = from + cfg.pause_access_min as i64 * MIN;
         p.access.push(AccessWindow { from, until });
         p.warned = false;
         p.expired_notified = false;
         let n = p.access.len() - 1;
-        self.log(now, "pause_extend", tr!("Доступ на паузе продлён (#{n}) до {}", "Access on pause extended (#{n}) until {}", clock::hm(until, cfg.tz_offset_min)));
+        self.log(now, "pause_extend", tr!("day_access_on_pause_extended_until", clock = clock::hm(until, cfg.tz_offset_min), n = n));
         Ok(until)
     }
 
@@ -1127,7 +1127,7 @@ impl DayState {
                 if matches!(brk, BreakKind::Lunch { .. }) {
                     self.finish_lunch_record(now);
                 }
-                self.log(now, "break_skip", pick("Перерыв завершён досрочно", "Break ended early"));
+                self.log(now, "break_skip", tr("day_break_ended_early"));
                 n
             }
             Phase::Await { next, .. } => *next,
@@ -1136,7 +1136,7 @@ impl DayState {
                 self.finish_lunch_record(now);
                 n
             }
-            _ => return Err(tr!("Сейчас нельзя начать следующую часть.", "The next part can't be started right now.")),
+            _ => return Err(tr!("day_the_next_part_cant_be_started")),
         };
         let target = if self.mode == Mode::Plan && self.is_block_done(next) { self.first_open_block() } else { Some(next) };
         let Some(b) = target else {
@@ -1155,10 +1155,10 @@ impl DayState {
     /// Take a skipped break back within [`SKIP_UNDO_MS`]: the break goes on as if it had never
     /// been skipped (those seconds count as break, not work).
     pub fn undo_skip(&mut self, now: Ts) -> Result<(), String> {
-        let u = self.skip_undo.take().ok_or(pick("Отменять нечего.", "Nothing to undo."))?;
+        let u = self.skip_undo.take().ok_or(tr("day_nothing_to_undo"))?;
         let fresh = matches!(self.phase, Phase::Work { block, since: Some(_), .. } if block == u.block) && self.pause.is_none();
         if now - u.at > SKIP_UNDO_MS || !fresh {
-            return Err(tr!("Поздно отменять — часть уже идёт.", "Too late to undo — the part is already running."));
+            return Err(tr!("day_too_late_to_undo_the_part"));
         }
         if u.first_start {
             if let Some(p) = self.progress.get_mut(u.block) {
@@ -1175,7 +1175,7 @@ impl DayState {
             }
         }
         self.phase = u.phase;
-        self.log(now, "break_skip_undo", pick("Пропуск перерыва отменён — перерыв продолжается", "Break skip undone — the break goes on"));
+        self.log(now, "break_skip_undo", tr("day_break_skip_undone_the_break_goes"));
         Ok(())
     }
 
@@ -1197,9 +1197,9 @@ impl DayState {
     pub fn start_lunch(&mut self, now: Ts, with_timer: bool, at_pc: bool) -> Result<(), String> {
         if !self.can_lunch() {
             return Err(if self.lunch.is_some() {
-                tr!("Обед сегодня уже был.", "You've already had lunch today.")
+                tr!("day_youve_already_had_lunch_today")
             } else {
-                tr!("Обед можно начать только в перерыве или перед следующей частью.", "Lunch can only start during a break or before the next part.")
+                tr!("day_lunch_can_only_start_during_a")
             });
         }
         if let Some(p) = self.pause.take() {
@@ -1214,29 +1214,29 @@ impl DayState {
             self.log(
                 now,
                 "lunch",
-                tr!("Обед {} мин{}", "Lunch {} min{}", self.timing.lunch_min, if at_pc { pick(", за ПК — доступ открыт", ", at the PC — access open") } else { "" }),
+                tr!("day_lunch_min", lunch_min = self.timing.lunch_min, extra = if at_pc { tr("day_at_the_pc_access_open") } else { "" }),
             );
         } else {
             self.phase = Phase::Lunch { since: now, next };
-            self.log(now, "lunch", pick("Обед без таймера", "Lunch without a timer"));
+            self.log(now, "lunch", tr("day_lunch_without_a_timer"));
         }
         Ok(())
     }
 
     pub fn emergency(&mut self, now: Ts, cfg: &Config, phrase: &str) -> Result<Ts, String> {
         if !self.base_lock(now, cfg) {
-            return Err(tr!("Блокировка сейчас не действует.", "The lock isn't active right now."));
+            return Err(tr!("day_the_lock_isnt_active_right_now"));
         }
         if self.emergencies.iter().any(|e| now < e.until) {
-            return Err(tr!("Аварийный доступ уже открыт.", "Emergency access is already open."));
+            return Err(tr!("day_emergency_access_is_already_open"));
         }
         if norm_phrase(phrase) != norm_phrase(&cfg.emergency_phrase) {
-            return Err(tr!("Фраза не совпадает. Введи её точно, символ в символ.", "The phrase doesn't match. Type it exactly, character for character."));
+            return Err(tr!("day_the_phrase_doesnt_match_type_it"));
         }
         let until = now + cfg.emergency_min as i64 * MIN;
         self.emergencies.push(Emergency { at: now, until, ended_early: false, notified: false });
         let n = self.emergencies.len();
-        self.log(now, "emergency", tr!("Аварийный доступ #{n} на {} мин", "Emergency access #{n} for {} min", cfg.emergency_min));
+        self.log(now, "emergency", tr!("day_emergency_access_for_min", emergency_min = cfg.emergency_min, n = n));
         Ok(until)
     }
 
@@ -1244,7 +1244,7 @@ impl DayState {
     /// call is refused.
     pub fn start_focus(&mut self, now: Ts, cfg: &Config, minutes: u32, reason: Option<&str>, by: &str) -> Result<FocusChange, String> {
         if !(1..=MAX_FOCUS_MIN).contains(&minutes) {
-            return Err(tr!("Фокус-блокировка — от 1 до {MAX_FOCUS_MIN} минут от текущего момента.", "A focus lock lasts 1 to {MAX_FOCUS_MIN} minutes from now."));
+            return Err(tr!("day_a_focus_lock_lasts_1_to", MAX_FOCUS_MIN = MAX_FOCUS_MIN));
         }
         let until = now + minutes as i64 * MIN;
         let hm = |ts: Ts| clock::hm(ts, cfg.tz_offset_min);
@@ -1254,11 +1254,10 @@ impl DayState {
         match from {
             Some(cur) if until <= cur => {
                 return Err(tr!(
-                    "Фокус-блокировка уже идёт до {} (ещё {} мин) — её можно только продлить: minutes должно быть больше {}.",
-                    "A focus lock already runs until {} ({} min left) — it can only be extended: minutes must be more than {}.",
-                    hm(cur),
-                    (cur - now + MIN - 1) / MIN,
-                    (cur - now) / MIN
+                    "day_a_focus_lock_already_runs_until",
+                    cur = hm(cur),
+                    cur2 = (cur - now + MIN - 1) / MIN,
+                    cur3 = (cur - now) / MIN,
                 ));
             }
             Some(cur) => {
@@ -1268,7 +1267,7 @@ impl DayState {
                         f.reason = reason;
                     }
                 }
-                self.log(now, "focus", tr!("Фокус-блокировка продлена: {} → {}{note}", "Focus lock extended: {} → {}{note}", hm(cur), hm(until)));
+                self.log(now, "focus", tr!("day_focus_lock_extended", cur = hm(cur), until = hm(until), note = note));
             }
             None => {
                 // Pause access does not open a focus lock: close a window still running.
@@ -1284,7 +1283,7 @@ impl DayState {
                     }
                 }
                 self.focus.push(FocusLock { at: now, until, by: by.into(), reason, notified: false });
-                self.log(now, "focus", tr!("Фокус-блокировка до {} ({minutes} мин){note}", "Focus lock until {} ({minutes} min){note}", hm(until)));
+                self.log(now, "focus", tr!("day_focus_lock_until_min", until = hm(until), minutes = minutes, note = note));
             }
         }
         Ok(FocusChange { from, until, extended: from.is_some() })
@@ -1308,25 +1307,25 @@ impl DayState {
             }
         }
         if any {
-            self.log(now, "access_end", pick("Доступ закрыт вручную", "Access closed manually"));
+            self.log(now, "access_end", tr("day_access_closed_manually"));
             Ok(())
         } else {
-            Err(tr!("Доступ и так закрыт.", "Access is already closed."))
+            Err(tr!("day_access_is_already_closed"))
         }
     }
 
     pub fn start_single(&mut self, now: Ts, cfg: SingleCfg) -> Result<(), String> {
         if self.mode == Mode::Single {
-            return Err(tr!("Одиночный таймер уже идёт.", "The single timer is already running."));
+            return Err(tr!("day_the_single_timer_is_already_running"));
         }
         if !matches!(self.phase, Phase::Idle | Phase::Done) {
-            return Err(tr!("Сначала закончи план дня — одиночный таймер доступен, когда день не идёт.", "Finish the day's plan first — the single timer is available when no day is running."));
+            return Err(tr!("day_finish_the_days_plan_first_the"));
         }
         let cfg = SingleCfg { work_min: cfg.work_min.clamp(1, 240), break_min: cfg.break_min.min(120), block: cfg.block };
         self.log(
             now,
             "single_start",
-            tr!("Одиночный таймер {} мин{}", "Single timer {} min{}", cfg.work_min, if cfg.break_min > 0 { tr!(" + перерыв {}", " + break {}", cfg.break_min) } else { String::new() }),
+            tr!("day_single_timer_min", work_min = cfg.work_min, extra = if cfg.break_min > 0 { tr!("day_plus_break", min = cfg.break_min) } else { String::new() }),
         );
         self.singles.push(SingleRun { cfg, started_at: now, ended_at: None, work_ms: 0, rounds: 0 });
         self.mode = Mode::Single;
@@ -1336,7 +1335,7 @@ impl DayState {
 
     pub fn stop_single(&mut self, now: Ts) -> Result<(), String> {
         if self.mode != Mode::Single {
-            return Err(tr!("Одиночный таймер не запущен.", "The single timer isn't running."));
+            return Err(tr!("day_the_single_timer_isnt_running"));
         }
         if let Some(p) = self.pause.take() {
             self.close_pause(p, now);
@@ -1348,7 +1347,7 @@ impl DayState {
         }
         self.mode = Mode::Plan;
         self.phase = if self.completed_at.is_some() { Phase::Done } else { Phase::Idle };
-        self.log(now, "single_stop", pick("Одиночный таймер остановлен", "Single timer stopped"));
+        self.log(now, "single_stop", tr("day_single_timer_stopped"));
         Ok(())
     }
 
@@ -1361,17 +1360,17 @@ impl DayState {
 
     /// Save the end-of-block line (`None` or blank = skip). Works for any started block.
     pub fn set_block_note(&mut self, now: Ts, block: usize, note: Option<&str>, by: &str) -> Result<(), String> {
-        let name = self.plan.get(block).map(|b| b.name.clone()).ok_or(pick("Нет такого блока.", "No such block."))?;
+        let name = self.plan.get(block).map(|b| b.name.clone()).ok_or(tr("day_no_such_block"))?;
         let p = &mut self.progress[block];
         if p.started_at.is_none() && p.work_ms == 0 {
-            return Err(tr!("«{name}» ещё не начат.", "“{name}” hasn't started yet."));
+            return Err(tr!("day_hasnt_started_yet", name = name));
         }
         let note: Option<String> = note.map(|n| n.trim().chars().take(300).collect::<String>()).filter(|n| !n.is_empty());
         match &note {
             Some(n) => {
                 p.note = Some(n.clone());
                 p.note_skipped = false;
-                let by = if by == "mcp" { pick(" — агент", " — agent") } else { "" };
+                let by = if by == "mcp" { tr("day_agent") } else { "" };
                 self.log(now, "block_note", format!("«{name}»: {n}{by}"));
             }
             None => {
@@ -1386,15 +1385,15 @@ impl DayState {
     /// The block "finish block" would close: `name` (any started, open block) or the current one.
     pub fn finish_target(&self, name: Option<&str>) -> Result<usize, String> {
         if self.mode != Mode::Plan || self.started_at.is_none() {
-            return Err(tr!("Закрыть блок можно только во время учебного дня.", "A block can only be closed during a study day."));
+            return Err(tr!("day_a_block_can_only_be_closed"));
         }
         let i = match name.map(str::trim).filter(|n| !n.is_empty()) {
             // Two blocks of one subject: the open started one is meant.
             Some(n) => {
                 let named: Vec<usize> = (0..self.plan.len()).filter(|&i| self.is_study(i) && same_name(&self.plan[i].name, n)).collect();
-                *named.iter().find(|&&i| self.check_closable(i).is_ok()).or(named.first()).ok_or(tr!("В плане нет блока «{n}».", "There's no block “{n}” in the plan."))?
+                *named.iter().find(|&&i| self.check_closable(i).is_ok()).or(named.first()).ok_or(tr!("day_theres_no_block_in_the_plan", n = n))?
             }
-            None => self.current_block().ok_or(pick("Сейчас нет текущего блока.", "There's no current block right now."))?,
+            None => self.current_block().ok_or(tr("day_theres_no_current_block_right_now"))?,
         };
         self.check_closable(i)?;
         Ok(i)
@@ -1404,14 +1403,14 @@ impl DayState {
     fn check_closable(&self, i: usize) -> Result<(), String> {
         let name = &self.plan[i].name;
         if self.plan[i].is_break() {
-            return Err(tr!("«{name}» — отрезок, а не учебный блок.", "“{name}” is a segment, not a study block."));
+            return Err(tr!("day_is_a_segment_not_a_study", name = name));
         }
         if self.is_block_done(i) {
-            return Err(tr!("«{name}» уже закрыт.", "“{name}” is already closed."));
+            return Err(tr!("day_is_already_closed", name = name));
         }
         let p = &self.progress[i];
         if p.started_at.is_none() && p.work_ms == 0 {
-            return Err(tr!("«{name}» ещё не начат — если он сегодня не нужен, убери его из плана.", "“{name}” hasn't started — if you don't need it today, remove it from the plan."));
+            return Err(tr!("day_hasnt_started_if_you_dont_need", name = name));
         }
         Ok(())
     }
@@ -1429,9 +1428,8 @@ impl DayState {
         let worked = self.block_work_live(i, now);
         if worked < MIN {
             return Err(tr!(
-                "По «{}» отработано меньше минуты — закрывать нечего. Если он сегодня не нужен, убери его из плана: такой блок удаляется.",
-                "Less than a minute worked on “{}” — nothing to close. If you don't need it today, remove it from the plan: such a block can be removed.",
-                self.plan[i].name
+                "day_less_than_a_minute_worked_on",
+                self_v = self.plan[i].name,
             ));
         }
         let running_here = matches!(self.phase, Phase::Work { block, .. } if block == i);
@@ -1464,10 +1462,12 @@ impl DayState {
             now,
             "block_finish",
             tr!(
-                "Блок «{name}» закрыт досрочно: {} из {from_min} мин, план {from_min}→{to_min} мин{}",
-                "Block “{name}” closed early: {} of {from_min} min, plan {from_min}→{to_min} min{}",
-                fmt_min(worked),
-                if by == "mcp" { pick(" — агент", " — agent") } else { "" }
+                "day_block_closed_early_of_min_plan",
+                worked = fmt_min(worked),
+                extra = if by == "mcp" { tr("day_agent") } else { "" },
+                name = name,
+                from_min = from_min,
+                to_min = to_min,
             ),
         );
         ev.push(Event::BlockCompleted { block: i, block_name: name.clone(), work_ms: worked, pauses, pause_ms });
@@ -1505,7 +1505,7 @@ impl DayState {
     /// After the old end has passed this turns the lock back on until the new end.
     pub fn extend_day_end(&mut self, now: Ts, cfg: &Config, new_end: u32) -> Result<(), String> {
         if new_end <= self.day_end(cfg) {
-            return Err(tr!("Это не позже текущего конца дня.", "That's not later than the current day end."));
+            return Err(tr!("day_thats_not_later_than_the_current"));
         }
         self.move_day_end(now, cfg, new_end, None, "ui").map(|_| ())
     }
@@ -1513,7 +1513,7 @@ impl DayState {
     /// Shift today's day end once ("HH:MM", Moscow). "00:00".."02:00" mean the night after.
     /// The config template stays untouched. Returns the logged change (`from == to`: nothing changed).
     pub fn set_day_end(&mut self, now: Ts, cfg: &Config, hm: &str, reason: Option<&str>, by: &str) -> Result<DayEndChange, String> {
-        let typed = clock::parse_hm(hm).ok_or(pick("Время нужно в формате ЧЧ:ММ, например 23:00.", "Time must be HH:MM, e.g. 23:00."))?;
+        let typed = clock::parse_hm(hm).ok_or(tr("day_time_must_be_hh_mm_e"))?;
         let to = if typed <= NEXT_DAY_UNTIL_MIN { typed + 24 * 60 } else { typed };
         self.move_day_end(now, cfg, to, reason, by)
     }
@@ -1523,14 +1523,13 @@ impl DayState {
     pub fn move_day_end(&mut self, now: Ts, cfg: &Config, to: u32, reason: Option<&str>, by: &str) -> Result<DayEndChange, String> {
         let to_ts = clock::date_minute(self.date, cfg.tz_offset_min, to);
         if to > MAX_DAY_END_MIN {
-            return Err(tr!("Позже 02:00 ночи конец дня сдвинуть нельзя.", "The day end can't move past 02:00 at night."));
+            return Err(tr!("day_the_day_end_cant_move_past"));
         }
         if to_ts <= now {
             return Err(tr!(
-                "{} уже прошло. Конец дня — позже текущего времени ({}) и не позже 02:00 следующих суток.",
-                "{} has already passed. The day end must be later than now ({}) and no later than 02:00 the next night.",
-                fmt_day_min(to),
-                clock::hm(now, cfg.tz_offset_min)
+                "day_has_already_passed_the_day_end",
+                to = fmt_day_min(to),
+                clock = clock::hm(now, cfg.tz_offset_min),
             ));
         }
         let reason = reason.map(|r| r.trim().chars().take(200).collect::<String>()).filter(|r| !r.is_empty());
@@ -1546,12 +1545,11 @@ impl DayState {
             now,
             "day_end_change",
             tr!(
-                "Конец дня: {} → {}{}{}",
-                "Day end: {} → {}{}{}",
-                fmt_day_min(from),
-                fmt_day_min(to),
-                change.reason.as_ref().map(|r| format!(" ({r})")).unwrap_or_default(),
-                if by == "mcp" { pick(" — агент", " — agent") } else { "" }
+                "day_day_end",
+                from = fmt_day_min(from),
+                to = fmt_day_min(to),
+                map = change.reason.as_ref().map(|r| format!(" ({r})")).unwrap_or_default(),
+                extra = if by == "mcp" { tr("day_agent") } else { "" },
             ),
         );
         self.day_end_changes.push(change.clone());
@@ -1566,7 +1564,7 @@ impl DayState {
             return Ok(());
         }
         if locked && kind < self.kind {
-            return Err(tr!("Во время учёбы день можно сделать только плотнее, не «{}».", "During the study day the day can only get denser, not “{}”.", kind.label()));
+            return Err(tr!("day_during_the_study_day_the_day", kind = kind.label()));
         }
         let profile = cfg.profile(kind);
         let from = self.kind;
@@ -1586,7 +1584,7 @@ impl DayState {
         }
         self.kind = kind;
         self.study_day = if locked { self.study_day || profile.block } else { profile.block };
-        self.log(now, "kind", tr!("День: {} → {}", "Day: {} → {}", from.label(), kind.label()));
+        self.log(now, "kind", tr!("day_day", from = from.label(), kind = kind.label()));
         Ok(())
     }
 
@@ -1599,14 +1597,14 @@ impl DayState {
             b.normalize();
         }
         if plan.len() > MAX_PLAN_BLOCKS {
-            return Err(tr!("Не больше {MAX_PLAN_BLOCKS} пунктов плана в день.", "No more than {MAX_PLAN_BLOCKS} plan items per day."));
+            return Err(tr!("day_no_more_than_plan_items_per", MAX_PLAN_BLOCKS = MAX_PLAN_BLOCKS));
         }
         if plan.iter().any(|b| b.minutes == 0) {
-            return Err(tr!("У каждого блока должна быть длительность.", "Every block needs a duration."));
+            return Err(tr!("day_every_block_needs_a_duration"));
         }
         let started = self.started_at.is_some();
         if started && !plan.iter().any(|b| !b.is_break()) {
-            return Err(tr!("План начатого дня не может остаться без учебных блоков.", "A started day's plan can't be left without study blocks."));
+            return Err(tr!("day_a_started_days_plan_cant_be"));
         }
         let touched = |p: &BlockProgress| p.started_at.is_some() || p.work_ms > 0;
 
@@ -1630,19 +1628,17 @@ impl DayState {
                 None if old.is_break() || !touched(&self.progress[i]) || worked < MIN => {}
                 None => {
                     return Err(tr!(
-                        "«{}» уже начат (отработано {} мин) — его нельзя удалить или переименовать: отработанное не стирается. Закрыть его на отработанном — пункт с close: true; удалить можно блок, где отработано меньше минуты.",
-                        "“{}” has started ({} min worked) — it can't be removed or renamed: worked time is never erased. To close it at the worked time, use an item with close: true; only a block with less than a minute worked can be removed.",
-                        old.name,
-                        worked_min(worked)
+                        "day_has_started_min_worked_it_cant",
+                        name = old.name,
+                        worked = worked_min(worked),
                     ));
                 }
                 Some(j) if locked && touched(&self.progress[i]) && !old.is_break() && plan[j].minutes < worked_min(worked) => {
                     return Err(tr!(
-                        "«{}»: уже отработано {} мин — меньше нельзя (можно ровно {} или закрыть блок как есть: close: true).",
-                        "“{}”: {} min already worked — it can't be less (exactly {} is fine, or close the block as is: close: true).",
-                        old.name,
-                        worked_min(worked),
-                        worked_min(worked)
+                        "day_min_already_worked_it_cant_be",
+                        name = old.name,
+                        worked = worked_min(worked),
+                        worked2 = worked_min(worked),
                     ));
                 }
                 _ => {}
@@ -1785,16 +1781,16 @@ impl DayState {
                         self.phase = Phase::Done;
                         if self.completed_at.is_none() {
                             self.completed_at = Some(now);
-                            self.log(now, "day_done", pick("Все блоки дня закрыты (план изменён) — блокировка снята", "All blocks of the day are closed (plan changed) — the lock is off"));
+                            self.log(now, "day_done", tr("day_all_blocks_of_the_day_are"));
                         }
                     }
                     _ => {}
                 }
             }
         }
-        let summary = self.plan.iter().map(|b| tr!("{} {} мин", "{} {} min", b.name, b.minutes)).collect::<Vec<_>>().join(" · ");
+        let summary = self.plan.iter().map(|b| tr!("day_name_minutes", name = b.name, minutes = b.minutes)).collect::<Vec<_>>().join(" · ");
         let diff = changes.iter().map(fmt_change).collect::<Vec<_>>().join(", ");
-        self.log(now, "plan", if diff.is_empty() { tr!("План: {summary}", "Plan: {summary}") } else { tr!("План: {summary} ({diff})", "Plan: {summary} ({diff})") });
+        self.log(now, "plan", if diff.is_empty() { tr!("day_plan", summary = summary) } else { tr!("day_log_plan_with_changes", summary = summary, diff = diff) });
         Ok(changes)
     }
 
@@ -1811,11 +1807,11 @@ impl DayState {
                 continue;
             }
             if b.is_break() {
-                return Err(tr!("«{}»: close закрывает учебный блок, а это отрезок.", "“{}”: close closes a study block, and this is a segment.", b.name));
+                return Err(tr!("day_close_closes_a_study_block_and", name = b.name));
             }
             let i = (0..self.plan.len())
                 .find(|&i| !taken.contains(&i) && self.is_study(i) && same_name(&self.plan[i].name, &b.name) && self.check_closable(i).is_ok())
-                .ok_or(tr!("«{}»: close закрывает начатый и ещё не закрытый блок, а такого в плане нет.", "“{}”: close closes a started, not yet closed block, and there's no such block in the plan.", b.name.trim()))?;
+                .ok_or(tr!("day_close_closes_a_started_not_yet", b = b.name.trim()))?;
             taken.push(i);
             let worked = self.block_work_live(i, now);
             if worked < MIN {
@@ -1833,7 +1829,7 @@ impl DayState {
         let mut ev = vec![];
         for (name, from_min) in closing {
             let found = (0..self.plan.len()).find(|&i| self.is_study(i) && same_name(&self.plan[i].name, &name) && self.check_closable(i).is_ok());
-            let res = found.ok_or(tr!("«{name}» уже закрыт.", "“{name}” is already closed.")).and_then(|i| self.finish_block_at(now, cfg, i, by));
+            let res = found.ok_or(tr!("day_is_already_closed", name = name)).and_then(|i| self.finish_block_at(now, cfg, i, by));
             match res {
                 Ok((f, e)) => {
                     changes.retain(|c| !(same_name(&c.block, &name) && matches!(c.change.as_str(), "shortened" | "lengthened")));
@@ -1903,8 +1899,8 @@ impl DayState {
         if !self.day_end_notified && self.started_at.is_some() && self.completed_at.is_none() && self.study_day && self.after_day_end(now, cfg) {
             self.day_end_notified = true;
             let text = match self.focus_until(now) {
-                Some(u) => tr!("{} — учебный день закончился, фокус-блокировка до {}", "{} — the study day is over, focus lock until {}", fmt_day_min(self.day_end(cfg)), clock::hm(u, cfg.tz_offset_min)),
-                None => tr!("{} — блокировка снята по времени", "{} — the lock is off for the day", fmt_day_min(self.day_end(cfg))),
+                Some(u) => tr!("day_the_study_day_is_over_focus", cfg = fmt_day_min(self.day_end(cfg)), clock = clock::hm(u, cfg.tz_offset_min)),
+                None => tr!("day_the_lock_is_off_for_the", cfg = fmt_day_min(self.day_end(cfg))),
             };
             self.log(now, "day_end", text);
             ev.push(Event::DayEndReached);
@@ -1923,7 +1919,7 @@ impl DayState {
             }
             Mode::Single => {
                 let r = self.singles.last().map(|s| s.rounds).unwrap_or(0);
-                (tr!("Одиночный таймер", "Single timer"), r + 1, 0)
+                (tr!("day_single_timer"), r + 1, 0)
             }
         }
     }
@@ -1946,7 +1942,7 @@ impl DayState {
                 let lunch = matches!(brk, BreakKind::Lunch { .. });
                 if lunch {
                     self.finish_lunch_record(end);
-                    self.log(end, "lunch_end", pick("Обед окончен", "Lunch over"));
+                    self.log(end, "lunch_end", tr("day_lunch_over"));
                 }
                 self.phase = Phase::Await { next, since: end, reminded_at: now };
                 let (next_name, next_part, next_parts) = self.part_info(next);
@@ -1966,8 +1962,8 @@ impl DayState {
                     s.rounds += 1;
                     (s.cfg.break_min, s.rounds)
                 };
-                self.log(end, "work_end", tr!("Одиночный таймер: круг {round} закончен", "Single timer: round {round} done"));
-                ev.push(Event::WorkEnded { block_name: tr!("Одиночный таймер", "Single timer"), part: round, parts: 0, block_done: false });
+                self.log(end, "work_end", tr!("day_single_timer_round_done", round = round));
+                ev.push(Event::WorkEnded { block_name: tr!("day_single_timer"), part: round, parts: 0, block_done: false });
                 self.phase = if brk_min > 0 {
                     Phase::Break { brk: BreakKind::Short, dur_ms: brk_min as i64 * MIN, elapsed_ms: 0, since: Some(end), next: 0 }
                 } else {
@@ -1987,7 +1983,7 @@ impl DayState {
                     p.completed_at = Some(end);
                 }
                 let work_ms = p.work_ms;
-                self.log(end, "work_end", tr!("{name}: часть {part} из {parts} закончена", "{name}: part {part} of {parts} done"));
+                self.log(end, "work_end", tr!("day_part_of_done", name = name, part = part, parts = parts));
                 ev.push(Event::WorkEnded { block_name: name.clone(), part, parts, block_done });
                 if block_done {
                     let (pauses, pause_ms) = self
@@ -1995,7 +1991,7 @@ impl DayState {
                         .iter()
                         .filter(|r| r.block == Some(block))
                         .fold((0u32, 0i64), |(n, ms), r| (n + 1, ms + (r.end - r.start)));
-                    self.log(end, "block_done", tr!("Блок «{name}» закрыт: {} мин работы", "Block “{name}” closed: {} min of work", work_ms / MIN));
+                    self.log(end, "block_done", tr!("day_block_closed_min_of_work", work_ms = work_ms / MIN, name = name));
                     ev.push(Event::BlockCompleted { block, block_name: name, work_ms, pauses, pause_ms });
                     self.after_block(end, cfg, ev);
                 } else {

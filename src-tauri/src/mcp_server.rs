@@ -72,7 +72,7 @@ impl McpServer {
                     server = Some(Arc::new(s));
                     break;
                 }
-                Err(e) => st.error = Some(tr!("Порт {port} занят: {e}", "Port {port} is busy: {e}")),
+                Err(e) => st.error = Some(tr!("mcp_port_is_busy", port = port, e = e)),
             }
         }
         st.port = port;

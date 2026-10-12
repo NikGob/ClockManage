@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use clockmanage_core::i18n::pick;
+use clockmanage_core::i18n::tr;
 use clockmanage_core::tr;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -219,7 +219,7 @@ impl Blocker {
         }
         self.applied.ff_handled_at = self.applied.ff_rules_at;
         if !restart {
-            return Some(tr!("Firefox запущен до блокировки и её не видит — перезапусти его.", "Firefox was started before the lock and doesn’t see it — restart it."));
+            return Some(tr!("blocker_firefox_was_started_before_the_lock"));
         }
         // The restart itself takes seconds: the caller runs it off the timer thread.
         self.firefox_restart_pending = true;
@@ -321,7 +321,7 @@ mod platform {
                 let _ = std::fs::set_permissions(&path, p);
             }
         }
-        std::fs::write(&path, content).map_err(|e| tr!("Не удалось записать hosts: {e}", "Couldn’t write hosts: {e}"))
+        std::fs::write(&path, content).map_err(|e| tr!("blocker_couldnt_write_hosts", e = e))
     }
 
     fn flush_dns() {
@@ -423,7 +423,7 @@ mod platform {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(tr!("Политики браузеров: {}", "Browser policies: {}", errors.join("; ")))
+            Err(tr!("blocker_browser_policies", v = errors.join("; ")))
         }
     }
 
@@ -619,9 +619,9 @@ mod platform {
     pub fn restart_firefox() -> Result<(), String> {
         let pids = processes("firefox.exe");
         if pids.is_empty() {
-            return Err(tr!("Firefox не запущен", "Firefox isn’t running"));
+            return Err(tr!("blocker_firefox_isnt_running"));
         }
-        let path = pids.iter().find_map(|&p| image_path(p)).ok_or(pick("не найден путь к firefox.exe", "firefox.exe path not found"))?;
+        let path = pids.iter().find_map(|&p| image_path(p)).ok_or(tr("blocker_firefox_exe_path_not_found"))?;
         let wait = |running: bool, ms: u64| {
             for _ in 0..ms / 100 {
                 if firefox_running() == running {
@@ -635,7 +635,7 @@ mod platform {
         if !wait(false, 5_000) {
             kill_apps(&["firefox.exe".to_string()]);
             if !wait(false, 3_000) {
-                return Err(tr!("Firefox не закрылся", "Firefox didn’t close"));
+                return Err(tr!("blocker_firefox_didnt_close"));
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -730,7 +730,7 @@ mod platform {
     pub fn ifeo_clear(_: &str, _: &std::path::Path) {}
     pub fn ifeo_clear_any_guard(_: &str) {}
     pub fn restart_firefox() -> Result<(), String> {
-        Err(tr!("только Windows", "Windows only"))
+        Err(tr!("blocker_windows_only"))
     }
     pub fn firefox_started_at() -> Option<i64> {
         None

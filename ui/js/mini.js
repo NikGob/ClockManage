@@ -1,15 +1,15 @@
 import { call, on, mmss, startDrag, installRipples } from './api.js';
 import { applyTheme } from './theme.js';
 import { icon, morphIcon } from './icons.js';
-import { L, followLang } from './i18n.js';
+import { tr, followLang } from './i18n.js';
 
 const el = (id) => document.getElementById(id);
 const root = el('mini');
 installRipples();
-document.title = L('ClockManage — мини-таймер', 'ClockManage — mini timer');
-for (const [id, ru, en] of [['open', 'Открыть приложение', 'Open the app'], ['close', 'Скрыть мини-таймер', 'Hide the mini timer']]) {
-  el(id).setAttribute('aria-label', L(ru, en));
-  el(id).title = L(ru, en);
+document.title = tr('mini_clockmanage_mini_timer');
+for (const [id, label] of [['open', tr('mini_open_the_app')], ['close', tr('mini_hide_the_mini_timer')]]) {
+  el(id).setAttribute('aria-label', label);
+  el(id).title = label;
 }
 el('open').innerHTML = icon('open');
 el('close').innerHTML = icon('close');
@@ -54,52 +54,52 @@ function render(s) {
         const part = p.subtitle.match(/(\d+) (?:из|of) (\d+)/);
         const short = part ? `${part[1]}/${part[2]}` : '';
         label = p.kind === 'work' ? `${p.title}${short ? ' · ' + short : ''}` : p.title;
-        if (p.paused) label = `${L('Пауза', 'Paused')} · ${label}`;
+        if (p.paused) label = `${tr('mini_paused')} · ${label}`;
       }
-      btn = p.paused || !v.can.pause ? (v.can.resume ? ['play', L('Продолжить', 'Resume')] : null) : ['pause', L('Пауза', 'Pause')];
+      btn = p.paused || !v.can.pause ? (v.can.resume ? ['play', tr('app_resume')] : null) : ['pause', tr('day_pause')];
       break;
     case 'segment': {
       const over = p.remaining_ms < 0;
       if (p.stopwatch) {
         frac = p.dur_ms ? Math.min(1, p.elapsed_ms / p.dur_ms) : 0;
         setTime(mmss(p.elapsed_ms));
-        label = `${p.title} · ${L('без времени', 'untimed')}`;
-        btn = ['check', L(`Закончил ${p.title.toLowerCase()}`, `Done with ${p.title.toLowerCase()}`)];
+        label = `${p.title} · ${tr('mini_untimed')}`;
+        btn = ['check', tr('mini_done_with', { p: p.title.toLowerCase() })];
         break;
       }
       frac = over ? 1 : p.elapsed_ms / p.dur_ms;
       setTime(over ? `+${mmss(-p.remaining_ms)}` : mmss(p.remaining_ms));
       if (p.prep) {
-        label = `${p.title} · ${over ? L('пора ложиться', 'time to lie down') : L('подготовка', 'getting ready')}`;
-        btn = ['bed', L('Лёг', 'In bed')];
+        label = `${p.title} · ${over ? tr('mini_time_to_lie_down') : tr('mini_getting_ready')}`;
+        btn = ['bed', tr('app_in_bed')];
         break;
       }
-      label = over ? `${p.title} · ${L('превышено', 'over')}` : p.title;
-      btn = p.alarm ? ['alarm', L('Встал', 'I’m up')] : ['check', L(`Закончил ${p.title.toLowerCase()}`, `Done with ${p.title.toLowerCase()}`)];
+      label = over ? `${p.title} · ${tr('mini_over')}` : p.title;
+      btn = p.alarm ? ['alarm', tr('app_im_up')] : ['check', tr('mini_done_with', { p: p.title.toLowerCase() })];
       break;
     }
     case 'await':
       {
         const n = p.subtitle.match(/(?:часть|part) (\d+)/i)?.[1];
-        setTime(n ? `${L('Часть', 'Part')} ${n}` : L('Дальше', 'Next'));
+        setTime(n ? `${tr('mini_part')} ${n}` : tr('mini_next'));
       }
-      label = `${L('Перерыв окончен', 'Break over')} · ${mmss(p.waiting_ms)}`;
-      btn = ['play', L('Начать следующую часть', 'Start the next part')];
+      label = `${tr('view_break_over')} · ${mmss(p.waiting_ms)}`;
+      btn = ['play', tr('app_start_the_next_part')];
       frac = 1;
       break;
     case 'lunch':
       setTime(mmss(p.elapsed_ms));
-      label = L('Обед · нажми, когда поешь', 'Lunch · press when you’ve eaten');
-      btn = ['play', L('Пообедал — начать', 'Done eating — start')];
+      label = tr('mini_lunch_press_when_youve_eaten');
+      btn = ['play', tr('mini_done_eating_start')];
       break;
     case 'done':
-      setTime(L('Готово', 'Done'));
-      label = L(`${Math.round(v.work_ms / 60000)} мин учёбы · блокировка снята`, `${Math.round(v.work_ms / 60000)} min of study · lock off`);
+      setTime(tr('art_done'));
+      label = tr('mini_min_of_study_lock_off', { v: Math.round(v.work_ms / 60000) });
       break;
     default:
-      setTime(v.can.start_day ? L('Старт', 'Start') : '--:--');
-      label = v.can.start_day ? L('Начать учебный день', 'Start the study day') : p.title;
-      btn = v.can.start_day ? ['play', L('Начать день', 'Start day')] : null;
+      setTime(v.can.start_day ? tr('mini_start') : '--:--');
+      label = v.can.start_day ? tr('mini_start_the_study_day') : p.title;
+      btn = v.can.start_day ? ['play', tr('app_start_day')] : null;
   }
   el('bar').style.strokeDashoffset = String(100 - Math.min(1, Math.max(0, frac)) * 100);
   el('label').textContent = label;

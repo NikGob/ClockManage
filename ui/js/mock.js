@@ -1,6 +1,9 @@
 // Browser-only mock of the Rust backend, used for design previews (`?state=work`).
 // Never loaded inside the Tauri app.
-import { L } from './i18n.js';
+import { lang } from './i18n.js';
+
+// Preview data in the preview's language (not part of the app's texts).
+const L = (ru, en) => (lang === 'en' ? en : ru);
 const q = new URLSearchParams(location.search);
 let STATE = q.get('state') || 'work';
 // `?then=lunch_break&at=2000`: switch the phase after a while (to test what a click does

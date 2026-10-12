@@ -1,14 +1,7 @@
 package com.nikgob.clockmanage
 
-import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
-
-/** Interface language: the phone's own — Russian for ru/uk/be, English otherwise. */
-val RU: Boolean get() = Locale.getDefault().language in setOf("ru", "uk", "be")
-
-/** The text of the current language: L("Пауза", "Pause"). */
-fun L(ru: String, en: String) = if (RU) ru else en
 
 /** One phase of the day the PC projected forward ("nobody presses anything"). */
 class Entry(
@@ -202,15 +195,15 @@ object Fmt {
         val h = m / 60
         val r = m % 60
         return when {
-            h == 0L -> L("$r мин", "$r min")
-            r == 0L -> L("$h ч", "$h h")
-            else -> L("$h ч $r мин", "$h h $r min")
+            h == 0L -> tr("ui_min", "r" to r)
+            r == 0L -> tr("app_h", "h" to h)
+            else -> tr("ui_h_min", "h" to h, "r" to r)
         }
     }
 
     fun hours(min: Int): String = when {
-        min % 60 == 0 -> L("${min / 60} ч", "${min / 60} h")
-        min < 60 -> L("$min мин", "$min min")
-        else -> L("${min / 60} ч ${min % 60} мин", "${min / 60} h ${min % 60} min")
+        min % 60 == 0 -> tr("android_h", "v" to min / 60)
+        min < 60 -> tr("ui_minutes_label", "min" to min)
+        else -> tr("android_h_min", "v" to min / 60, "v2" to min % 60)
     }
 }

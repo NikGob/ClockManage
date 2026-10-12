@@ -5,7 +5,7 @@
 use crate::clock::{Ts, MIN};
 use crate::config::Config;
 use crate::day::{fmt_min, same_name, BreakKind, DayState, Event, Mode, Phase, QueuedSegment, SegmentRecord};
-use crate::i18n::pick;
+use crate::i18n::tr;
 use crate::tr;
 
 /// Warn this long before the planned end (not for alarm segments).
@@ -41,20 +41,20 @@ impl DayState {
     /// Start segments now (from a break / waiting) or queue them behind the running one.
     pub fn start_segments(&mut self, now: Ts, items: Vec<QueuedSegment>) -> Result<(), String> {
         if items.is_empty() {
-            return Err(tr!("Выбери хотя бы один отрезок.", "Pick at least one segment."));
+            return Err(tr!("segment_pick_at_least_one_segment"));
         }
         if !self.can_start_segment() {
-            return Err(tr!("Отрезок ставится в перерыве или между блоками.", "A segment can only start during a break or between blocks."));
+            return Err(tr!("segment_a_segment_can_only_start_during"));
         }
         if items.iter().any(|q| q.name.trim().is_empty() || q.minutes == 0) {
-            return Err(tr!("У отрезка должны быть название и длительность.", "A segment needs a name and a duration."));
+            return Err(tr!("segment_a_segment_needs_a_name_and"));
         }
         let mut items = items;
         self.take_planned(now, &mut items);
         if matches!(self.phase, Phase::Segment { .. }) {
-            let names = items.iter().map(|q| tr!("{} {} мин", "{} {} min", q.name, q.minutes)).collect::<Vec<_>>().join(" → ");
+            let names = items.iter().map(|q| tr!("day_name_minutes", name = q.name, minutes = q.minutes)).collect::<Vec<_>>().join(" → ");
             self.segment_queue.extend(items);
-            self.log(now, "segment_queue", tr!("В очередь: {names}", "Queued: {names}"));
+            self.log(now, "segment_queue", tr!("segment_queued", names = names));
             return Ok(());
         }
         if let Some(p) = self.pause.take() {
@@ -81,7 +81,7 @@ impl DayState {
                 items[k].plan_item = Some(i);
                 items[k].consumed = true;
                 let name = self.plan[i].name.clone();
-                self.log(now, "segment_plan", tr!("«{name}» взят раньше плана — запланированный не запустится второй раз", "“{name}” taken ahead of the plan — the planned one won't start a second time"));
+                self.log(now, "segment_plan", tr!("segment_taken_ahead_of_the_plan_the", name = name));
             }
         }
     }
@@ -109,15 +109,15 @@ impl DayState {
             }
         }
         let how = if q.open_ended {
-            tr!(" — без времени, секундомер", " — untimed, stopwatch")
+            tr!("segment_mode_untimed")
         } else if q.prep_min > 0 {
-            tr!(" — сначала подготовка {} мин, отсчёт{} от «Лёг»", " — first {} min to get ready, countdown{} from “In bed”", q.prep_min, if q.alarm { pick(" и будильник", " and alarm") } else { "" })
+            tr!("segment_first_min_to_get_ready_countdown", prep_min = q.prep_min, extra = if q.alarm { tr("segment_and_alarm") } else { "" })
         } else if q.alarm {
-            tr!(" — будильник в конце", " — alarm at the end")
+            tr!("segment_alarm_at_the_end")
         } else {
             String::new()
         };
-        self.log(now, "segment", tr!("{} {} мин{how}", "{} {} min{how}", q.name, q.minutes));
+        self.log(now, "segment", tr!("segment_min", name = q.name, minutes = q.minutes, how = how));
         self.segments.push(SegmentRecord {
             name: q.name,
             planned_min: q.minutes,
@@ -142,7 +142,7 @@ impl DayState {
     /// otherwise the timer waits for the next part (or the day is over).
     pub fn end_segment(&mut self, now: Ts) -> Result<(), String> {
         let Phase::Segment { rec, next } = self.phase else {
-            return Err(tr!("Сейчас не идёт отрезок.", "No segment is running."));
+            return Err(tr!("segment_no_segment_is_running"));
         };
         let r = &mut self.segments[rec];
         let never_lay = r.in_prep();
@@ -155,15 +155,16 @@ impl DayState {
             }
         }
         let over = actual - planned;
-        let prep = if had_prep { tr!(", подготовка {} мин", ", getting ready {} min", fmt_min(prep)) } else { String::new() };
+        let prep = if had_prep { tr!("segment_getting_ready_min", prep = fmt_min(prep)) } else { String::new() };
         let text = if never_lay {
-            tr!("{name} отменён на подготовке{prep}", "{name} cancelled while getting ready{prep}")
+            tr!("segment_cancelled_while_getting_ready", name = name, prep = prep)
         } else {
             tr!(
-                "{name} окончен: {} мин{}{prep}",
-                "{name} over: {} min{}{prep}",
-                fmt_min(actual),
-                if over >= MIN { tr!(" (превышение {} мин)", " ({} min over)", over / MIN) } else { String::new() }
+                "segment_over_min",
+                actual = fmt_min(actual),
+                extra = if over >= MIN { tr!("segment_min_over", min = over / MIN) } else { String::new() },
+                name = name,
+                prep = prep,
             )
         };
         self.log(now, "segment_end", text);
@@ -176,7 +177,7 @@ impl DayState {
                 self.phase = Phase::Done;
                 if self.completed_at.is_none() {
                     self.completed_at = Some(now);
-                    self.log(now, "day_done", pick("Все блоки дня закрыты — блокировка снята", "All blocks of the day are closed — the lock is off"));
+                    self.log(now, "day_done", tr("segment_all_blocks_of_the_day_are"));
                 }
             }
         }
@@ -186,7 +187,7 @@ impl DayState {
     /// Take a segment out of the queue.
     pub fn drop_queued(&mut self, now: Ts, index: usize) -> Result<(), String> {
         if index >= self.segment_queue.len() {
-            return Err(tr!("В очереди нет такого отрезка.", "No such segment in the queue."));
+            return Err(tr!("segment_no_such_segment_in_the_queue"));
         }
         let q = self.segment_queue.remove(index);
         // A planned one dropped from the queue is skipped for today, not moved to a later spot.
@@ -196,24 +197,24 @@ impl DayState {
                 p.completed_at = Some(now);
             }
         }
-        self.log(now, "segment_queue", tr!("Из очереди убран: {}", "Removed from the queue: {}", q.name));
+        self.log(now, "segment_queue", tr!("segment_removed_from_the_queue", name = q.name));
         Ok(())
     }
 
     /// "Лёг": the preparation is over, the countdown (and the alarm) starts now.
     pub fn lay_down(&mut self, now: Ts) -> Result<(), String> {
         let Phase::Segment { rec, .. } = self.phase else {
-            return Err(tr!("Сейчас не идёт отрезок.", "No segment is running."));
+            return Err(tr!("segment_no_segment_is_running"));
         };
         let r = &mut self.segments[rec];
         if !r.in_prep() {
-            return Err(tr!("Отсчёт уже идёт.", "The countdown is already running."));
+            return Err(tr!("segment_the_countdown_is_already_running"));
         }
         r.lay_at = Some(now);
         r.warned = false;
         r.ended_notified = false;
         r.reminded_at = now;
-        let text = tr!("{}: лёг после {} мин подготовки — {} через {} мин", "{}: in bed after {} min getting ready — {} in {} min", r.name, fmt_min(now - r.start), if r.alarm { pick("будильник", "alarm") } else { pick("конец", "end") }, r.planned_min);
+        let text = tr!("segment_in_bed_after_min_getting_ready", name = r.name, now = fmt_min(now - r.start), extra = if r.alarm { tr("segment_alarm") } else { tr("segment_end") }, planned_min = r.planned_min);
         self.log(now, "segment_lay", text);
         Ok(())
     }
@@ -222,14 +223,14 @@ impl DayState {
     /// segment starts by itself with a countdown; this is how it goes without one.
     pub fn set_segment_mode(&mut self, now: Ts, open_ended: bool) -> Result<(), String> {
         let Phase::Segment { rec, .. } = self.phase else {
-            return Err(tr!("Сейчас не идёт отрезок.", "No segment is running."));
+            return Err(tr!("segment_no_segment_is_running"));
         };
         let r = &mut self.segments[rec];
         if r.in_prep() {
-            return Err(tr!("Сначала «Лёг» — на подготовке отсчёта ещё нет.", "Press “In bed” first — there's no countdown while getting ready."));
+            return Err(tr!("segment_press_in_bed_first_theres_no"));
         }
         if r.alarm && open_ended {
-            return Err(tr!("У «{}» в конце будильник — без времени его не поставить.", "“{}” ends with an alarm — it can't run untimed.", r.name));
+            return Err(tr!("segment_ends_with_an_alarm_it_cant", name = r.name));
         }
         if r.open_ended == open_ended {
             return Ok(());
@@ -240,7 +241,7 @@ impl DayState {
         r.ended_notified = false;
         r.reminded_at = now;
         let name = r.name.clone();
-        self.log(now, "segment_mode", format!("{name}: {}", if open_ended { pick("без времени, секундомер", "untimed, stopwatch") } else { pick("снова по таймеру", "timed again") }));
+        self.log(now, "segment_mode", format!("{name}: {}", if open_ended { tr("segment_untimed_stopwatch") } else { tr("segment_timed_again") }));
         Ok(())
     }
 
@@ -263,7 +264,7 @@ impl DayState {
                 self.completed_at = Some(now);
                 self.segment_queue.clear();
                 let total: i64 = self.progress.iter().map(|p| p.work_ms).sum();
-                self.log(now, "day_done", pick("Все блоки дня закрыты — блокировка снята", "All blocks of the day are closed — the lock is off"));
+                self.log(now, "day_done", tr("segment_all_blocks_of_the_day_are"));
                 ev.push(Event::DayCompleted { work_ms: total });
             }
         }

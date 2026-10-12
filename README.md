@@ -172,11 +172,11 @@ UI preview in a normal browser with a mock backend: `cd ui && python -m http.ser
 
 | Folder | What's inside |
 |---|---|
-| `core/` | platform-independent logic: config, the day engine, stats, the MCP handler, translations — covered by tests |
+| `core/` | platform-independent logic: config, the day engine, stats, the MCP handler, the `tr` runtime — covered by tests |
 | `src-tauri/` | the Windows app: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
-| `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler |
+| `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler; `ui/locales/` — the texts of every part |
 | `android/` | the phone app, Kotlin with no dependencies: `cd android && gradle assembleRelease` |
 
 The pictures and GIFs above are recorded from the UI on the mock backend by `scripts/media` (headless Chrome + ffmpeg) — rerun it after UI changes.
 
-Texts live next to the code as Russian/English pairs — `tr!("…", "…")` and `pick(…)` in Rust, `L('…', '…')` in JS and Kotlin — so a new string can't miss its translation.
+All texts live in one flat JSON file per language — [`ui/locales/en.json`](ui/locales/en.json) and [`ui/locales/ru.json`](ui/locales/ru.json) — shared by the Rust core, the app, the UI and the Android app: `tr("app_quit")`, `tr!("view_part_of", part = 2, parts = 3)` in Rust, `tr('today_extend_by_min', { pause_access_min })` in JS, `tr("android_main_find_pc")` in Kotlin. Placeholders are named (`{min}`), so a translation may reorder them. `core/tests/locales.rs` keeps the files and the code in step: the same keys and placeholders in every language, every call names an existing key with exactly its arguments, no unused keys. To add a language, copy `en.json` and translate the values.

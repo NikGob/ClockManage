@@ -3,7 +3,7 @@ import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm, tsHm } from '../ui.js';
-import { L } from '../i18n.js';
+import { tr } from '../i18n.js';
 import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog } from './dialogs.js';
 
 export function endLabel(v) {
@@ -11,7 +11,7 @@ export function endLabel(v) {
 }
 
 /** " ночи": a time after midnight that still belongs to today. */
-const NIGHT = () => L(' ночи', ' (night)');
+const NIGHT = () => tr('settings_night');
 
 /** Minutes after the day's midnight (may run past 24:00) -> "01:00". */
 const dayHm = (m) => hm(m % 1440);
@@ -19,7 +19,7 @@ const dayHm = (m) => hm(m % 1440);
 export function mountToday(root, ctx) {
   root.innerHTML = `
   <div class="today">
-    <section class="hero" id="hero" aria-label="${L('Таймер', 'Timer')}">
+    <section class="hero" id="hero" aria-label="${tr('today_timer')}">
       <div class="lockline" id="lockline"></div>
       <div class="dial">
         <svg id="ring" aria-hidden="true"></svg>
@@ -40,7 +40,7 @@ export function mountToday(root, ctx) {
       <section class="surface note-card" id="note-card" hidden></section>
       <section class="surface plan-card" aria-labelledby="plan-h">
         <div class="head">
-          <div class="row1"><h2 id="plan-h">${L('План дня', 'Day plan')}</h2><button class="kind-chip interactive" id="kind" data-act="kind" aria-haspopup="menu"></button><button class="btn text interactive" id="edit-plan">${L('Изменить', 'Edit')}</button></div>
+          <div class="row1"><h2 id="plan-h">${tr('main_day_plan')}</h2><button class="kind-chip interactive" id="kind" data-act="kind" aria-haspopup="menu"></button><button class="btn text interactive" id="edit-plan">${tr('today_edit')}</button></div>
           <div class="total tnum" id="total"></div>
           <div class="linear" id="total-bar"></div>
           <div class="dayend" id="dayend"></div>
@@ -63,7 +63,7 @@ export function mountToday(root, ctx) {
   const SHIELD_REPEAT_MS = 700;
 
   $('edit-plan').addEventListener('click', () => ctx.navigate('plan'));
-  ctx.setActions(`<button class="btn tonal interactive" data-top="mini">${icon('pip')}${L('Мини-таймер', 'Mini timer')}</button>`);
+  ctx.setActions(`<button class="btn tonal interactive" data-top="mini">${icon('pip')}${tr('app_mini_timer')}</button>`);
   ctx.onAction = (e) => { if (e.target.closest('[data-top="mini"]')) call('toggle_mini'); };
 
   function setBig(text, small = false) {
@@ -102,35 +102,35 @@ export function mountToday(root, ctx) {
     const left = lk.until ? mmss(lk.until - v.now) : '';
     // The day end is a quiet button: click → move it for today (later, or earlier via "другое время").
     const endBtn = (label) => (v.can.set_day_end
-      ? `<button class="when-btn interactive" data-act="dayend" aria-haspopup="menu" data-tip="${L('Конец дня на сегодня — позже или раньше', 'Today’s day end — later or earlier')}">${esc(label)}${icon('expand')}</button>`
+      ? `<button class="when-btn interactive" data-act="dayend" aria-haspopup="menu" data-tip="${tr('today_todays_day_end_later_or_earlier')}">${esc(label)}${icon('expand')}</button>`
       : esc(label));
-    const offText = v.kind === 'off' ? L('Выходной — без блокировки', 'Day off — no lock') : L(`${kindLabel(v.kind)} день без блокировки`, `${kindLabel(v.kind)} day without a lock`);
+    const offText = v.kind === 'off' ? tr('today_day_off_no_lock') : tr('today_day_without_a_lock', { kind: kindLabel(v.kind) });
     switch (lk.reason) {
-      case 'study': ic = 'lock'; text = L('Блокировка включена', 'Lock on'); when = `${endBtn(`${L('до', 'until')} ${endLabel(v)}`)} ${L('или до конца плана', 'or until the plan is done')}`; break;
-      case 'single': ic = 'lock'; text = L('Блокировка на время таймера', 'Locked for the timer'); break;
-      case 'focus': ic = 'lock'; text = L('Фокус-блокировка', 'Focus lock'); when = `${L('до', 'until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`; break;
-      case 'pause_access': text = L('Доступ открыт на паузе', 'Access open on pause'); when = left; cls = 'open'; action = 'end'; break;
-      case 'emergency': text = L('Аварийный доступ', 'Emergency access'); when = left; cls = 'open'; action = 'end'; break;
-      case 'lunch_at_pc': text = L('Обед за ПК — доступ открыт', 'Lunch at the PC — access open'); when = left; cls = 'open'; break;
-      case 'segment_access': text = `${v.phase.title} — ${L('доступ открыт', 'access open')}`; when = left; cls = 'open'; break;
+      case 'study': ic = 'lock'; text = tr('app_tray_lock_on'); when = `${endBtn(`${tr('today_until')} ${endLabel(v)}`)} ${tr('today_or_until_the_plan_is_done')}`; break;
+      case 'single': ic = 'lock'; text = tr('today_locked_for_the_timer'); break;
+      case 'focus': ic = 'lock'; text = tr('app_focus_lock'); when = `${tr('today_until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`; break;
+      case 'pause_access': text = tr('today_access_open_on_pause'); when = left; cls = 'open'; action = 'end'; break;
+      case 'emergency': text = tr('blocking_emergency_access'); when = left; cls = 'open'; action = 'end'; break;
+      case 'lunch_at_pc': text = tr('today_lunch_at_the_pc_access_open'); when = left; cls = 'open'; break;
+      case 'segment_access': text = `${v.phase.title} — ${tr('today_access_open')}`; when = left; cls = 'open'; break;
       case 'not_started':
-        text = v.study_day ? L('Блокировка включится по кнопке «Начать день»', 'The lock turns on with “Start day”') : offText;
-        if (v.study_day) when = `${L('и продержится', 'and holds')} ${endBtn(`${L('до', 'until')} ${endLabel(v)}`)}`;
+        text = v.study_day ? tr('today_the_lock_turns_on_with_start') : offText;
+        if (v.study_day) when = `${tr('today_and_holds')} ${endBtn(`${tr('today_until')} ${endLabel(v)}`)}`;
         break;
-      case 'completed': text = L('Все блоки отсижены — блокировка снята', 'All blocks done — the lock is off'); break;
+      case 'completed': text = tr('today_all_blocks_done_the_lock_is'); break;
       case 'day_end':
-        text = L(`После ${endLabel(v)} блокировки нет`, `No lock after ${endLabel(v)}`);
-        if (v.started && v.can.extend_day_end) when = endBtn(L('Вернуть блокировку', 'Bring the lock back'));
+        text = tr('today_no_lock_after', { v: endLabel(v) });
+        if (v.started && v.can.extend_day_end) when = endBtn(tr('today_bring_the_lock_back'));
         break;
       case 'not_study_day': text = offText; break;
       default: text = '';
     }
-    if (lk.focus_until && (lk.reason === 'study' || lk.reason === 'single')) when += ` · ${L('фокус до', 'focus until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`;
+    if (lk.focus_until && (lk.reason === 'study' || lk.reason === 'single')) when += ` · ${tr('today_focus_until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`;
     if (lk.base && !['pause_access', 'emergency'].includes(lk.reason) && v.can.emergency) action = 'emergency';
-    if (!meta.admin && lk.base) { text += L(' · нет прав администратора', ' · no administrator rights'); cls = 'open'; }
+    if (!meta.admin && lk.base) { text += tr('today_no_administrator_rights'); cls = 'open'; }
     const btn = action === 'end'
-      ? `<button class="btn text interactive" data-act="end_access">${L('Закрыть доступ', 'Close access')}</button>`
-      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="${L('Аварийный доступ', 'Emergency access')}">${icon('warning')}<span class="lbl">${L('Аварийно', 'Emergency')}</span></button>` : '';
+      ? `<button class="btn text interactive" data-act="end_access">${tr('today_close_access')}</button>`
+      : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="${tr('blocking_emergency_access')}">${icon('warning')}<span class="lbl">${tr('today_emergency')}</span></button>` : '';
     const el = $('lockline');
     el.className = `lockline ${cls}`;
     // `when` is HTML: every dynamic piece in it is escaped or numeric.
@@ -154,7 +154,7 @@ export function mountToday(root, ctx) {
       b.dataset.kind = k.id;
       if (had) b.classList.add('just');
     }
-    b.dataset.tip = v.can.lighter_kind ? L('Тип сегодняшнего дня: свой план и блокировка', 'Today’s day type: its own plan and lock') : L('Во время учёбы день можно сделать только плотнее', 'During study the day can only get denser');
+    b.dataset.tip = v.can.lighter_kind ? tr('today_todays_day_type_its_own_plan') : tr('today_during_study_the_day_can_only');
   }
 
   async function pickKind(b) {
@@ -166,18 +166,18 @@ export function mountToday(root, ctx) {
       const p = cfg.profiles[k.id];
       return {
         value: k.id, label: k.label, icon: icon(k.icon), selected: k.id === cur,
-        sub: `${planSummary(p.plan)}${p.block ? '' : L(' · без блокировки', ' · no lock')}`,
+        sub: `${planSummary(p.plan)}${p.block ? '' : tr('log_no_lock')}`,
         disabled: lighter && !v.can.lighter_kind,
-        tip: lighter && !v.can.lighter_kind ? L('Во время учёбы — только плотнее', 'During study — only denser') : '',
+        tip: lighter && !v.can.lighter_kind ? tr('today_during_study_only_denser') : '',
       };
     }), {
-      title: L('Тип дня', 'Day type'),
-      note: v.completed ? L('День уже закрыт: при более плотном типе он откроется снова — новые блоки добавятся, блокировка вернётся.', 'The day is closed: a denser type reopens it — the new blocks are added and the lock comes back.')
-        : v.started ? L('День уже идёт: блоки нового типа добавятся к плану, начатое не пропадёт.', 'The day is running: the new type’s blocks are added to the plan, nothing started is lost.') : L('План на сегодня заменится шаблоном этого типа.', 'Today’s plan is replaced with this type’s template.'),
+      title: tr('today_day_type'),
+      note: v.completed ? tr('today_the_day_is_closed_a_denser')
+        : v.started ? tr('today_the_day_is_running_the_new') : tr('today_todays_plan_is_replaced_with_this'),
     });
     if (!kind || kind === cur) return;
     const ok = await run(() => call('set_day_kind', { kind }).then(() => true), b);
-    if (ok) snack(L(`Сегодня — ${kindLabel(kind).toLowerCase()} день`, `Today is a ${kindLabel(kind).toLowerCase()} day`));
+    if (ok) snack(tr('today_today_is_a_day', { kind: kindLabel(kind).toLowerCase() }));
   }
 
   async function extendDayEnd(b) {
@@ -191,21 +191,21 @@ export function mountToday(root, ctx) {
         if (m <= MAX && m > v.day_end_min && !opts.includes(m)) opts.push(m);
       }
     }
-    const plus = (d) => `+${d >= 60 ? `${Math.floor(d / 60)} ${L('ч', 'h')} ` : ''}${d % 60 ? `${d % 60} ${L('мин', 'min')}` : ''}`.trim();
-    const items = opts.map((m) => ({ value: m, label: `${L('до', 'until')} ${dayHm(m)}${m >= 1440 ? NIGHT() : ''}`, icon: icon('schedule'), sub: plus(m - v.day_end_min) }));
-    items.push({ value: 'custom', label: L('Другое время…', 'Other time…'), icon: icon('edit'), sub: L('Позже или раньше, до 02:00 ночи, с причиной', 'Later or earlier, up to 02:00 at night, with a reason') });
+    const plus = (d) => `+${d >= 60 ? `${Math.floor(d / 60)} ${tr('ui_h')} ` : ''}${d % 60 ? `${d % 60} ${tr('overlay_min')}` : ''}`.trim();
+    const items = opts.map((m) => ({ value: m, label: `${tr('today_until')} ${dayHm(m)}${m >= 1440 ? NIGHT() : ''}`, icon: icon('schedule'), sub: plus(m - v.day_end_min) }));
+    items.push({ value: 'custom', label: tr('today_other_time'), icon: icon('edit'), sub: tr('today_day_end_other_hint') });
     const choice = await menu(b, items, {
-      title: v.after_day_end ? L('Вернуть блокировку до', 'Bring the lock back until') : L('Конец дня сегодня', 'Today’s day end'),
-      note: L(`Только на сегодня — в настройках остаётся ${v.day_end_base}. Каждый сдвиг пишется в лог.`, `Today only — the setting stays ${v.day_end_base}. Every shift goes to the log.`),
+      title: v.after_day_end ? tr('today_bring_the_lock_back_until') : tr('today_todays_day_end'),
+      note: tr('today_today_only_the_setting_stays_every', { day_end_base: v.day_end_base }),
     });
     if (!choice) return;
     if (choice === 'custom') {
       const r = await dayEndDialog(v);
-      if (r) snack(r.changed ? L(`Конец дня сегодня: ${r.new}${r.new_is_next_day ? NIGHT() : ''}. Настройки не тронуты.`, `Today’s day end: ${r.new}${r.new_is_next_day ? NIGHT() : ''}. Settings untouched.`) : L('Конец дня не изменился', 'The day end didn’t change'));
+      if (r) snack(r.changed ? tr('today_todays_day_end_settings_untouched', { new: r.new, r: r.new_is_next_day ? NIGHT() : '' }) : tr('today_the_day_end_didnt_change'));
       return;
     }
     const ok = await run(() => call('extend_day_end', { minutes: choice }).then(() => true), b);
-    if (ok) snack(L(`Учёба сегодня — до ${dayHm(choice)}`, `Studying today until ${dayHm(choice)}`) + (choice >= 1440 ? NIGHT() : ''));
+    if (ok) snack(tr('today_studying_today_until', { choice: dayHm(choice) }) + (choice >= 1440 ? NIGHT() : ''));
   }
 
   function controls(v) {
@@ -215,47 +215,47 @@ export function mountToday(root, ctx) {
     const B = (act, label, cls, ic) => items.push({ act, label, cls, ic });
     switch (p.kind) {
       case 'idle':
-        if (c.start_day) B('start_day', L('Начать день', 'Start day'), 'filled xl', 'play');
-        if (c.single) B('single', L('Один таймер', 'Single timer'), c.start_day ? 'tonal lg' : 'filled lg', 'timer');
+        if (c.start_day) B('start_day', tr('app_start_day'), 'filled xl', 'play');
+        if (c.single) B('single', tr('dialog_single_timer'), c.start_day ? 'tonal lg' : 'filled lg', 'timer');
         break;
       case 'work':
-        if (c.resume) B('resume', L('Продолжить', 'Resume'), 'filled xl', 'play');
-        else if (c.pause) B('pause', L('Пауза', 'Pause'), 'filled xl', 'pause');
+        if (c.resume) B('resume', tr('app_resume'), 'filled xl', 'play');
+        else if (c.pause) B('pause', tr('day_pause'), 'filled xl', 'pause');
         break;
       case 'break':
-        if (c.resume) B('resume', L('Продолжить перерыв', 'Resume the break'), 'filled lg', 'play');
-        else if (c.pause) B('pause', L('Пауза', 'Pause'), 'tonal lg', 'pause');
-        B('start_next', L('Начать сейчас', 'Start now'), c.resume ? 'tonal lg' : 'filled lg', 'skip');
-        if (c.segment) B('segment', L('Отрезок', 'Segment'), 'outlined lg', 'restaurant');
+        if (c.resume) B('resume', tr('today_resume_the_break'), 'filled lg', 'play');
+        else if (c.pause) B('pause', tr('day_pause'), 'tonal lg', 'pause');
+        B('start_next', tr('today_start_now'), c.resume ? 'tonal lg' : 'filled lg', 'skip');
+        if (c.segment) B('segment', tr('config_segment'), 'outlined lg', 'restaurant');
         break;
       case 'lunch_break':
-        B('start_next', L('Закончить обед раньше', 'End lunch early'), 'tonal lg', 'skip');
+        B('start_next', tr('today_end_lunch_early'), 'tonal lg', 'skip');
         break;
       case 'await':
         B('start_next', startLabel(p), 'filled xl', 'play');
-        if (c.segment) B('segment', L('Отрезок', 'Segment'), 'tonal lg', 'restaurant');
+        if (c.segment) B('segment', tr('config_segment'), 'tonal lg', 'restaurant');
         break;
       case 'segment':
         if (c.lay_down) {
           // Getting ready: the countdown and the alarm start only from "Лёг".
-          B('lay_down', L('Лёг', 'In bed'), 'filled xl', 'bed');
-          B('end_segment', p.alarm ? L('Не буду спать', 'Skip the nap') : L('Отменить', 'Cancel'), 'text lg', 'close');
+          B('lay_down', tr('app_in_bed'), 'filled xl', 'bed');
+          B('end_segment', p.alarm ? tr('today_skip_the_nap') : tr('today_cancel'), 'text lg', 'close');
         } else {
-          B('end_segment', p.alarm ? L('Встал', 'I’m up') : L(`Закончил ${p.title.toLowerCase()}`, `Done with ${p.title.toLowerCase()}`), 'filled xl', p.alarm ? 'alarm' : 'check');
+          B('end_segment', p.alarm ? tr('app_im_up') : tr('mini_done_with', { p: p.title.toLowerCase() }), 'filled xl', p.alarm ? 'alarm' : 'check');
         }
-        if (c.segment) B('segment', L('В очередь', 'Queue'), 'outlined lg', 'add');
-        if (c.segment_mode) B('seg_mode', p.stopwatch ? L('По таймеру', 'Timed') : L('Без времени', 'Untimed'), 'text lg', p.stopwatch ? 'schedule' : 'timer');
+        if (c.segment) B('segment', tr('dialog_queue'), 'outlined lg', 'add');
+        if (c.segment_mode) B('seg_mode', p.stopwatch ? tr('dialog_timed') : tr('dialog_untimed'), 'text lg', p.stopwatch ? 'schedule' : 'timer');
         break;
       case 'lunch':
-        B('start_next', L('Пообедал — начать', 'Done eating — start'), 'filled xl', 'play');
+        B('start_next', tr('mini_done_eating_start'), 'filled xl', 'play');
         break;
       case 'done':
-        if (c.single) B('single', L('Один таймер', 'Single timer'), 'outlined lg', 'timer');
+        if (c.single) B('single', tr('dialog_single_timer'), 'outlined lg', 'timer');
         break;
     }
     // Quiet on purpose: a text button after the main ones, behind a hold-to-confirm dialog.
-    if (c.finish_block) B('finish', L('Закрыть блок…', 'Close block…'), 'text lg', 'check');
-    if (c.stop_single) B('stop_single', L('Стоп', 'Stop'), 'outlined lg', 'stop');
+    if (c.finish_block) B('finish', tr('today_close_block'), 'text lg', 'check');
+    if (c.stop_single) B('stop_single', tr('today_stop'), 'outlined lg', 'stop');
     const sig = items.map((i) => i.act + i.label + i.cls).join('|');
     if (sig === ctrlSig) return;
     // The buttons just changed under the cursor: a click that was meant for the old button
@@ -296,8 +296,8 @@ export function mountToday(root, ctx) {
 
   function startLabel(p) {
     const m = p.subtitle.match(/(?:часть|part) (\d+) (?:из|of) (\d+)/i);
-    if (!m) return L('Начать', 'Start');
-    return m[1] === '1' ? L(`Начать «${p.subtitle.split(' · ')[0]}»`, `Start “${p.subtitle.split(' · ')[0]}”`) : L(`Начать часть ${m[1]}`, `Start part ${m[1]}`);
+    if (!m) return tr('overlay_start');
+    return m[1] === '1' ? tr('today_start', { p: p.subtitle.split(' · ')[0] }) : tr('today_start_part', { m: m[1] });
   }
 
   function access(v, meta) {
@@ -310,13 +310,13 @@ export function mountToday(root, ctx) {
         const open = p.access_left_ms > 0;
         warn = !open;
         html = `<div class="row1">${icon(open ? 'lock_open' : 'lock')}
-          <div class="grow"><div class="title-m">${open ? L('Доступ на паузе открыт', 'Access on pause is open') : L('Доступ на паузе закрыт', 'Access on pause is closed')}</div>
-          <div class="body-m muted">${open ? L('Потом блокировка вернётся, даже если пауза продолжится', 'Then the lock comes back, even if the pause goes on') : L(`Пауза идёт ${dur(p.paused_ms)}. Продлить — через мини-капчу`, `Paused for ${dur(p.paused_ms)}. Extend with a mini captcha`)}${p.extensions ? ` · ${L('продлений', 'extensions')}: ${p.extensions}` : ''}</div></div>
+          <div class="grow"><div class="title-m">${open ? tr('today_access_on_pause_is_open') : tr('today_access_on_pause_is_closed')}</div>
+          <div class="body-m muted">${open ? tr('today_then_the_lock_comes_back_even') : tr('today_paused_for_extend_with_a_mini', { paused_ms: dur(p.paused_ms) })}${p.extensions ? ` · ${tr('today_extensions')}: ${p.extensions}` : ''}</div></div>
           ${open ? `<div class="count tnum">${mmss(p.access_left_ms)}</div>` : ''}</div>
-          <div class="hstack"><button class="btn tonal interactive" data-act="extend">${icon('add')}${L(`Продлить на ${meta.pause_access_min} мин`, `Extend by ${meta.pause_access_min} min`)}</button></div>`;
+          <div class="hstack"><button class="btn tonal interactive" data-act="extend">${icon('add')}${tr('today_extend_by_min', { pause_access_min: meta.pause_access_min })}</button></div>`;
       } else {
-        html = `<div class="row1">${icon('pause')}<div class="grow"><div class="title-m">${L('Пауза', 'Paused')} ${dur(p.paused_ms)}</div>
-          <div class="body-m muted">${L('Заблокированное остаётся закрытым. Доступ на паузе включается в настройках блокировки — вне учебного дня.', 'Blocked things stay closed. Access on pause is turned on in the blocking settings — outside a study day.')}</div></div></div>`;
+        html = `<div class="row1">${icon('pause')}<div class="grow"><div class="title-m">${tr('mini_paused')} ${dur(p.paused_ms)}</div>
+          <div class="body-m muted">${tr('today_blocked_things_stay_closed_access_on')}</div></div></div>`;
       }
     }
     // Only rebuild when the structure changes; the countdown text updates in place.
@@ -345,31 +345,31 @@ export function mountToday(root, ctx) {
       fit = v.after_day_end
         ? ''
         : f.fits
-          ? `<span class="ok">${L(`План влезает, запас ${dur(f.margin_ms)}`, `The plan fits, ${dur(f.margin_ms)} to spare`)}</span>`
-          : `<span class="bad">${L(`План не влезает на ${dur(-f.margin_ms)}`, `The plan is ${dur(-f.margin_ms)} too long`)}</span>`;
+          ? `<span class="ok">${tr('today_the_plan_fits_to_spare', { margin_ms: dur(f.margin_ms) })}</span>`
+          : `<span class="bad">${tr('today_the_plan_is_too_long', { f: dur(-f.margin_ms) })}</span>`;
     }
-    const html = `${icon('alarm')}<span class="grow">${L('Конец дня', 'Day end')} <b class="tnum">${esc(endLabel(v))}</b>${v.day_end_changed ? ` <span class="was">· ${L('обычно', 'usually')} ${esc(v.day_end_base)}</span>` : ''}${fit ? `<br>${fit}` : ''}</span>
-      ${v.can.set_day_end ? `<button class="btn text interactive" data-act="dayend" aria-haspopup="menu">${L('Изменить', 'Change')}</button>` : ''}`;
+    const html = `${icon('alarm')}<span class="grow">${tr('dialog_day_end')} <b class="tnum">${esc(endLabel(v))}</b>${v.day_end_changed ? ` <span class="was">· ${tr('today_usually')} ${esc(v.day_end_base)}</span>` : ''}${fit ? `<br>${fit}` : ''}</span>
+      ${v.can.set_day_end ? `<button class="btn text interactive" data-act="dayend" aria-haspopup="menu">${tr('today_change')}</button>` : ''}`;
     if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
   }
 
   function blocks(v) {
     const ol = $('blocks');
-    $('total').textContent = v.blocks.length ? L(`${dur(v.work_ms)} из ${dur(v.planned_ms)} учёбы`, `${dur(v.work_ms)} of ${dur(v.planned_ms)} of study`) : '';
+    $('total').textContent = v.blocks.length ? tr('today_of_of_study', { work_ms: dur(v.work_ms), planned_ms: dur(v.planned_ms) }) : '';
     $('total-bar').style.setProperty('--v', v.planned_ms ? Math.min(1, v.work_ms / v.planned_ms) : 0);
     $('total-bar').hidden = !v.blocks.length;
     if (!v.blocks.length) {
-      ol.innerHTML = `<li class="empty-plan"><p class="body-m muted">${L('План на сегодня пуст.', 'Today’s plan is empty.')}</p><button class="btn tonal interactive" data-act="goplan" style="margin-top:12px">${icon('add')}${L('Составить план', 'Make a plan')}</button></li>`;
+      ol.innerHTML = `<li class="empty-plan"><p class="body-m muted">${tr('today_todays_plan_is_empty')}</p><button class="btn tonal interactive" data-act="goplan" style="margin-top:12px">${icon('add')}${tr('today_make_a_plan')}</button></li>`;
       return;
     }
     const html = v.blocks.map((b) => {
       if (b.kind === 'break') {
-        const st = b.done ? (b.started ? L('прошёл', 'done') : L('пропущен', 'skipped')) : b.started ? L('идёт', 'running') : b.queued ? L('в очереди', 'queued') : L('отрезок', 'segment');
+        const st = b.done ? (b.started ? tr('plan_done') : tr('today_skipped')) : b.started ? tr('stats_running') : b.queued ? tr('today_queued') : tr('today_segment');
         return `<li class="blk seg ${b.done ? 'done' : ''}"><span class="st">${b.done ? icon('check', 's20') : icon('coffee', 's20')}</span>
-          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} ${L('мин', 'min')} · ${st}</span></li>`;
+          <span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${b.minutes} ${tr('overlay_min')} · ${st}</span></li>`;
       }
       const st = b.done ? icon('check', 's20') : '<span class="dot"></span>';
-      const meta = `${Math.floor(b.work_ms / 60000)} ${L('из', 'of')} ${b.minutes} ${L('мин', 'min')} · ${b.done ? L('готово', 'done') : `${L('часть', 'part')} ${Math.min(b.parts_done + 1, b.parts)}/${b.parts}`}`;
+      const meta = `${Math.floor(b.work_ms / 60000)} ${tr('dialog_of')} ${b.minutes} ${tr('overlay_min')} · ${b.done ? tr('today_done') : `${tr('today_part')} ${Math.min(b.parts_done + 1, b.parts)}/${b.parts}`}`;
       return `<li class="blk ${b.done ? 'done' : ''} ${b.current ? 'current' : ''}">
         <span class="st">${st}</span><span class="name ellipsis">${esc(b.name)}</span><span class="meta tnum">${meta}</span>
         <div class="linear" style="--v:${Math.min(1, b.work_ms / (b.minutes * 60000))}"></div></li>`;
@@ -396,10 +396,10 @@ export function mountToday(root, ctx) {
     if (!pn) { noteFor = null; return; }
     if (noteFor === pn.block) return; // keep what is being typed
     noteFor = pn.block;
-    el.innerHTML = `<div class="title-m">${L(`«${esc(pn.name)}» закрыт`, `“${esc(pn.name)}” closed`)}</div>
-      <div class="field"><label for="note-in">${L('Что было скучно, куда отвлекался?', 'What was boring, what distracted you?')}</label><input id="note-in" maxlength="300" autocomplete="off"></div>
-      <div class="hstack"><button class="btn tonal interactive" data-act="note_save">${icon('check')}${L('Сохранить', 'Save')}</button>
-        <button class="btn text interactive" data-act="note_skip">${L('Пропустить', 'Skip')}</button></div>`;
+    el.innerHTML = `<div class="title-m">${tr('today_closed', { name: esc(pn.name) })}</div>
+      <div class="field"><label for="note-in">${tr('today_what_was_boring_what_distracted_you')}</label><input id="note-in" maxlength="300" autocomplete="off"></div>
+      <div class="hstack"><button class="btn tonal interactive" data-act="note_save">${icon('check')}${tr('overlay_save')}</button>
+        <button class="btn text interactive" data-act="note_skip">${tr('overlay_skip')}</button></div>`;
     el.querySelector('#note-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') el.querySelector('[data-act="note_save"]').click(); });
   }
 
@@ -423,7 +423,7 @@ export function mountToday(root, ctx) {
         frac = p.dur_ms ? p.elapsed_ms / p.dur_ms : 0;
         running = p.running;
         big = mmss(p.remaining_ms);
-        state = p.paused ? L('пауза', 'paused') : p.kind === 'work' ? L('работа', 'work') : L('перерыв', 'break');
+        state = p.paused ? tr('today_paused') : p.kind === 'work' ? tr('log_work') : tr('log_break');
         break;
       case 'segment': {
         const over = p.remaining_ms < 0;
@@ -432,33 +432,33 @@ export function mountToday(root, ctx) {
           frac = p.dur_ms ? Math.min(1, p.elapsed_ms / p.dur_ms) : 0;
           running = true;
           big = mmss(p.elapsed_ms);
-          state = over ? L('без времени · дольше обычного', 'untimed · longer than usual') : L('без времени', 'untimed');
+          state = over ? tr('today_untimed_longer_than_usual') : tr('mini_untimed');
           break;
         }
         frac = over ? 1 : p.elapsed_ms / p.dur_ms;
         running = !over;
         big = over ? `+${mmss(-p.remaining_ms)}` : mmss(p.remaining_ms);
-        state = p.prep ? (over ? L('пора ложиться', 'time to lie down') : L('подготовка', 'getting ready')) : over ? L('превышено', 'over') : p.alarm ? L('сон · будильник', 'nap · alarm') : L('отрезок', 'segment');
+        state = p.prep ? (over ? tr('mini_time_to_lie_down') : tr('mini_getting_ready')) : over ? tr('mini_over') : p.alarm ? tr('today_nap_alarm') : tr('today_segment');
         break;
       }
       case 'await':
         art = 'await';
-        sub = `${p.subtitle} · ${L('ждём', 'waiting')} ${mmss(p.waiting_ms)}`;
+        sub = `${p.subtitle} · ${tr('today_waiting')} ${mmss(p.waiting_ms)}`;
         break;
       case 'lunch':
         art = 'lunch';
-        sub = `${L('Обед без таймера · уже', 'Lunch without a timer ·')} ${mmss(p.elapsed_ms)}`;
+        sub = `${tr('today_lunch_without_a_timer')} ${mmss(p.elapsed_ms)}`;
         break;
       case 'done':
         art = 'day';
-        sub = L(`${dur(v.work_ms)} учёбы`, `${dur(v.work_ms)} of study`);
+        sub = tr('today_of_study', { work_ms: dur(v.work_ms) });
         break;
       default:
         big = v.planned_ms ? dur(v.planned_ms) : '—';
         small = true;
-        state = v.mode === 'single' ? '' : L('в плане', 'planned');
-        title = v.started ? p.title : (v.study_day ? L('Готов начать?', 'Ready to start?') : L('Выходной', 'Day off'));
-        sub = v.started ? '' : (v.blocks.length ? `${L(`${dur(v.planned_ms)} учёбы`, `${dur(v.planned_ms)} of study`)} · ${v.blocks.filter((b) => b.kind !== 'break').map((b) => b.name).join(' · ')}` : L('Добавь блоки в план', 'Add blocks to the plan'));
+        state = v.mode === 'single' ? '' : tr('today_planned');
+        title = v.started ? p.title : (v.study_day ? tr('today_ready_to_start') : tr('config_day_off'));
+        sub = v.started ? '' : (v.blocks.length ? `${tr('today_planned_of_study', { planned_ms: dur(v.planned_ms) })} · ${v.blocks.filter((b) => b.kind !== 'break').map((b) => b.name).join(' · ')}` : tr('today_add_blocks_to_the_plan'));
         if (!v.started && v.mode !== 'single') art = v.study_day ? 'idle' : 'rest';
     }
     setArt(art);
@@ -500,9 +500,9 @@ export function mountToday(root, ctx) {
         const ok = await run(() => call('start_next', { expect: v.phase.kind }).then(() => true), b);
         // Skipping a break is one click; a misclick is taken back within 10 seconds.
         if (ok && wasBreak) {
-          snack(v.phase.kind === 'lunch_break' ? L('Обед закончен раньше', 'Lunch ended early') : L('Перерыв пропущен', 'Break skipped'), 10000, {
-            label: L('Отменить', 'Cancel'),
-            run: () => run(() => call('undo_skip').then(() => snack(L('Перерыв продолжается', 'The break goes on')))),
+          snack(v.phase.kind === 'lunch_break' ? tr('today_lunch_ended_early') : tr('today_break_skipped'), 10000, {
+            label: tr('today_cancel'),
+            run: () => run(() => call('undo_skip').then(() => snack(tr('today_the_break_goes_on')))),
           });
         }
         break;
@@ -515,18 +515,18 @@ export function mountToday(root, ctx) {
       case 'dayend': await extendDayEnd(b); break;
       case 'segment': {
         const picked = await segmentDialog(last.meta.segments || [], v.phase.kind === 'segment', v.phase.kind === 'segment' ? v.phase.queue : []);
-        if (picked?.length) snack(picked.map((t) => t.name).join(' → ') + (v.phase.kind === 'segment' ? L(' — в очереди', ' — queued') : L(' — пошёл отсчёт', ' — countdown started')));
+        if (picked?.length) snack(picked.map((t) => t.name).join(' → ') + (v.phase.kind === 'segment' ? tr('today_suffix_queued') : tr('today_countdown_started')));
         break;
       }
       case 'end_segment': await run(() => call('end_segment'), b); break;
       case 'lay_down': {
         const ok = await run(() => call('lay_down').then(() => true), b);
-        if (ok) snack(`${v.phase.title}: ${L('отсчёт пошёл', 'countdown started')}${v.phase.alarm ? L(', в конце будильник', ', alarm at the end') : ''}`);
+        if (ok) snack(`${v.phase.title}: ${tr('today_lay_down_countdown_started')}${v.phase.alarm ? tr('today_alarm_at_the_end') : ''}`);
         break;
       }
       case 'seg_mode': {
         const ok = await run(() => call('set_segment_mode', { stopwatch: !v.phase.stopwatch }).then(() => true), b);
-        if (ok) snack(v.phase.stopwatch ? L('Снова обратный отсчёт', 'Counting down again') : L('Без времени — секундомер, без напоминаний о конце', 'Untimed — a stopwatch, no end reminders'));
+        if (ok) snack(v.phase.stopwatch ? tr('today_counting_down_again') : tr('today_untimed_a_stopwatch_no_end_reminders'));
         break;
       }
       case 'single': await singleDialog(); break;
@@ -534,23 +534,23 @@ export function mountToday(root, ctx) {
       case 'note_skip': {
         const text = act === 'note_save' ? root.querySelector('#note-in')?.value.trim() : '';
         const ok = await run(() => call('set_block_note', { block: v.pending_note.block, note: text || null }).then(() => true), b);
-        if (ok && text) snack(L('Строка сохранена в блок', 'Line saved to the block'));
+        if (ok && text) snack(tr('today_line_saved_to_the_block'));
         break;
       }
       case 'finish': {
         const ok = await finishDialog(v);
-        if (ok) snack(L('Блок закрыт на отработанном — записано в лог', 'Block closed at the time worked — logged'));
+        if (ok) snack(tr('today_block_closed_at_the_time_worked'));
         break;
       }
       case 'emergency': {
         const cfg = await call('get_config');
         const ok = await emergencyDialog(cfg, v.emergency_count);
-        if (ok) snack(L(`Аварийный доступ на ${cfg.emergency_min} мин. Записано в лог.`, `Emergency access for ${cfg.emergency_min} min. Logged.`));
+        if (ok) snack(tr('blocking_emergency_access_for_min_logged', { emergency_min: cfg.emergency_min }));
         break;
       }
       case 'extend': {
         const ok = await captchaDialog(last.meta.pause_access_min);
-        if (ok) snack(L(`Доступ продлён на ${last.meta.pause_access_min} мин`, `Access extended by ${last.meta.pause_access_min} min`));
+        if (ok) snack(tr('today_access_extended_by_min', { pause_access_min: last.meta.pause_access_min }));
         break;
       }
     }

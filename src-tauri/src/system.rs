@@ -52,7 +52,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     if a && b {
         Ok(())
     } else {
-        Err(tr!("Не удалось создать задачи автозапуска (нужны права администратора).", "Couldn’t create the autostart tasks (administrator rights needed)."))
+        Err(tr!("system_couldnt_create_the_autostart_tasks_administr"))
     }
 }
 
@@ -191,7 +191,7 @@ pub fn utc_offset_min() -> i32 {
 }
 
 pub fn pc_name() -> String {
-    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| tr!("ПК", "PC"))
+    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| tr!("system_pc"))
 }
 
 /// `lan_ip`, looked up at most every 30 s (the state goes to the UI every second).

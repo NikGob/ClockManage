@@ -49,6 +49,8 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // The texts are shared with the PC: one flat JSON per language, read as Java resources.
+    sourceSets["main"].resources.srcDir("../../ui/locales")
     lint {
         // Sideloaded app: Play-only policy checks (exact alarms etc.) must not fail the build.
         abortOnError = false
