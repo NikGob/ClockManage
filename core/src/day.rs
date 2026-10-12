@@ -24,6 +24,8 @@ const MAX_BLOCK_MIN: u32 = 8 * 60;
 pub const MAX_DAY_END_MIN: u32 = 26 * 60;
 /// "00:00".."02:00" typed as a day end mean the night after the study day.
 const NEXT_DAY_UNTIL_MIN: u32 = 2 * 60;
+/// Longest focus lock, counted from now: one call never locks for more than this.
+pub const MAX_FOCUS_MIN: u32 = 12 * 60;
 
 /// A plan item is a study block or a planned non-study segment (lunch, nap…).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -363,6 +365,29 @@ pub struct DayEndChange {
     pub by: String,
 }
 
+/// "Block now for N minutes", outside the study day as well. Only the end can move, and only
+/// later; nothing but emergency access opens it early.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FocusLock {
+    pub at: Ts,
+    pub until: Ts,
+    /// "ui" | "mcp"
+    pub by: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub notified: bool,
+}
+
+/// What `start_focus` did.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FocusChange {
+    /// The end before this call, when a focus lock was already on.
+    pub from: Option<Ts>,
+    pub until: Ts,
+    pub extended: bool,
+}
+
 /// What `set_plan` changed, block by block.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct PlanChange {
@@ -419,6 +444,7 @@ pub enum Event {
     PauseAccessWarning { left_ms: i64 },
     PauseAccessExpired,
     EmergencyEnded,
+    FocusEnded,
     DayEndReached,
     /// Five minutes before the planned end of a segment (not for alarm segments).
     SegmentWarning { name: String, left_ms: i64 },
@@ -483,6 +509,9 @@ pub struct DayState {
     /// "Что сейчас?" was asked for the block closed at this time.
     #[serde(default)]
     pub what_now_for: Option<Ts>,
+    /// Focus locks started (or carried over from the day before) on this day.
+    #[serde(default)]
+    pub focus: Vec<FocusLock>,
 }
 
 pub fn next_segment_ms(total_ms: i64, done_ms: i64, seg_ms: i64) -> i64 {
@@ -609,7 +638,26 @@ impl DayState {
             segments: vec![],
             segment_queue: vec![],
             what_now_for: None,
+            focus: vec![],
         }
+    }
+
+    /// A new day keeps the focus lock still running on the day before (it outlives midnight).
+    pub fn carry_focus(&mut self, prev: &DayState, now: Ts, cfg: &Config) {
+        let Some(f) = prev.focus.iter().rev().find(|f| now < f.until) else {
+            return;
+        };
+        // Emergency access opened under the focus lock keeps its full time across midnight.
+        if let Some(e) = prev.emergencies.iter().rev().find(|e| now < e.until) {
+            if !self.emergencies.iter().any(|x| x.at == e.at) {
+                self.emergencies.push(Emergency { at: e.at, until: e.until, ended_early: false, notified: false });
+            }
+        }
+        if self.focus_until(now).is_some_and(|u| u >= f.until) {
+            return;
+        }
+        self.focus.push(FocusLock { at: now, until: f.until, by: f.by.clone(), reason: f.reason.clone(), notified: false });
+        self.log(now, "focus", format!("Фокус-блокировка продолжается до {}", clock::hm(f.until, cfg.tz_offset_min)));
     }
 
     /// State loaded from disk after the app was closed: a running timer becomes paused
@@ -863,18 +911,24 @@ impl DayState {
         self.study_day && self.started_at.is_some() && self.completed_at.is_none() && !self.after_day_end(now, cfg)
     }
 
-    fn single_lock(&self) -> bool {
+    pub fn single_lock(&self) -> bool {
         self.mode == Mode::Single
             && self.singles.last().is_some_and(|s| s.cfg.block && s.ended_at.is_none())
             && !matches!(self.phase, Phase::Idle | Phase::Done)
     }
 
     pub fn base_lock(&self, now: Ts, cfg: &Config) -> bool {
-        self.plan_lock(now, cfg) || self.single_lock()
+        self.plan_lock(now, cfg) || self.single_lock() || self.focus_until(now).is_some()
+    }
+
+    /// End of the focus lock running at `now`.
+    pub fn focus_until(&self, now: Ts) -> Option<Ts> {
+        self.focus.iter().map(|f| f.until).filter(|u| now < *u).max()
     }
 
     /// Final decision: should blocked sites/apps be blocked right now?
     pub fn lock_state(&self, now: Ts, cfg: &Config) -> LockState {
+        let focus_until = self.focus_until(now);
         if !self.base_lock(now, cfg) {
             let reason = if self.single_lock() {
                 "single"
@@ -887,32 +941,44 @@ impl DayState {
             } else {
                 "day_end"
             };
-            return LockState { blocked: false, base: false, reason: reason.into(), until: None };
+            return LockState { blocked: false, base: false, reason: reason.into(), until: None, focus_until };
         }
         if let Some(e) = self.emergencies.iter().rev().find(|e| now < e.until) {
-            return LockState { blocked: false, base: true, reason: "emergency".into(), until: Some(e.until) };
+            return LockState { blocked: false, base: true, reason: "emergency".into(), until: Some(e.until), focus_until };
         }
-        if let Some(p) = &self.pause {
-            if p.access_active(now) {
-                return LockState { blocked: false, base: true, reason: "pause_access".into(), until: p.access_until() };
+        // A focus lock is opened by emergency access only: pause access, lunch at the PC and
+        // segment access are study-day exemptions.
+        if focus_until.is_none() {
+            if let Some(p) = &self.pause {
+                if p.access_active(now) {
+                    return LockState { blocked: false, base: true, reason: "pause_access".into(), until: p.access_until(), focus_until };
+                }
+            }
+            if let Phase::Break { brk: BreakKind::Lunch { at_pc: true }, dur_ms, elapsed_ms, since: Some(s), .. } = self.phase {
+                return LockState {
+                    blocked: false,
+                    base: true,
+                    reason: "lunch_at_pc".into(),
+                    until: Some(s + (dur_ms - elapsed_ms)),
+                    focus_until,
+                };
+            }
+            if let Phase::Segment { rec, .. } = self.phase {
+                if let Some(r) = self.segments.get(rec).filter(|r| r.open_access && (r.in_prep() || now < r.planned_end())) {
+                    // While getting ready the end is not known yet.
+                    let until = (!r.in_prep()).then(|| r.planned_end());
+                    return LockState { blocked: false, base: true, reason: "segment_access".into(), until, focus_until };
+                }
             }
         }
-        if let Phase::Break { brk: BreakKind::Lunch { at_pc: true }, dur_ms, elapsed_ms, since: Some(s), .. } = self.phase {
-            return LockState {
-                blocked: false,
-                base: true,
-                reason: "lunch_at_pc".into(),
-                until: Some(s + (dur_ms - elapsed_ms)),
-            };
-        }
-        if let Phase::Segment { rec, .. } = self.phase {
-            if let Some(r) = self.segments.get(rec).filter(|r| r.open_access && (r.in_prep() || now < r.planned_end())) {
-                // While getting ready the end is not known yet.
-                let until = (!r.in_prep()).then(|| r.planned_end());
-                return LockState { blocked: false, base: true, reason: "segment_access".into(), until };
-            }
-        }
-        LockState { blocked: true, base: true, reason: if self.single_lock() { "single" } else { "study" }.into(), until: None }
+        let reason = if self.single_lock() {
+            "single"
+        } else if self.plan_lock(now, cfg) {
+            "study"
+        } else {
+            "focus"
+        };
+        LockState { blocked: true, base: true, reason: reason.into(), until: None, focus_until }
     }
 
     // ---------- commands ----------
@@ -964,7 +1030,7 @@ impl DayState {
             _ => return Err("Сейчас нечего ставить на паузу.".into()),
         }
         let mut access = vec![];
-        if cfg.pause_access && self.base_lock(now, cfg) {
+        if cfg.pause_access && self.base_lock(now, cfg) && self.focus_until(now).is_none() {
             access.push(AccessWindow { from: now, until: now + cfg.pause_access_min as i64 * MIN });
         }
         let granted = !access.is_empty();
@@ -1030,6 +1096,9 @@ impl DayState {
         }
         if !self.base_lock(now, cfg) {
             return Err("Блокировка сейчас не действует.".into());
+        }
+        if self.focus_until(now).is_some() {
+            return Err("Во время фокус-блокировки доступ на паузе не открывается — только аварийный доступ.".into());
         }
         let p = self.pause.as_mut().ok_or("Продлить можно только во время паузы.")?;
         let from = p.access_until().map(|u| u.max(now)).unwrap_or(now);
@@ -1167,6 +1236,55 @@ impl DayState {
         let n = self.emergencies.len();
         self.log(now, "emergency", format!("Аварийный доступ #{n} на {} мин", cfg.emergency_min));
         Ok(until)
+    }
+
+    /// Block from now for `minutes`, any day. A running focus lock only moves later: a shorter
+    /// call is refused.
+    pub fn start_focus(&mut self, now: Ts, cfg: &Config, minutes: u32, reason: Option<&str>, by: &str) -> Result<FocusChange, String> {
+        if !(1..=MAX_FOCUS_MIN).contains(&minutes) {
+            return Err(format!("Фокус-блокировка — от 1 до {MAX_FOCUS_MIN} минут от текущего момента."));
+        }
+        let until = now + minutes as i64 * MIN;
+        let hm = |ts: Ts| clock::hm(ts, cfg.tz_offset_min);
+        let reason = reason.map(|r| r.trim().chars().take(200).collect::<String>()).filter(|r| !r.is_empty());
+        let note = reason.as_ref().map(|r| format!(" ({r})")).unwrap_or_default();
+        let from = self.focus_until(now);
+        match from {
+            Some(cur) if until <= cur => {
+                return Err(format!(
+                    "Фокус-блокировка уже идёт до {} (ещё {} мин) — её можно только продлить: minutes должно быть больше {}.",
+                    hm(cur),
+                    (cur - now + MIN - 1) / MIN,
+                    (cur - now) / MIN
+                ));
+            }
+            Some(cur) => {
+                if let Some(f) = self.focus.iter_mut().rev().find(|f| f.until == cur) {
+                    f.until = until;
+                    if reason.is_some() {
+                        f.reason = reason;
+                    }
+                }
+                self.log(now, "focus", format!("Фокус-блокировка продлена: {} → {}{note}", hm(cur), hm(until)));
+            }
+            None => {
+                // Pause access does not open a focus lock: close a window still running.
+                if let Some(p) = &mut self.pause {
+                    if p.access_active(now) {
+                        for w in &mut p.access {
+                            if w.until > now {
+                                w.until = now.max(w.from);
+                            }
+                        }
+                        p.warned = true;
+                        p.expired_notified = true;
+                    }
+                }
+                self.focus.push(FocusLock { at: now, until, by: by.into(), reason, notified: false });
+                self.log(now, "focus", format!("Фокус-блокировка до {} ({minutes} мин){note}", hm(until)));
+            }
+        }
+        Ok(FocusChange { from, until, extended: from.is_some() })
     }
 
     pub fn end_access_early(&mut self, now: Ts) -> Result<(), String> {
@@ -1767,9 +1885,19 @@ impl DayState {
                 ev.push(Event::EmergencyEnded);
             }
         }
+        for f in &mut self.focus {
+            if now >= f.until && !f.notified {
+                f.notified = true;
+                ev.push(Event::FocusEnded);
+            }
+        }
         if !self.day_end_notified && self.started_at.is_some() && self.completed_at.is_none() && self.study_day && self.after_day_end(now, cfg) {
             self.day_end_notified = true;
-            self.log(now, "day_end", format!("{} — блокировка снята по времени", fmt_day_min(self.day_end(cfg))));
+            let text = match self.focus_until(now) {
+                Some(u) => format!("{} — учебный день закончился, фокус-блокировка до {}", fmt_day_min(self.day_end(cfg)), clock::hm(u, cfg.tz_offset_min)),
+                None => format!("{} — блокировка снята по времени", fmt_day_min(self.day_end(cfg))),
+            };
+            self.log(now, "day_end", text);
             ev.push(Event::DayEndReached);
         }
         ev
@@ -1876,9 +2004,13 @@ pub struct LockState {
     pub blocked: bool,
     /// The day/single lock is in force (possibly suspended by an access window).
     pub base: bool,
-    /// study | single | emergency | pause_access | lunch_at_pc | not_study_day | not_started | completed | day_end
+    /// study | single | focus | emergency | pause_access | lunch_at_pc | segment_access |
+    /// not_study_day | not_started | completed | day_end
     pub reason: String,
+    /// End of the current access window: blocked again after it.
     pub until: Option<Ts>,
+    /// End of the running focus lock, whatever the reason above.
+    pub focus_until: Option<Ts>,
 }
 
 #[cfg(test)]
@@ -2554,6 +2686,132 @@ mod tests {
         d.set_plan(sunday, vec![PlanBlock::new("Чтение", 30)], false).unwrap();
         d.start_day(sunday, &c).unwrap();
         assert!(!d.lock_state(sunday, &c).blocked);
+    }
+
+    #[test]
+    fn focus_lock_blocks_any_day_and_only_moves_later() {
+        let c = cfg();
+        let sunday = t("2026-10-04T10:00:00Z");
+        let mut d = DayState::new(sunday, &c);
+        assert!(!d.lock_state(sunday, &c).blocked);
+        assert!(d.start_focus(sunday, &c, 0, None, "mcp").is_err());
+        assert!(d.start_focus(sunday, &c, MAX_FOCUS_MIN + 1, None, "mcp").is_err());
+
+        let ch = d.start_focus(sunday, &c, 90, Some(" ютуб "), "mcp").unwrap();
+        assert_eq!(ch, FocusChange { from: None, until: sunday + 90 * MIN, extended: false });
+        assert_eq!(d.focus[0].reason.as_deref(), Some("ютуб"));
+        let l = d.lock_state(sunday + MIN, &c);
+        assert!(l.blocked && l.base);
+        assert_eq!(l.reason, "focus");
+        assert_eq!((l.until, l.focus_until), (None, Some(sunday + 90 * MIN)));
+
+        // During the focus lock the block list only grows, as during a study day.
+        let mut fewer = c.clone();
+        fewer.blocklist.sites.retain(|s| s != "x.com");
+        assert!(c.check_update(&fewer, crate::config::EditContext { locked: d.base_lock(sunday + MIN, &c) }).is_err());
+
+        // Only later: a shorter or equal end is refused and changes nothing.
+        let ten = sunday + 10 * MIN;
+        assert!(d.start_focus(ten, &c, 60, None, "mcp").is_err());
+        assert!(d.start_focus(ten, &c, 80, None, "mcp").is_err());
+        assert_eq!(d.focus_until(ten), Some(sunday + 90 * MIN));
+        let ch = d.start_focus(ten, &c, 120, None, "mcp").unwrap();
+        assert_eq!(ch, FocusChange { from: Some(sunday + 90 * MIN), until: sunday + 130 * MIN, extended: true });
+        assert_eq!(d.focus.len(), 1);
+        assert_eq!(d.focus[0].reason.as_deref(), Some("ютуб"));
+
+        assert!(!d.tick(sunday + 129 * MIN, &c).contains(&Event::FocusEnded));
+        assert!(d.tick(sunday + 130 * MIN, &c).contains(&Event::FocusEnded));
+        assert!(!d.tick(sunday + 131 * MIN, &c).contains(&Event::FocusEnded));
+        let l = d.lock_state(sunday + 130 * MIN, &c);
+        assert!(!l.blocked && !l.base);
+        assert_eq!((l.reason.as_str(), l.focus_until), ("not_study_day", None));
+        assert_eq!(d.events.iter().filter(|e| e.kind == "focus").count(), 2);
+
+        // An extension with a reason replaces it; without one keeps it.
+        let s = sunday + 200 * MIN;
+        d.start_focus(s, &c, 30, None, "mcp").unwrap();
+        d.start_focus(s, &c, 40, Some("диплом"), "mcp").unwrap();
+        d.start_focus(s, &c, 50, None, "mcp").unwrap();
+        assert_eq!(d.focus.last().unwrap().reason.as_deref(), Some("диплом"));
+    }
+
+    #[test]
+    fn focus_lock_is_opened_by_emergency_only() {
+        let mut c = cfg();
+        c.pause_access = true;
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        let p = start() + 5 * MIN;
+        d.pause(p, &c).unwrap();
+        assert_eq!(d.lock_state(p + MIN, &c).reason, "pause_access");
+        d.start_focus(p + MIN, &c, 60, None, "mcp").unwrap();
+        // The pause access window is closed, not left running under the focus lock.
+        assert_eq!(d.pause.as_ref().unwrap().access_until(), Some(p + MIN));
+        let ev = d.tick(p + 10 * MIN, &c);
+        assert!(!ev.contains(&Event::PauseAccessExpired) && !ev.iter().any(|e| matches!(e, Event::PauseAccessWarning { .. })));
+        assert!(d.extend_pause_access(p + 10 * MIN, &c).is_err());
+        let l = d.lock_state(p + 2 * MIN, &c);
+        assert!(l.blocked);
+        assert_eq!(l.reason, "study");
+        assert_eq!(l.focus_until, Some(p + 61 * MIN));
+
+        d.emergency(p + 3 * MIN, &c, &c.emergency_phrase).unwrap();
+        let l = d.lock_state(p + 4 * MIN, &c);
+        assert!(!l.blocked);
+        assert_eq!(l.reason, "emergency");
+        assert!(d.lock_state(p + 3 * MIN + c.emergency_min as i64 * MIN, &c).blocked);
+
+        // Past the day end the focus lock still holds.
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        let ten_pm = t("2026-09-28T19:00:00Z");
+        d.start_focus(ten_pm - 30 * MIN, &c, 90, None, "mcp").unwrap();
+        let l = d.lock_state(ten_pm + 30 * MIN, &c);
+        assert!(l.blocked);
+        assert_eq!(l.reason, "focus");
+        assert!(!d.lock_state(ten_pm + 60 * MIN, &c).blocked);
+    }
+
+    #[test]
+    fn focus_lock_outlives_midnight_and_old_days_load() {
+        let c = cfg();
+        // Sunday 23:00 MSK, until Monday 01:00 MSK.
+        let late = t("2026-10-04T20:00:00Z");
+        let mut sunday = DayState::new(late, &c);
+        sunday.start_focus(late, &c, 120, Some("сон"), "mcp").unwrap();
+        // Emergency access 00:25..00:35 MSK, opened on Sunday under the focus lock.
+        let sos = t("2026-10-04T21:25:00Z");
+        sunday.emergency(sos, &c, &c.emergency_phrase).unwrap();
+        let after_midnight = t("2026-10-04T21:30:00Z");
+        assert!(!sunday.is_live(after_midnight, &c));
+        sunday.finalize(after_midnight);
+
+        let mut monday = DayState::new(after_midnight, &c);
+        assert_eq!(monday.kind, DayKind::Full);
+        monday.carry_focus(&sunday, after_midnight, &c);
+        monday.carry_focus(&sunday, after_midnight, &c);
+        assert_eq!(monday.focus.len(), 1);
+        assert_eq!(monday.focus[0].reason.as_deref(), Some("сон"));
+        // The emergency keeps its time once, then the focus lock is back.
+        assert_eq!(monday.emergencies.len(), 1);
+        assert_eq!(monday.lock_state(after_midnight, &c).reason, "emergency");
+        let sos_end = sos + c.emergency_min as i64 * MIN;
+        let l = monday.lock_state(sos_end, &c);
+        assert!(l.blocked);
+        assert_eq!((l.reason.as_str(), l.focus_until), ("focus", Some(late + 120 * MIN)));
+        assert!(monday.tick(late + 120 * MIN, &c).contains(&Event::FocusEnded));
+
+        // Nothing to carry once it is over.
+        let mut later = DayState::new(late + 3 * 60 * MIN, &c);
+        later.carry_focus(&sunday, late + 3 * 60 * MIN, &c);
+        assert!(later.focus.is_empty());
+
+        // Days saved before focus locks existed still load.
+        let mut json = serde_json::to_value(&monday).unwrap();
+        json.as_object_mut().unwrap().remove("focus");
+        let old: DayState = serde_json::from_value(json).unwrap();
+        assert!(old.focus.is_empty());
     }
 }
 

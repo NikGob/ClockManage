@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 
 use crate::config::{DayKind, WEEKDAYS};
-use crate::day::PlanBlock;
+use crate::day::{PlanBlock, MAX_FOCUS_MIN};
 
 pub const SERVER_NAME: &str = "clockmanage";
 const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -28,6 +28,12 @@ pub trait McpHost {
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String>;
     /// End-of-block line; `name` None = the latest closed block.
     fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String>;
+    /// The block list and the lock right now.
+    fn get_blocklist(&self) -> Value;
+    /// Add sites and apps, or take them out (outside the lock only).
+    fn edit_blocklist(&self, remove: bool, sites: Vec<String>, apps: Vec<String>) -> Result<Value, String>;
+    /// Block the whole list from now for `minutes`, any day; a running focus lock only moves later.
+    fn start_focus_lock(&self, minutes: u32, reason: Option<&str>) -> Result<Value, String>;
 }
 
 /// Arguments of `set_plan`.
@@ -70,19 +76,30 @@ fn profile_schema() -> Value {
     json!({ "type": "string", "enum": ["full", "light", "off"] })
 }
 
+fn blocklist_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "sites": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Домены (reddit.com — вместе с поддоменами) или домен с путём (youtube.com/shorts)" },
+            "apps": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Имена exe: Telegram.exe, Steam (.exe допишется, путь отбрасывается)" }
+        },
+        "additionalProperties": false
+    })
+}
+
 fn tools() -> Value {
     json!([
         {
             "name": "get_session_state",
             "title": "Текущее состояние таймера",
-            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/отрезок/пауза/ожидание (phase: work | break | segment | await | idle | done), сколько осталось, действует ли блокировка. blocks[].done_min — отработано целыми минутами вниз: это же число — нижний предел, до которого set_plan может урезать начатый блок. Во время отрезка — segment {type, planned_min, elapsed_min, overrun_min, alarm, prep, prep_min, stopwatch, queue}: prep — идёт подготовка (у сна: кофе, дойти до кровати), отсчёта нет, ждём «Лёг» — тогда elapsed_min/overrun_min про подготовку; stopwatch — отрезок «без времени», секундомер вверх, overrun_min считается от planned_min. В blocks отрезки плана помечены type: \"break\"; taken — уже взят (идёт, прошёл или ждёт в очереди; в том числе взят вручную раньше своего места — тогда сам он второй раз не запустится). plan_forecast считает и отрезки (с подготовкой): идущий, очередь и запланированные. Время — миллисекунды и готовые строки.",
+            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/отрезок/пауза/ожидание (phase: work | break | segment | await | idle | done), сколько осталось, действует ли блокировка (blocking: active, day_lock, reason — в том числе focus, focus_until — конец фокус-блокировки). blocks[].done_min — отработано целыми минутами вниз: это же число — нижний предел, до которого set_plan может урезать начатый блок. Во время отрезка — segment {type, planned_min, elapsed_min, overrun_min, alarm, prep, prep_min, stopwatch, queue}: prep — идёт подготовка (у сна: кофе, дойти до кровати), отсчёта нет, ждём «Лёг» — тогда elapsed_min/overrun_min про подготовку; stopwatch — отрезок «без времени», секундомер вверх, overrun_min считается от planned_min. В blocks отрезки плана помечены type: \"break\"; taken — уже взят (идёт, прошёл или ждёт в очереди; в том числе взят вручную раньше своего места — тогда сам он второй раз не запустится). plan_forecast считает и отрезки (с подготовкой): идущий, очередь и запланированные. Время — миллисекунды и готовые строки.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "get_today_stats",
             "title": "Статистика дня",
-            "description": "Статистика дня. blocks[] — только учебные блоки: planned_min, actual_min, journal_hours (actual_min вниз до 0,25 ч), note (строка «что было скучно / куда отвлекался»); journal_total — сумма journal_hours. breaks[] — неучебные отрезки (обед, сон, прогулка, свои): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; в учебные часы и journal_hours не входят. У отрезка с подготовкой (сон) actual_min — только сам сон от «Лёг» (lay_at), prep_min — подготовка отдельно (null — подготовки не было); закончен до «Лёг» — actual_min 0. stopwatch: true — шёл «без времени» (секундомер), overrun_min всё равно от planned_min. Ещё: паузы (короче 10 с не пишутся), доступ на паузе, аварийные доступы, сдвиги конца дня (day_end_changes). Без аргумента — сегодня.",
+            "description": "Статистика дня. blocks[] — только учебные блоки: planned_min, actual_min, journal_hours (actual_min вниз до 0,25 ч), note (строка «что было скучно / куда отвлекался»); journal_total — сумма journal_hours. breaks[] — неучебные отрезки (обед, сон, прогулка, свои): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; в учебные часы и journal_hours не входят. У отрезка с подготовкой (сон) actual_min — только сам сон от «Лёг» (lay_at), prep_min — подготовка отдельно (null — подготовки не было); закончен до «Лёг» — actual_min 0. stopwatch: true — шёл «без времени» (секундомер), overrun_min всё равно от planned_min. Ещё: паузы (короче 10 с не пишутся), доступ на паузе, аварийные доступы, сдвиги конца дня (day_end_changes), фокус-блокировки (focus_locks: at, until, minutes, reason, by). Без аргумента — сегодня.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, по умолчанию сегодня (МСК)" } },
@@ -209,6 +226,42 @@ fn tools() -> Value {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false }
+        },
+        {
+            "name": "get_blocklist",
+            "title": "Блок-лист",
+            "description": "Что блокируется и действует ли блокировка сейчас. sites — домены (x.com, вместе с поддоменами) и пути (youtube.com/shorts — только политики браузеров, остальной сайт открыт); apps — приложения Windows по имени exe (Telegram.exe): пока идёт блокировка, запущенные закрываются, новые не дают запуститься; phone_apps — приложения телефона (только чтение, выбираются на телефоне). blocking: active — сайты и приложения закрыты прямо сейчас; day_lock — действует блокировка (учебный день, одиночный таймер с блокировкой или фокус-блокировка), возможно временно открытая доступом; reason — study | single | focus | emergency | pause_access | lunch_at_pc | segment_access | not_started | not_study_day | completed | day_end; until — конец открытого доступа; focus_until — конец фокус-блокировки (start_focus_lock). can_remove — можно ли сейчас убирать из списка (только вне блокировки). admin — запущена ли программа с правами администратора: без них сайты не блокируются.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "add_to_blocklist",
+            "title": "Добавить в блок-лист",
+            "description": "Добавляет сайты и/или приложения в блок-лист. Можно всегда, в том числе во время блокировки: тогда новое закрывается сразу (сайты — через hosts и политики браузеров, приложение — закрывается, если запущено, и не даёт себя запустить). Сайт: домен (reddit.com — с поддоменами) или домен с путём (youtube.com/shorts — без пути закрывается весь сайт); https://, www. и / в конце убираются. Приложение: имя exe (Steam или Steam.exe; путь отбрасывается); системные процессы (explorer.exe и т. п.) и сам ClockManage не блокируются. Список действует, пока идёт учебный день с блокировкой, одиночный таймер с блокировкой или фокус-блокировка (start_focus_lock) — само добавление вне этого времени ничего не закрывает. В ответе: added (что добавилось, в сохранённом виде), unchanged (уже было), invalid (не сайт / системное приложение), blocklist целиком и blocking.",
+            "inputSchema": blocklist_schema(),
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "remove_from_blocklist",
+            "title": "Убрать из блок-листа",
+            "description": "Убирает сайты и/или приложения из блок-листа. Только вне блокировки — до «Начать день», после конца дня или когда все блоки отсижены, без одиночного таймера с блокировкой и без фокус-блокировки (get_blocklist → can_remove). Во время блокировки — отказ: список можно только расширять. Убирай только по явной просьбе пользователя. Записи сравниваются без учёта регистра после той же очистки, что при добавлении; youtube.com не убирает youtube.com/shorts — это разные записи. В ответе: removed, unchanged (такого в списке не было), invalid, blocklist целиком.",
+            "inputSchema": blocklist_schema(),
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
+        },
+        {
+            "name": "start_focus_lock",
+            "title": "Фокус-блокировка",
+            "description": "Включает блокировку всего блок-листа (сайты и приложения; на подключённом телефоне — тоже) прямо сейчас на minutes минут — в любой день: учебный день не начат, уже закончен, выходной — неважно. Снять её раньше нельзя ни агенту, ни в приложении — только аварийным доступом самого пользователя (длинная фраза руками, пишется в лог); доступ на паузе, обед за ПК и «Доступ» у отрезков её не открывают. Пока она идёт, блок-лист можно только расширять и выйти из программы нельзя. Повторный вызов только продлевает: minutes считаются от текущего момента, и новый конец должен быть позже текущего, иначе отказ. Если блокировка идёт за полночь, она переходит на следующий день. Включай только по явной просьбе пользователя и на тот срок, который он назвал (до 720 минут за раз); чтобы закрыть то, чего нет в списке, сначала add_to_blocklist. Учебный день, план и таймер она не трогает. В ответе: until (ЧЧ:ММ по времени программы), until_ms, minutes_left, extended и from (старый конец при продлении), blocklist и blocking. Запуск и каждое продление пишутся в лог дня и в get_today_stats → focus_locks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "minutes": { "type": "integer", "minimum": 1, "maximum": MAX_FOCUS_MIN, "description": "Сколько минут блокировать, начиная с текущего момента" },
+                    "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" },
+                    "reason": { "type": "string", "description": "Зачем, словами пользователя — попадёт в лог и в уведомление" }
+                },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
         }
     ])
 }
@@ -319,6 +372,40 @@ fn parse_week(args: &Value) -> Result<Vec<(usize, DayKind)>, String> {
     Ok(out)
 }
 
+/// `sites` and `apps` of the block-list tools; at least one entry.
+fn parse_lists(args: &Value) -> Result<(Vec<String>, Vec<String>), String> {
+    let list = |k: &str| -> Result<Vec<String>, String> {
+        let bad = || format!("{k}: нужен массив строк, например [\"reddit.com\"].");
+        match args.get(k) {
+            None | Some(Value::Null) => Ok(vec![]),
+            Some(Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or_else(bad)).collect(),
+            Some(_) => Err(bad()),
+        }
+    };
+    let (sites, apps) = (list("sites")?, list("apps")?);
+    if sites.is_empty() && apps.is_empty() {
+        return Err("Нужен sites или apps — хотя бы одна запись.".into());
+    }
+    if sites.len() > 50 || apps.len() > 50 {
+        return Err("Не больше 50 сайтов и 50 приложений за раз.".into());
+    }
+    Ok((sites, apps))
+}
+
+fn parse_focus(args: &Value) -> Result<u32, String> {
+    let minutes = if let Some(m) = args.get("minutes").and_then(Value::as_f64) {
+        m
+    } else if let Some(h) = args.get("hours").and_then(Value::as_f64) {
+        h * 60.0
+    } else {
+        return Err("Нужен minutes (или hours): на сколько включить блокировку.".into());
+    };
+    if !(1.0..=MAX_FOCUS_MIN as f64).contains(&minutes) {
+        return Err(format!("Фокус-блокировка — от 1 до {MAX_FOCUS_MIN} минут ({} ч) за раз.", MAX_FOCUS_MIN / 60));
+    }
+    Ok(minutes.round() as u32)
+}
+
 fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str);
     let id = msg.get("id").cloned();
@@ -340,7 +427,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. get_plan — план на сегодня, шаблоны всех профилей, расписание недели и планы следующих 7 дней. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах; переставлять можно всё, блок со случайным стартом меньше минуты — удалять, начатый — закрыть как есть через close: true по просьбе пользователя); с date — план на будущий день, сегодняшний не трогается. Отработанное везде в целых минутах вниз: done_min = предел урезания. set_template — шаблон любого профиля (full/light/off). set_week_schedule — какой профиль у дней недели. set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя."
+                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. get_plan — план на сегодня, шаблоны всех профилей, расписание недели и планы следующих 7 дней. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах; переставлять можно всё, блок со случайным стартом меньше минуты — удалять, начатый — закрыть как есть через close: true по просьбе пользователя); с date — план на будущий день, сегодняшний не трогается. Отработанное везде в целых минутах вниз: done_min = предел урезания. set_template — шаблон любого профиля (full/light/off). set_week_schedule — какой профиль у дней недели. set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя. get_blocklist — что в блок-листе (сайты, приложения .exe) и действует ли блокировка. add_to_blocklist — добавить сайты и приложения (можно всегда, во время блокировки закрываются сразу); remove_from_blocklist — убрать (только вне блокировки и по просьбе пользователя). start_focus_lock — заблокировать весь блок-лист прямо сейчас на N минут в любой день; снять раньше нельзя (только аварийный доступ пользователя), можно только продлить — включай только по явной просьбе пользователя."
                 }),
             )
         }
@@ -366,6 +453,10 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
                     None => Err("Нужен time в формате ЧЧ:ММ.".into()),
                 },
+                "get_blocklist" => Ok(host.get_blocklist()),
+                "add_to_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(false, s, a)),
+                "remove_from_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(true, s, a)),
+                "start_focus_lock" => parse_focus(&args).and_then(|m| host.start_focus_lock(m, args.get("reason").and_then(Value::as_str))),
                 _ => return Some(err(&id, -32602, &format!("Unknown tool: {name}"))),
             };
             ok(&id, tool_result(res))
@@ -434,6 +525,17 @@ mod tests {
                 None => json!({"needs_confirmation": true, "block": n, "confirm_token": "abc"}),
                 Some(t) => json!({"ok": true, "token": t}),
             })
+        }
+        fn get_blocklist(&self) -> Value {
+            json!({ "sites": ["x.com"], "apps": ["Telegram.exe"] })
+        }
+        fn edit_blocklist(&self, remove: bool, sites: Vec<String>, apps: Vec<String>) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "remove": remove, "sites": sites, "apps": apps }));
+            Ok(json!({"ok": true}))
+        }
+        fn start_focus_lock(&self, minutes: u32, reason: Option<&str>) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "focus": minutes, "reason": reason }));
+            Ok(json!({"ok": true}))
         }
     }
 
@@ -539,5 +641,35 @@ mod tests {
 
         let r = call(&h, "get_plan", json!({ "date": "2026-10-05" }));
         assert_eq!(r["structuredContent"]["date"], "2026-10-05");
+    }
+
+    #[test]
+    fn blocklist_and_focus_lock() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &h).unwrap();
+        for t in ["get_blocklist", "add_to_blocklist", "remove_from_blocklist", "start_focus_lock"] {
+            assert!(r.contains(t), "{t}");
+        }
+        assert_eq!(call(&h, "get_blocklist", json!({}))["structuredContent"]["apps"][0], "Telegram.exe");
+
+        assert_eq!(call(&h, "add_to_blocklist", json!({ "sites": ["reddit.com"] }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap().clone(), json!({ "remove": false, "sites": ["reddit.com"], "apps": [] }));
+        assert_eq!(call(&h, "remove_from_blocklist", json!({ "apps": ["Steam"] }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap().clone(), json!({ "remove": true, "sites": [], "apps": ["Steam"] }));
+        // Nothing to do, or not a list of strings.
+        assert_eq!(call(&h, "add_to_blocklist", json!({}))["isError"], true);
+        assert_eq!(call(&h, "add_to_blocklist", json!({ "sites": [], "apps": [] }))["isError"], true);
+        assert_eq!(call(&h, "add_to_blocklist", json!({ "sites": "reddit.com" }))["isError"], true);
+        assert_eq!(call(&h, "add_to_blocklist", json!({ "sites": [1] }))["isError"], true);
+        let many: Vec<String> = (0..51).map(|i| format!("s{i}.com")).collect();
+        assert_eq!(call(&h, "add_to_blocklist", json!({ "sites": many }))["isError"], true);
+
+        assert_eq!(call(&h, "start_focus_lock", json!({ "minutes": 90, "reason": "ютуб" }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap().clone(), json!({ "focus": 90, "reason": "ютуб" }));
+        assert_eq!(call(&h, "start_focus_lock", json!({ "hours": 1.5 }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap()["focus"], 90);
+        assert_eq!(call(&h, "start_focus_lock", json!({}))["isError"], true);
+        assert_eq!(call(&h, "start_focus_lock", json!({ "minutes": 0 }))["isError"], true);
+        assert_eq!(call(&h, "start_focus_lock", json!({ "minutes": MAX_FOCUS_MIN + 1 }))["isError"], true);
     }
 }

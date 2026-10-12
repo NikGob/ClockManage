@@ -73,6 +73,7 @@ fn main() {
                     last_emit_sec: 0,
                     last_save: now,
                     last_kill_note: 0,
+                    resync: false,
                 }),
                 store,
                 blocker: Mutex::new(blocker::Blocker::new(dir.join("blocker.json"))),

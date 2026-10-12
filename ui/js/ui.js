@@ -347,6 +347,12 @@ export function hm(min) {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
+/** A timestamp as "ЧЧ:ММ" in the app's time zone (like the day end), not the browser's. */
+export function tsHm(ts, tzOffsetMin) {
+  const min = Math.floor(ts / 60000) + tzOffsetMin;
+  return hm(((min % 1440) + 1440) % 1440);
+}
+
 /** "Математика 1,5 ч · Словацкий 1 ч" / "5 ч 30 мин" summary of a plan. */
 export function planSummary(plan) {
   if (!plan?.length) return 'Плана нет';

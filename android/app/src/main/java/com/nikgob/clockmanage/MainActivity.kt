@@ -388,7 +388,11 @@ class MainActivity : Activity() {
             title.text = "Жду данных с ПК"
             return
         }
-        lock.text = if (s.blockedAt(now, store.syncedAt)) "🔒 Блокировка включена · до ${s.dayEnd} или до конца плана" else when (s.lockReason) {
+        val focusUntil = s.focusUntil?.takeIf { now < it }
+        lock.text = if (s.blockedAt(now, store.syncedAt)) {
+            if (focusUntil != null && (s.lockReason != "study" || focusUntil >= minOf(s.dayEndAt, s.doneAt ?: s.dayEndAt))) "🔒 Фокус-блокировка · до ${hm.format(Date(focusUntil - store.offset))}"
+            else "🔒 Блокировка включена · до ${s.dayEnd} или до конца плана"
+        } else when (s.lockReason) {
             "pause_access" -> "Доступ на паузе открыт"
             "emergency" -> "Аварийный доступ"
             "completed" -> "Все блоки отсижены — блокировки нет"

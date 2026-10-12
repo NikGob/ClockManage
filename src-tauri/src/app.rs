@@ -6,7 +6,7 @@ use std::time::Duration;
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::chrono::{self, Datelike, NaiveDate};
 use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
-use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, same_name, worked_min, Event, Forecast, PlanBlock, QueuedSegment, SingleCfg};
+use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, same_name, worked_min, Event, Forecast, LockState, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
 use clockmanage_core::mcp::{McpHost, PlanRequest};
@@ -48,6 +48,8 @@ pub struct Inner {
     pub last_emit_sec: i64,
     pub last_save: Ts,
     pub last_kill_note: Ts,
+    /// The block list changed: re-apply it on the next tick, not on the 30 s check.
+    pub resync: bool,
 }
 
 #[derive(Clone)]
@@ -278,7 +280,14 @@ impl Shared {
         let _ = items.action.set_text(label);
         let _ = items.action.set_enabled(enabled);
         let _ = items.quit.set_enabled(!v.lock.base);
-        let _ = items.quit.set_text(if v.lock.base { "Выход недоступен во время учёбы" } else { "Выход" });
+        let quit = if !v.lock.base {
+            "Выход"
+        } else if v.lock.focus_until.is_some() && v.lock.reason != "study" {
+            "Выход недоступен до конца фокус-блокировки"
+        } else {
+            "Выход недоступен во время учёбы"
+        };
+        let _ = items.quit.set_text(quit);
         if let Some(t) = self.app.tray_by_id("main") {
             let _ = t.set_tooltip(Some(tray_tooltip(v)));
         }
@@ -320,11 +329,12 @@ impl Shared {
                     }));
                 }
                 Event::DayCompleted { work_ms } => {
-                    self.notify("День закрыт", &format!("{} учёбы. Блокировка снята.", fmt_dur(*work_ms)));
+                    let tail = if v.lock.blocked { "Фокус-блокировка продолжается." } else { "Блокировка снята." };
+                    self.notify("День закрыт", &format!("{} учёбы. {tail}", fmt_dur(*work_ms)));
                     self.show_overlay(json!({
                         "kind": "day", "passive": false,
                         "title": "День закрыт",
-                        "text": format!("{} учёбы. Блокировка снята.", fmt_dur(*work_ms)),
+                        "text": format!("{} учёбы. {tail}", fmt_dur(*work_ms)),
                     }));
                 }
                 Event::BreakEnded { next_name, next_part, next_parts, lunch } => {
@@ -368,9 +378,26 @@ impl Shared {
                     self.play(Sound::Ping);
                     self.notify("Аварийный доступ закончился", "Блокировка снова включена.");
                 }
+                Event::FocusEnded => {
+                    self.play(Sound::Ping);
+                    let text = if !v.lock.base {
+                        "Блокировка снята."
+                    } else if v.lock.reason == "single" {
+                        "Блокировка на время таймера продолжается."
+                    } else if v.lock.blocked {
+                        "Учебная блокировка продолжается."
+                    } else {
+                        "Учебная блокировка продолжается, доступ пока открыт."
+                    };
+                    self.notify("Фокус-блокировка закончилась", text);
+                }
                 Event::DayEndReached => {
                     self.play(Sound::Done);
-                    self.notify(&format!("{} — блокировка снята", v.day_end), "Учебный день закончился по времени.");
+                    if v.lock.blocked {
+                        self.notify(&format!("{} — учебный день закончился", v.day_end), "Фокус-блокировка продолжается.");
+                    } else {
+                        self.notify(&format!("{} — блокировка снята", v.day_end), "Учебный день закончился по времени.");
+                    }
                 }
                 Event::SegmentWarning { name, left_ms } => {
                     self.play(Sound::Ping);
@@ -513,13 +540,18 @@ pub fn load_today(store: &Store, cfg: &Config, now: Ts) -> DayState {
             store.save_day(&old);
         }
     }
-    match store.load_day(&today) {
+    let mut day = match store.load_day(&today) {
         Some(mut d) => {
             d.restore(now, cfg);
             d
         }
         None => DayState::new(now, cfg),
+    };
+    // A focus lock started yesterday may still be running.
+    if let Some(old) = store.last_other_day(&today) {
+        day.carry_focus(&old, now, cfg);
     }
+    day
 }
 
 pub fn spawn_ticker(shared: Arc<Shared>) {
@@ -544,13 +576,15 @@ fn ticker(shared: Arc<Shared>) {
     loop {
         std::thread::sleep(Duration::from_millis(200));
         let now = clock::now_ts();
-        let (events, snap, emit, blocked, sites, apps, killed_note, restart_ff) = {
+        let (events, snap, emit, blocked, sites, apps, killed_note, restart_ff, resync) = {
             let mut g = shared.lock();
             let g = &mut *g;
+            let resync = std::mem::take(&mut g.resync);
             if !g.day.is_live(now, &g.cfg) {
                 g.day.finalize(now);
                 shared.store.save_day(&g.day);
-                g.day = DayState::new(now, &g.cfg);
+                let prev = std::mem::replace(&mut g.day, DayState::new(now, &g.cfg));
+                g.day.carry_focus(&prev, now, &g.cfg);
                 if g.cfg.drop_overrides_through(g.day.date) {
                     shared.store.save_config(&g.cfg);
                 }
@@ -567,7 +601,7 @@ fn ticker(shared: Arc<Shared>) {
             let snap = shared.snapshot_locked(g, now);
             let killed_note = now - g.last_kill_note > 20_000;
             let blocked = snap.view.lock.blocked;
-            (events, snap, emit, blocked, g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), killed_note, g.cfg.restart_firefox)
+            (events, snap, emit, blocked, g.cfg.blocklist.sites.clone(), g.cfg.blocklist.apps.clone(), killed_note, g.cfg.restart_firefox, resync)
         };
 
         if !events.is_empty() {
@@ -582,7 +616,7 @@ fn ticker(shared: Arc<Shared>) {
         }
 
         // Enforcement: apply on change, verify/repair every 30 s.
-        if last_blocked != Some(blocked) || now - last_verify > 30_000 {
+        if last_blocked != Some(blocked) || now - last_verify > 30_000 || resync {
             let note = shared
                 .blocker
                 .lock()
@@ -638,7 +672,13 @@ fn ticker(shared: Arc<Shared>) {
                 if killed_note {
                     g.last_kill_note = now;
                     drop(g);
-                    shared.notify("Сейчас учёба", &format!("{} закрыт. Блокировка до конца блоков дня.", killed.join(", ")));
+                    let (title, until) = match snap.view.lock.focus_until {
+                        Some(u) if snap.view.lock.reason != "study" => {
+                            ("Фокус-блокировка", format!("Блокировка до {}.", clock::hm(u, snap.meta.tz_offset_min)))
+                        }
+                        _ => ("Сейчас учёба", "Блокировка до конца блоков дня.".to_string()),
+                    };
+                    shared.notify(title, &format!("{} закрыт. {until}", killed.join(", ")));
                 }
             }
         }
@@ -735,7 +775,7 @@ impl McpHost for McpBridge {
             }).collect::<Vec<_>>(),
             "worked": fmt_dur(v.work_ms),
             "planned": fmt_dur(v.planned_ms),
-            "blocking": { "active": v.lock.blocked, "day_lock": v.lock.base, "reason": v.lock.reason },
+            "blocking": blocking_json(&v.lock, s.meta.tz_offset_min),
             "day_end": v.day_end,
             "day_end_default": v.day_end_base,
             "day_end_next_day": v.day_end_next_day,
@@ -883,6 +923,49 @@ impl McpHost for McpBridge {
 
     fn set_block_note(&self, name: Option<&str>, note: &str) -> Result<Value, String> {
         apply_block_note(&self.0, None, name, Some(note), "mcp")
+    }
+
+    fn get_blocklist(&self) -> Value {
+        let now = clock::now_ts();
+        let g = self.0.lock();
+        let lock = g.day.lock_state(now, &g.cfg);
+        json!({
+            "sites": g.cfg.blocklist.sites,
+            "apps": g.cfg.blocklist.apps,
+            "phone_apps": g.cfg.phone.apps,
+            "blocking": blocking_json(&lock, g.cfg.tz_offset_min),
+            "can_remove": !lock.base,
+            "admin": self.0.admin,
+        })
+    }
+
+    fn edit_blocklist(&self, remove: bool, sites: Vec<String>, apps: Vec<String>) -> Result<Value, String> {
+        apply_blocklist(&self.0, remove, &sites, &apps, "mcp")
+    }
+
+    fn start_focus_lock(&self, minutes: u32, reason: Option<&str>) -> Result<Value, String> {
+        let (res, notice) = self.0.mutate(|g, now| {
+            let ch = g.day.start_focus(now, &g.cfg, minutes, reason, "mcp")?;
+            let tz = g.cfg.tz_offset_min;
+            let lock = g.day.lock_state(now, &g.cfg);
+            let why = g.day.focus.iter().rev().find(|f| f.until == ch.until).and_then(|f| f.reason.clone());
+            let notice = format!("до {}{}", clock::hm(ch.until, tz), why.map(|r| format!(" ({r})")).unwrap_or_default());
+            let res = json!({
+                "ok": true,
+                "until": clock::hm(ch.until, tz),
+                "until_ms": ch.until,
+                "minutes_left": (ch.until - now + MIN - 1) / MIN,
+                "extended": ch.extended,
+                "from": ch.from.map(|f| clock::hm(f, tz)),
+                "blocklist": { "sites": g.cfg.blocklist.sites, "apps": g.cfg.blocklist.apps },
+                "blocking": blocking_json(&lock, tz),
+                "admin": self.0.admin,
+            });
+            Ok((res, (ch.extended, notice)))
+        })?;
+        let (extended, text) = notice;
+        self.0.notice(if extended { "Агент продлил фокус-блокировку" } else { "Агент включил фокус-блокировку" }, &text);
+        Ok(res)
     }
 
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
@@ -1126,6 +1209,57 @@ pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, close: &[bool], sa
 }
 
 /// One-off shift of today's day end from the UI or the agent.
+/// The lock as the agent sees it.
+fn blocking_json(l: &LockState, tz: i32) -> Value {
+    json!({
+        "active": l.blocked,
+        "day_lock": l.base,
+        "reason": l.reason,
+        "until": l.until.map(|u| clock::hm(u, tz)),
+        "focus_until": l.focus_until.map(|u| clock::hm(u, tz)),
+        "focus_until_ms": l.focus_until,
+    })
+}
+
+/// Add sites and apps to the block list, or take them out (the lock rules forbid that while
+/// it is on). Applied to the system at once when blocking is on.
+pub fn apply_blocklist(shared: &Arc<Shared>, remove: bool, sites: &[String], apps: &[String], by: &str) -> Result<Value, String> {
+    let (res, changed) = shared.mutate(|g, now| {
+        let mut next = g.cfg.clone();
+        let ch = next.edit_blocklist(remove, sites, apps);
+        let lock = g.day.lock_state(now, &g.cfg);
+        let line = ch.sites.iter().chain(&ch.apps).cloned().collect::<Vec<_>>().join(", ");
+        if !ch.is_empty() {
+            g.cfg.check_update(&next, EditContext { locked: lock.base })?;
+            g.cfg = next;
+            shared.store.save_config(&g.cfg);
+            g.resync = true;
+            g.day.log(now, "blocklist", format!("{}: {line}", if remove { "Убрано из блок-листа" } else { "Добавлено в блок-лист" }));
+        }
+        let mut res = json!({
+            "ok": true,
+            "changed": !ch.is_empty(),
+            "unchanged": ch.unchanged,
+            "invalid": ch.invalid,
+            "blocklist": { "sites": g.cfg.blocklist.sites, "apps": g.cfg.blocklist.apps },
+            "blocking": blocking_json(&lock, g.cfg.tz_offset_min),
+            "admin": shared.admin,
+        });
+        res[if remove { "removed" } else { "added" }] = json!({ "sites": ch.sites, "apps": ch.apps });
+        if !remove && !ch.is_empty() && !lock.base {
+            res["note"] = json!("Сейчас блокировка не действует: список заработает с блокировкой учебного дня, одиночного таймера или фокус-блокировкой (start_focus_lock).");
+        }
+        Ok((res, (!ch.is_empty()).then_some(line)))
+    })?;
+    if let Some(line) = changed {
+        let _ = shared.app.emit("config", ());
+        if by == "mcp" {
+            shared.notice(if remove { "Агент убрал из блок-листа" } else { "Агент добавил в блок-лист" }, &line);
+        }
+    }
+    Ok(res)
+}
+
 pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by: &str) -> Result<Value, String> {
     let (res, notice) = shared.mutate(|g, now| {
         let c = g.day.set_day_end(now, &g.cfg, time, reason, by)?;

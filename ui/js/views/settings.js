@@ -232,7 +232,7 @@ export function mountSettings(root, ctx) {
         <h2>MCP для Claude</h2>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">Локальный MCP-сервер</div>
-            <div class="d">${m.mcp.running ? `Работает на 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `Не запущен${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : 'Выключен'}. Инструменты: set_plan, set_day_end, get_plan, get_session_state, get_today_stats.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, 'MCP-сервер', 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `Работает на 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `Не запущен${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : 'Выключен'}. Инструменты: set_plan, set_day_end, get_plan, get_session_state, get_today_stats, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, 'MCP-сервер', 'mcp')}</div>
           <div class="setting col">
             <div class="t">Адрес</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="Скопировать адрес">${icon('copy')}</button></div>

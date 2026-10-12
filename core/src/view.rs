@@ -331,7 +331,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         single: d.mode == Mode::Plan && matches!(d.phase, Phase::Idle | Phase::Done),
         stop_single: d.mode == Mode::Single,
         emergency: lock.base && !access_open,
-        extend_access: cfg.pause_access && paused && lock.base,
+        extend_access: cfg.pause_access && paused && lock.base && lock.focus_until.is_none(),
         end_access: access_open,
         edit_pause_access: !lock.base,
         extend_day_end: d.study_day

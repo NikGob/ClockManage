@@ -1,6 +1,6 @@
 import { call, esc, mmss } from '../api.js';
 import { icon } from '../icons.js';
-import { run, snack } from '../ui.js';
+import { run, snack, tsHm } from '../ui.js';
 import { emergencyDialog } from './dialogs.js';
 
 export function mountBlock(root, ctx) {
@@ -121,7 +121,11 @@ export function mountBlock(root, ctx) {
     if (L.blocked) {
       cls = 'on'; ic = 'lock';
       h = 'Блокировка включена';
-      p = L.reason === 'single' ? 'На время одиночного таймера.' : `Снимется, когда отсидишь все блоки, или в ${v.day_end}.`;
+      const focusEnd = L.focus_until ? tsHm(L.focus_until, last.meta.tz_offset_min) : '';
+      p = L.reason === 'single' ? 'На время одиночного таймера.'
+        : L.reason === 'focus' ? `Фокус-блокировка до ${focusEnd}. Раньше её снимает только аварийный доступ.`
+          : `Снимется, когда отсидишь все блоки, или в ${v.day_end}.`;
+      if (focusEnd && L.reason !== 'focus') p += ` Фокус-блокировка — до ${focusEnd}.`;
     } else if (L.base) {
       cls = 'open';
       h = { pause_access: 'Доступ на паузе', emergency: 'Аварийный доступ', lunch_at_pc: 'Обед за ПК' }[L.reason] || 'Доступ открыт';

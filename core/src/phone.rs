@@ -68,6 +68,10 @@ pub struct PhoneLock {
     pub reason: String,
     /// End of the current access window: blocked again after it.
     pub until: Option<Ts>,
+    /// End of the focus lock: blocked until then, past the day end and the plan too.
+    pub focus_until: Option<Ts>,
+    /// The study-day or single-timer lock alone, without the focus lock.
+    pub day_lock: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -210,7 +214,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
         mode: v.mode,
         day_end: v.day_end,
         day_end_at: v.day_end_at,
-        lock: PhoneLock { base: v.lock.base, blocked: v.lock.blocked, reason: v.lock.reason, until: v.lock.until },
+        lock: PhoneLock { base: v.lock.base, blocked: v.lock.blocked, reason: v.lock.reason, until: v.lock.until, focus_until: v.lock.focus_until, day_lock: locked || d.single_lock() },
         done_at,
         blocks,
         timeline,
