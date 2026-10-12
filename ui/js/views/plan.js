@@ -1,6 +1,7 @@
 import { call, esc } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { run, snack, ask, hoursLabel, partsPreview, KINDS, kindLabel, menu } from '../ui.js';
+import { L } from '../i18n.js';
 
 const STEP = 15;
 const SEG_STEP = 5;
@@ -26,22 +27,22 @@ export function mountPlan(root, ctx) {
     <div class="readable">
       <div class="plan-tabs">
         <div class="segmented" role="tablist" id="tabs">
-          <button class="interactive" data-tab="today" role="tab" data-tip="План только на сегодня">${CHECK}Сегодня</button>
-          ${KINDS.map((k) => `<button class="interactive" data-tab="${k.id}" role="tab" data-tip="Шаблон: так начинается каждый ${k.label.toLowerCase()} день">${CHECK}${k.label}</button>`).join('')}
+          <button class="interactive" data-tab="today" role="tab" data-tip="${L('План только на сегодня', 'Plan for today only')}">${CHECK}${L('Сегодня', 'Today')}</button>
+          ${KINDS.map((k) => `<button class="interactive" data-tab="${k.id}" role="tab" data-tip="${L(`Шаблон: так начинается каждый ${k.label.toLowerCase()} день`, `Template: every ${k.label.toLowerCase()} day starts like this`)}">${CHECK}${k.label}</button>`).join('')}
         </div>
       </div>
       <div id="lock-note"></div>
       <p class="body-m muted" style="margin-bottom:16px" id="hint"></p>
       <div class="plan-editor" id="rows"></div>
       <div class="hstack" style="margin-top:12px">
-        <button class="btn outlined interactive" id="add">${icon('add')}Добавить блок</button>
-        <button class="btn text interactive" id="add-seg" data-tip="Обед, сон, прогулка — стоит на своём месте в дне, в учебные часы не входит">${icon('coffee')}Добавить отрезок</button>
+        <button class="btn outlined interactive" id="add">${icon('add')}${L('Добавить блок', 'Add block')}</button>
+        <button class="btn text interactive" id="add-seg" data-tip="${L('Обед, сон, прогулка — стоит на своём месте в дне, в учебные часы не входит', 'Lunch, a nap, a walk — stands in its place in the day, not counted as study')}">${icon('coffee')}${L('Добавить отрезок', 'Add segment')}</button>
       </div>
       <div class="plan-footer">
-        <label id="tpl-wrap" data-tip="Следующие такие дни начнутся с этого плана"><input type="checkbox" class="check" id="tpl"> <span id="tpl-l">Сохранить и как шаблон</span></label>
+        <label id="tpl-wrap" data-tip="${L('Следующие такие дни начнутся с этого плана', 'The next days of this type start with this plan')}"><input type="checkbox" class="check" id="tpl"> <span id="tpl-l">${L('Сохранить и как шаблон', 'Save, also as template')}</span></label>
         <span class="grow"></span>
-        <button class="btn text interactive" id="reset">Сбросить</button>
-        <button class="btn filled interactive" id="save" disabled>${icon('check')}Сохранить план</button>
+        <button class="btn text interactive" id="reset">${L('Сбросить', 'Reset')}</button>
+        <button class="btn filled interactive" id="save" disabled>${icon('check')}${L('Сохранить план', 'Save plan')}</button>
       </div>
     </div>`;
   const $ = (id) => root.querySelector('#' + id);
@@ -53,28 +54,31 @@ export function mountPlan(root, ctx) {
       b.setAttribute('aria-selected', String(b.dataset.tab === target));
     });
     $('hint').innerHTML = tpl
-      ? `Шаблон дня «${kindLabel(target)}»: с него начинается каждый такой день. Сегодняшний план он не меняет${target === todayKind && !started ? ' — кроме случая, когда сегодня ещё не начат и план не правился' : ''}.`
-      : `Каждый блок идёт частями по <b>${seg}</b> мин с перерывами между ними. Перерывы не съедают учебное время.`;
+      ? L(
+        `Шаблон дня «${kindLabel(target)}»: с него начинается каждый такой день. Сегодняшний план он не меняет${target === todayKind && !started ? ' — кроме случая, когда сегодня ещё не начат и план не правился' : ''}.`,
+        `The “${kindLabel(target)}” day template: every such day starts with it. It doesn’t change today’s plan${target === todayKind && !started ? ' — unless today hasn’t started and its plan wasn’t edited' : ''}.`,
+      )
+      : L(`Каждый блок идёт частями по <b>${seg}</b> мин с перерывами между ними. Перерывы не съедают учебное время.`, `Every block runs in parts of <b>${seg}</b> min with breaks between them. Breaks don’t eat into study time.`);
     $('tpl-wrap').hidden = tpl;
-    $('tpl-l').textContent = `Сохранить и как шаблон «${kindLabel(todayKind)}»`;
-    $('save').lastChild.textContent = tpl ? 'Сохранить шаблон' : 'Сохранить план';
+    $('tpl-l').textContent = L(`Сохранить и как шаблон «${kindLabel(todayKind)}»`, `Save, also as the “${kindLabel(todayKind)}” template`);
+    $('save').lastChild.textContent = tpl ? L('Сохранить шаблон', 'Save template') : L('Сохранить план', 'Save plan');
     $('lock-note').innerHTML = locked && !tpl
-      ? `<div class="lock-note">${icon('lock')}<div><div class="title-s">Идёт учебный день</div><div class="body-m">Не начатые блоки можно урезать и удалять, начатый — урезать не меньше уже отработанного. Отработанное время не стирается.</div></div></div>`
+      ? `<div class="lock-note">${icon('lock')}<div><div class="title-s">${L('Идёт учебный день', 'A study day is running')}</div><div class="body-m">${L('Не начатые блоки можно урезать и удалять, начатый — урезать не меньше уже отработанного. Отработанное время не стирается.', 'Blocks not started can be shortened and removed, a started one — shortened down to the time already worked. Worked time is never erased.')}</div></div></div>`
       : '';
     $('rows').innerHTML = rows.map((r, i) => {
       if (isSeg(r)) {
         const taken = !tpl && !!(r.progress?.started);
         return `<div class="prow seg${r.fresh ? ' fresh' : ''}" data-i="${i}">
-        <input class="name" value="${esc(r.name)}" aria-label="Отрезок ${i + 1}" maxlength="24" ${taken ? 'disabled' : ''}>
-        <div class="stepper" role="group" aria-label="Длительность">
-          <button class="icon-btn interactive" data-a="minus" aria-label="Меньше на ${SEG_STEP} мин" ${r.minutes <= SEG_STEP || taken ? 'disabled' : ''}>${icon('remove')}</button>
-          <div class="val tnum${r.bump ? ' bump' : ''}">${r.minutes} мин<small>${taken ? (r.progress.done ? 'прошёл' : 'идёт') : 'отрезок · не учёба'}</small></div>
-          <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${SEG_STEP} мин" ${r.minutes + SEG_STEP > 240 || taken ? 'disabled' : ''}>${icon('add')}</button>
+        <input class="name" value="${esc(r.name)}" aria-label="${L('Отрезок', 'Segment')} ${i + 1}" maxlength="24" ${taken ? 'disabled' : ''}>
+        <div class="stepper" role="group" aria-label="${L('Длительность', 'Duration')}">
+          <button class="icon-btn interactive" data-a="minus" aria-label="${L('Меньше на', 'Less by')} ${SEG_STEP} ${L('мин', 'min')}" ${r.minutes <= SEG_STEP || taken ? 'disabled' : ''}>${icon('remove')}</button>
+          <div class="val tnum${r.bump ? ' bump' : ''}">${r.minutes} ${L('мин', 'min')}<small>${taken ? (r.progress.done ? L('прошёл', 'done') : L('идёт', 'running')) : L('отрезок · не учёба', 'segment · not study')}</small></div>
+          <button class="icon-btn interactive" data-a="plus" aria-label="${L('Больше на', 'More by')} ${SEG_STEP} ${L('мин', 'min')}" ${r.minutes + SEG_STEP > 240 || taken ? 'disabled' : ''}>${icon('add')}</button>
         </div>
         <div class="tools">
-          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
-          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
-          <button class="icon-btn interactive" data-a="del" aria-label="Удалить" data-tip="${taken ? 'Из плана уйдёт, а в журнале отрезок останется' : ''}">${icon('delete')}</button>
+          <button class="icon-btn interactive" data-a="up" aria-label="${L('Выше', 'Up')}" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
+          <button class="icon-btn interactive" data-a="down" aria-label="${L('Ниже', 'Down')}" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
+          <button class="icon-btn interactive" data-a="del" aria-label="${L('Удалить', 'Remove')}" data-tip="${taken ? L('Из плана уйдёт, а в журнале отрезок останется', 'It leaves the plan, but stays in the log') : ''}">${icon('delete')}</button>
         </div></div>`;
       }
       const o = tpl ? null : r.orig;
@@ -87,20 +91,20 @@ export function mountPlan(root, ctx) {
       const doneMin = r.progress ? Math.floor(r.progress.work_ms / 60000) : 0;
       const cls = r.fresh ? 'prow fresh' : 'prow';
       return `<div class="${cls}" data-i="${i}">
-        <input class="name" value="${esc(r.name)}" aria-label="Название блока ${i + 1}" maxlength="40" ${o && r.progress?.started && !noise ? 'disabled' : ''}>
-        <div class="stepper" role="group" aria-label="Длительность">
-          <button class="icon-btn interactive" data-a="minus" aria-label="Меньше на ${STEP} мин" ${r.minutes <= minMinutes ? 'disabled' : ''}>${icon('remove')}</button>
-          <div class="val tnum${r.bump ? ' bump' : ''}">${hoursLabel(r.minutes)}<small>${parts.join(' + ')} мин</small></div>
-          <button class="icon-btn interactive" data-a="plus" aria-label="Больше на ${STEP} мин" ${r.minutes + STEP > 480 ? 'disabled' : ''}>${icon('add')}</button>
+        <input class="name" value="${esc(r.name)}" aria-label="${L('Название блока', 'Block name')} ${i + 1}" maxlength="40" ${o && r.progress?.started && !noise ? 'disabled' : ''}>
+        <div class="stepper" role="group" aria-label="${L('Длительность', 'Duration')}">
+          <button class="icon-btn interactive" data-a="minus" aria-label="${L('Меньше на', 'Less by')} ${STEP} ${L('мин', 'min')}" ${r.minutes <= minMinutes ? 'disabled' : ''}>${icon('remove')}</button>
+          <div class="val tnum${r.bump ? ' bump' : ''}">${hoursLabel(r.minutes)}<small>${parts.join(' + ')} ${L('мин', 'min')}</small></div>
+          <button class="icon-btn interactive" data-a="plus" aria-label="${L('Больше на', 'More by')} ${STEP} ${L('мин', 'min')}" ${r.minutes + STEP > 480 ? 'disabled' : ''}>${icon('add')}</button>
         </div>
         <div class="tools">
-          <button class="icon-btn interactive" data-a="up" aria-label="Выше" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
-          <button class="icon-btn interactive" data-a="down" aria-label="Ниже" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
-          <button class="icon-btn interactive" data-a="del" aria-label="Удалить" ${canDelete ? '' : 'disabled'}>${icon('delete')}</button>
+          <button class="icon-btn interactive" data-a="up" aria-label="${L('Выше', 'Up')}" ${i === 0 ? 'disabled' : ''}>${icon('up')}</button>
+          <button class="icon-btn interactive" data-a="down" aria-label="${L('Ниже', 'Down')}" ${i === rows.length - 1 ? 'disabled' : ''}>${icon('down')}</button>
+          <button class="icon-btn interactive" data-a="del" aria-label="${L('Удалить', 'Remove')}" ${canDelete ? '' : 'disabled'}>${icon('delete')}</button>
         </div>
-        ${r.progress?.started ? `<div class="progress"><div class="linear" style="--v:${Math.min(1, doneMin / r.minutes)}"></div><span class="tnum">${doneMin} из ${r.minutes} мин${r.progress.done ? ' · готово' : ''}</span></div>` : ''}
+        ${r.progress?.started ? `<div class="progress"><div class="linear" style="--v:${Math.min(1, doneMin / r.minutes)}"></div><span class="tnum">${doneMin} ${L('из', 'of')} ${r.minutes} ${L('мин', 'min')}${r.progress.done ? L(' · готово', ' · done') : ''}</span></div>` : ''}
       </div>`;
-    }).join('') || `<p class="body-m muted">${tpl && target === 'off' ? 'В выходной плана нет — и это нормально. Можно добавить что-то лёгкое.' : 'Пусто. Добавь первый блок — например «Математика, 1,5 ч».'}</p>`;
+    }).join('') || `<p class="body-m muted">${tpl && target === 'off' ? L('В выходной плана нет — и это нормально. Можно добавить что-то лёгкое.', 'No plan on a day off — and that’s fine. You can add something light.') : L('Пусто. Добавь первый блок — например «Математика, 1,5 ч».', 'Empty. Add the first block — e.g. “Math, 1.5 h”.')}</p>`;
     rows.forEach((r) => { r.fresh = false; r.bump = false; });
     markDirty();
   }
@@ -187,7 +191,7 @@ export function mountPlan(root, ctx) {
   });
   $('add-seg').addEventListener('click', async (e) => {
     const types = (cfg?.segments || []);
-    const pick = await menu(e.currentTarget, types.map((t, i) => ({ value: i, label: t.name, sub: `${t.minutes} мин${t.alarm ? ' · будильник' : ''}`, icon: icon(t.alarm ? 'alarm' : 'coffee') })), { title: 'Отрезок в плане', note: 'Запустится сам, когда закроется блок перед ним.' });
+    const pick = await menu(e.currentTarget, types.map((t, i) => ({ value: i, label: t.name, sub: `${t.minutes} ${L('мин', 'min')}${t.alarm ? L(' · будильник', ' · alarm') : ''}`, icon: icon(t.alarm ? 'alarm' : 'coffee') })), { title: L('Отрезок в плане', 'A segment in the plan'), note: L('Запустится сам, когда закроется блок перед ним.', 'Starts by itself when the block before it closes.') });
     if (pick === undefined) return;
     rows.push({ name: types[pick].name, minutes: types[pick].minutes, type: 'break', fresh: true });
     render();
@@ -198,13 +202,13 @@ export function mountPlan(root, ctx) {
     let ok;
     if (target === 'today') {
       ok = await run(() => call('set_plan', { blocks, saveTemplate: $('tpl').checked }).then(() => true), e.currentTarget);
-      if (ok) snack($('tpl').checked ? `План сохранён и стал шаблоном «${kindLabel(todayKind)}»` : 'План на сегодня сохранён');
+      if (ok) snack($('tpl').checked ? L(`План сохранён и стал шаблоном «${kindLabel(todayKind)}»`, `Plan saved and made the “${kindLabel(todayKind)}” template`) : L('План на сегодня сохранён', 'Today’s plan saved'));
     } else {
       // Fresh config: the one loaded with this screen may be stale (MCP, another save).
       const next = await call('get_config');
       next.profiles[target].plan = blocks;
       ok = await run(() => call('save_config', { cfg: next }).then(() => true), e.currentTarget);
-      if (ok) snack(`Шаблон «${kindLabel(target)}» сохранён`);
+      if (ok) snack(L(`Шаблон «${kindLabel(target)}» сохранён`, `The “${kindLabel(target)}” template saved`));
     }
     if (ok) {
       dirty = false;
@@ -214,7 +218,7 @@ export function mountPlan(root, ctx) {
   $('tabs').addEventListener('click', async (e) => {
     const b = e.target.closest('[data-tab]');
     if (!b || b.dataset.tab === target) return;
-    if (dirty && !(await ask('Не сохранено', 'Изменения в этом плане пропадут.', 'Переключиться'))) return;
+    if (dirty && !(await ask(L('Не сохранено', 'Not saved'), L('Изменения в этом плане пропадут.', 'Changes to this plan will be lost.'), L('Переключиться', 'Switch')))) return;
     target = b.dataset.tab;
     b.classList.add('just');
     setTimeout(() => b.classList.remove('just'), 600);

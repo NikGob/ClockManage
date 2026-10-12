@@ -8,13 +8,14 @@ import { mountPlan } from './views/plan.js';
 import { mountBlock } from './views/block.js';
 import { mountLog } from './views/log.js';
 import { mountSettings } from './views/settings.js';
+import { L, followLang } from './i18n.js';
 
 const ROUTES = [
-  { id: 'today', label: 'Сегодня', icon: 'timer', title: 'Сегодня', mount: mountToday },
-  { id: 'plan', label: 'План', icon: 'list', title: 'План дня', mount: mountPlan },
-  { id: 'block', label: 'Блокировка', icon: 'lock', title: 'Блокировка', mount: mountBlock },
-  { id: 'log', label: 'Журнал', icon: 'history', title: 'Журнал', mount: mountLog },
-  { id: 'settings', label: 'Настройки', icon: 'settings', title: 'Настройки', mount: mountSettings },
+  { id: 'today', label: L('Сегодня', 'Today'), icon: 'timer', title: L('Сегодня', 'Today'), mount: mountToday },
+  { id: 'plan', label: L('План', 'Plan'), icon: 'list', title: L('План дня', 'Day plan'), mount: mountPlan },
+  { id: 'block', label: L('Блокировка', 'Blocking'), icon: 'lock', title: L('Блокировка', 'Blocking'), mount: mountBlock },
+  { id: 'log', label: L('Журнал', 'Log'), icon: 'history', title: L('Журнал', 'Log'), mount: mountLog },
+  { id: 'settings', label: L('Настройки', 'Settings'), icon: 'settings', title: L('Настройки', 'Settings'), mount: mountSettings },
 ];
 
 const nav = document.getElementById('nav');
@@ -22,6 +23,7 @@ let view = document.getElementById('view');
 const title = document.getElementById('screen-title');
 const actions = document.getElementById('top-actions');
 const banner = document.getElementById('banner');
+nav.setAttribute('aria-label', L('Разделы', 'Sections'));
 
 let current = null;
 let screen = null;
@@ -112,13 +114,14 @@ function go(id) {
 }
 
 function render(s) {
+  followLang(s.meta.lang);
   snapshot = s;
   applyTheme({ seed: s.meta.seed, mode: s.meta.theme_mode, variant: s.meta.variant });
   // Attention badge on "Сегодня" when the timer waits for a click.
   const badge = nav.querySelector('[data-route="today"] .badge');
   if (badge) badge.hidden = s.view.phase.kind !== 'await';
   const problems = [];
-  if (!s.meta.admin && s.view.lock.base) problems.push('Программа запущена без прав администратора — сайты и приложения не блокируются. Запусти от имени администратора.');
+  if (!s.meta.admin && s.view.lock.base) problems.push(L('Программа запущена без прав администратора — сайты и приложения не блокируются. Запусти от имени администратора.', 'ClockManage runs without administrator rights — sites and apps are not blocked. Run it as administrator.'));
   if (s.meta.blocker_error) problems.push(s.meta.blocker_error);
   banner.hidden = !problems.length;
   if (problems.length) banner.innerHTML = `${icon('warning')}<span>${esc(problems.join(' '))}</span>`;
