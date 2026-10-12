@@ -243,3 +243,12 @@ fn locales_match_each_other_and_the_code() {
     }
     assert!(errors.is_empty(), "{} problem(s):\n{}", errors.len(), errors.join("\n"));
 }
+
+/// The UI fetches `ui/locales/*.json` from its own origin: the app's CSP must let it.
+#[test]
+fn csp_allows_loading_the_locales() {
+    let conf: serde_json::Value = serde_json::from_str(&fs::read_to_string(root().join("src-tauri/tauri.conf.json")).unwrap()).unwrap();
+    let csp = conf["app"]["security"]["csp"].as_str().unwrap_or("");
+    let connect = csp.split(';').map(str::trim).find(|d| d.starts_with("connect-src")).unwrap_or("");
+    assert!(connect.split_whitespace().any(|s| s == "'self'"), "connect-src needs 'self' for ui/locales: {csp}");
+}
