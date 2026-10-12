@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 
 use crate::config::{DayKind, WEEKDAYS};
 use crate::day::{PlanBlock, MAX_FOCUS_MIN};
+use crate::i18n::tr;
+use crate::tr;
 
 pub const SERVER_NAME: &str = "clockmanage";
 const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -53,10 +55,10 @@ fn plan_item_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "name": { "type": "string", "description": "Предмет, например «Математика», или отрезок («Обед», «Сон»)" },
+            "name": { "type": "string", "description": "A subject, e.g. \"Math\", or a segment (\"Lunch\", \"Nap\")" },
             "minutes": { "type": "integer", "minimum": 1 },
-            "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" },
-            "type": { "type": "string", "enum": ["study", "break"], "description": "break — неучебный отрезок (обед, сон, прогулка); по умолчанию study" }
+            "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Instead of minutes: 1.5 = 90 min" },
+            "type": { "type": "string", "enum": ["study", "break"], "description": "break — a non-study segment (lunch, nap, walk); study by default" }
         },
         "required": ["name"]
     })
@@ -67,7 +69,7 @@ fn today_item_schema() -> Value {
     let mut s = plan_item_schema();
     s["properties"]["close"] = json!({
         "type": "boolean",
-        "description": "Только сегодня и только для начатого и ещё не закрытого учебного блока: закрыть его как есть — план блока станет фактически отработанным (целые минуты, вниз), остаток снимается из плана, день идёт дальше как после конца блока. minutes тогда не нужны. Если отработано меньше минуты — блок просто удаляется."
+        "description": "Today only, and only for a started, not yet closed study block: close it as is — the block's plan becomes the time actually worked (whole minutes, rounded down), the rest leaves the plan, and the day goes on as after the end of a block. minutes are not needed then. If less than a minute was worked, the block is simply removed."
     });
     s
 }
@@ -80,8 +82,8 @@ fn blocklist_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "sites": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Домены (reddit.com — вместе с поддоменами) или домен с путём (youtube.com/shorts)" },
-            "apps": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Имена exe: Telegram.exe, Steam (.exe допишется, путь отбрасывается)" }
+            "sites": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Domains (reddit.com — with its subdomains) or a domain with a path (youtube.com/shorts)" },
+            "apps": { "type": "array", "maxItems": 50, "items": { "type": "string" }, "description": "Exe names: Telegram.exe, Steam (.exe is added, a path is dropped)" }
         },
         "additionalProperties": false
     })
@@ -91,55 +93,55 @@ fn tools() -> Value {
     json!([
         {
             "name": "get_session_state",
-            "title": "Текущее состояние таймера",
-            "description": "Что сейчас идёт: какой блок и часть, работа/перерыв/отрезок/пауза/ожидание (phase: work | break | segment | await | idle | done), сколько осталось, действует ли блокировка (blocking: active, day_lock, reason — в том числе focus, focus_until — конец фокус-блокировки). blocks[].done_min — отработано целыми минутами вниз: это же число — нижний предел, до которого set_plan может урезать начатый блок. Во время отрезка — segment {type, planned_min, elapsed_min, overrun_min, alarm, prep, prep_min, stopwatch, queue}: prep — идёт подготовка (у сна: кофе, дойти до кровати), отсчёта нет, ждём «Лёг» — тогда elapsed_min/overrun_min про подготовку; stopwatch — отрезок «без времени», секундомер вверх, overrun_min считается от planned_min. В blocks отрезки плана помечены type: \"break\"; taken — уже взят (идёт, прошёл или ждёт в очереди; в том числе взят вручную раньше своего места — тогда сам он второй раз не запустится). plan_forecast считает и отрезки (с подготовкой): идущий, очередь и запланированные. Время — миллисекунды и готовые строки.",
+            "title": "Timer state now",
+            "description": "What is going on now: which block and part, work/break/segment/pause/waiting (phase: work | break | segment | await | idle | done), time left, whether the lock is on (blocking: active, day_lock, reason — including focus, focus_until — the end of a focus lock). blocks[].done_min — time worked in whole minutes, rounded down: the same number is the lowest set_plan may cut a started block to. During a segment — segment {type, planned_min, elapsed_min, overrun_min, alarm, prep, prep_min, stopwatch, queue}: prep — getting ready (for a nap: coffee, getting to bed), no countdown yet, waiting for \"In bed\" — elapsed_min/overrun_min are about the preparation then; stopwatch — an untimed segment, a stopwatch counting up, overrun_min still counts from planned_min. In blocks, plan segments are marked type: \"break\"; taken — already taken (running, done or queued; also when taken by hand ahead of its place — then it won't start a second time). plan_forecast counts segments too (with preparation): the running one, the queue and the planned ones. Times come as milliseconds and ready-made strings; text fields are in the app's language.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "get_today_stats",
-            "title": "Статистика дня",
-            "description": "Статистика дня. blocks[] — только учебные блоки: planned_min, actual_min, journal_hours (actual_min вниз до 0,25 ч), note (строка «что было скучно / куда отвлекался»); journal_total — сумма journal_hours. breaks[] — неучебные отрезки (обед, сон, прогулка, свои): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; в учебные часы и journal_hours не входят. У отрезка с подготовкой (сон) actual_min — только сам сон от «Лёг» (lay_at), prep_min — подготовка отдельно (null — подготовки не было); закончен до «Лёг» — actual_min 0. stopwatch: true — шёл «без времени» (секундомер), overrun_min всё равно от planned_min. Ещё: паузы (короче 10 с не пишутся), доступ на паузе, аварийные доступы, сдвиги конца дня (day_end_changes), фокус-блокировки (focus_locks: at, until, minutes, reason, by). Без аргумента — сегодня.",
+            "title": "Day stats",
+            "description": "Stats of a day. blocks[] — study blocks only: planned_min, actual_min, journal_hours (actual_min rounded down to 0.25 h), note (the user's line \"what was boring / what distracted me\"); journal_total — the sum of journal_hours. breaks[] — non-study segments (lunch, nap, walk, custom): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; they don't count towards study hours or journal_hours. For a segment with preparation (a nap) actual_min is only the nap itself from \"In bed\" (lay_at), prep_min is the preparation separately (null — there was none); ended before \"In bed\" — actual_min 0. stopwatch: true — ran untimed (stopwatch), overrun_min still from planned_min. Also: pauses (shorter than 10 s are not recorded), access on pause, emergency accesses, day end shifts (day_end_changes), focus locks (focus_locks: at, until, minutes, reason, by). No argument — today.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, по умолчанию сегодня (МСК)" } },
+                "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, today by default (in the app's time zone)" } },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "get_week_stats",
-            "title": "Неделя для журнала",
-            "description": "Часы для журнала за неделю (пн–вс), в которую попадает date: subjects[] — предмет и journal_hours по дням (блоки с одинаковым именем складываются; каждый блок округлён вниз до 0,25 ч), day_totals, total, actual_min (неокруглённый факт). tsv — та же таблица текстом с табуляцией для вставки в таблицу. Отрезки (обед, сон) не входят.",
+            "title": "Week for the journal",
+            "description": "Journal hours for the week (Mon–Sun) containing date: subjects[] — a subject and its journal_hours per day (blocks with the same name add up; each block is rounded down to 0.25 h), day_totals, total, actual_min (the unrounded fact). tsv — the same table as tab-separated text to paste into a spreadsheet. Segments (lunch, nap) are not included.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "date": { "type": "string", "description": "Любой день недели, YYYY-MM-DD; по умолчанию текущая неделя" } },
+                "properties": { "date": { "type": "string", "description": "Any day of the week, YYYY-MM-DD; the current week by default" } },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "get_plan",
-            "title": "План дня",
-            "description": "План сегодняшнего дня по порядку (today: учебные блоки и неучебные отрезки с type: \"break\"), профиль сегодняшнего дня (profile) и его шаблон (template), конец дня на сегодня (day_end) и из настроек (day_end_default), типы отрезков (segment_types: name, minutes, alarm). Ещё: templates — шаблоны всех профилей (full/light/off: plan и blocking — включается ли блокировка); week — профиль каждого дня недели (mon…sun); upcoming — следующие 7 дней: date, weekday, profile, plan и source (\"date\" — план задан на эту дату через set_plan с date, \"template\" — шаблон профиля). С date — ещё day: план и профиль этого дня.",
+            "title": "Day plan",
+            "description": "Today's plan in order (today: study blocks and non-study segments with type: \"break\"), today's profile (profile) and its template (template), today's day end (day_end) and the one from the settings (day_end_default), segment types (segment_types: name, minutes, alarm). Also: templates — the templates of all profiles (full/light/off: plan, and blocking — whether the lock turns on); week — the profile of each weekday (mon…sun); upcoming — the next 7 days: date, weekday, profile, plan and source (\"date\" — a plan set for that date with set_plan + date, \"template\" — the profile's template). With date — also day: the plan and profile of that day.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "date": { "type": "string", "description": "YYYY-MM-DD — какой день показать в day (сегодня или позже)" } },
+                "properties": { "date": { "type": "string", "description": "YYYY-MM-DD — which day to show in day (today or later)" } },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "set_plan",
-            "title": "Задать план дня",
-            "description": "Без date — заменяет план сегодняшнего дня списком пунктов по порядку дня. Пункты сопоставляются со старыми по имени (регистр не важен) и типу в любом порядке: переставлять можно всё — неначатые и начатые блоки, отрезки; отработанное едет вместе с блоком. Учебный блок: {name, minutes|hours}. Неучебный отрезок (обед, сон, прогулка…): {name, minutes, type: \"break\"} — стоит на своём месте: когда закрывается блок перед ним, вместо перерыва между блоками запускается этот отрезок (у сна сначала подготовка без отсчёта до кнопки «Лёг», будильник — от «Лёг»). Отрезок, взятый вручную раньше своего места, гасит запланированный того же типа. Отрезки не входят в учебные часы и journal_hours, но учитываются в plan_forecast (с подготовкой). Правила. Неначатое — добавлять, удлинять, урезать, удалять. Отрезки, даже прошедшие, можно удалять — их запись в breaks[] остаётся. Начатый блок нельзя удалить или переименовать — кроме блока, где отработано меньше 1 минуты (случайный старт): он удаляется. Пока действует блокировка, начатый блок нельзя урезать ниже отработанного; предел — целые минуты вниз, ровно done_min из get_session_state (10 мин 40 с → можно 10). Закрыть начатый блок как есть — пункт {name, close: true}: план блока = отработанное, остаток снимается, день идёт дальше; так закрывай только по просьбе пользователя (текущий блок без явной просьбы — через finish_block, он спросит). Всё или ничего: при ошибке план не меняется. Отработанное время не стирается. В ответе changes (added | removed | shortened | lengthened | moved | closed) и plan_forecast. С date позже сегодняшнего — план только на тот день: он начнётся с этого плана вместо шаблона своего профиля, сегодняшний план и шаблоны не меняются (до 60 дней вперёд; профиль дня — по расписанию недели, см. get_plan → week). use_template: true с date — убрать план, заданный на эту дату (день начнётся с шаблона).",
+            "title": "Set the day plan",
+            "description": "Without date — replaces today's plan with a list of items in the order of the day. Items are matched with the old ones by name (case-insensitive) and type in any order: everything can be reordered — blocks not started and started, segments; worked time travels with its block. A study block: {name, minutes|hours}. A non-study segment (lunch, nap, walk…): {name, minutes, type: \"break\"} — it stands in its place: when the block before it closes, this segment starts instead of the break between blocks (a nap first waits for \"In bed\" with no countdown, the alarm counts from \"In bed\"). A segment taken by hand ahead of its place cancels the planned one of the same type. Segments don't count towards study hours or journal_hours, but are counted in plan_forecast (with preparation). Rules. Not started — add, lengthen, shorten, remove. Segments, even past ones, can be removed — their record in breaks[] stays. A started block can't be removed or renamed — except a block with less than 1 minute worked (an accidental start): it is removed. While the lock is on, a started block can't be cut below the time worked; the limit is whole minutes rounded down, exactly done_min from get_session_state (10 min 40 s → 10 is fine). To close a started block as is — an item {name, close: true}: the block's plan = time worked, the rest is dropped, the day goes on; do this only when the user asks (for the current block without an explicit request use finish_block, it asks). All or nothing: on an error the plan doesn't change. Worked time is never erased. The reply has changes (added | removed | shortened | lengthened | moved | closed) and plan_forecast. With a date after today — a plan for that day only: it starts with this plan instead of its profile's template; today's plan and the templates don't change (up to 60 days ahead; the day's profile follows the week schedule, see get_plan → week). use_template: true with date — drop the plan set for that date (the day starts with the template).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "blocks": { "type": "array", "minItems": 1, "maxItems": 16, "items": today_item_schema() },
-                    "date": { "type": "string", "description": "YYYY-MM-DD; по умолчанию сегодня. Позже сегодняшнего — план на тот день" },
-                    "save_as_template": { "type": "boolean", "description": "Также сделать этот план шаблоном профиля этого дня (сегодняшнего или дня из date): Полный/Лёгкий/Выходной" },
-                    "use_template": { "type": "boolean", "description": "Только с date: убрать план, заданный на эту дату; blocks тогда не нужен" }
+                    "date": { "type": "string", "description": "YYYY-MM-DD; today by default. After today — the plan for that day" },
+                    "save_as_template": { "type": "boolean", "description": "Also make this plan the template of that day's profile (today's or date's): Full/Light/Day off" },
+                    "use_template": { "type": "boolean", "description": "Only with date: drop the plan set for that date; blocks are not needed then" }
                 },
                 "additionalProperties": false
             },
@@ -147,12 +149,12 @@ fn tools() -> Value {
         },
         {
             "name": "set_template",
-            "title": "Задать шаблон профиля",
-            "description": "Заменяет шаблон профиля дня — план, с которого начинается каждый день этого профиля. В любой день и даже во время учёбы: начатый сегодняшний день не меняется. Если сегодня этот же профиль, день ещё не начат и его план совпадал со старым шаблоном, сегодняшний план тоже станет новым (как на экране «План»; в ответе today_plan_updated). Даты, для которых план задан отдельно (set_plan с date), начнутся со своего плана — они в ответе в overridden_dates. Формат blocks тот же, что в set_plan, включая отрезки type: \"break\"; пустой массив — пустой шаблон.",
+            "title": "Set a profile template",
+            "description": "Replaces the template of a day profile — the plan every day of this profile starts with. Any day, even during the study day: a started day doesn't change. If today has this profile, the day hasn't started and its plan matched the old template, today's plan becomes the new one too (like on the Plan screen; today_plan_updated in the reply). Dates with their own plan (set_plan with date) start with that plan — they are listed in overridden_dates. blocks have the same format as in set_plan, including type: \"break\" segments; an empty array — an empty template.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "profile": { "type": "string", "enum": ["full", "light", "off"], "description": "full — Полный, light — Лёгкий, off — Выходной" },
+                    "profile": { "type": "string", "enum": ["full", "light", "off"], "description": "full — Full, light — Light, off — Day off" },
                     "blocks": { "type": "array", "maxItems": 16, "items": plan_item_schema() }
                 },
                 "required": ["profile", "blocks"],
@@ -162,14 +164,14 @@ fn tools() -> Value {
         },
         {
             "name": "set_week_schedule",
-            "title": "Профили дней недели",
-            "description": "Какой профиль у дней недели (full — Полный, light — Лёгкий, off — Выходной). Меняются только перечисленные дни. Текущее расписание — get_plan → week. Если меняется сегодняшний день недели, а день ещё не начат, сегодня тоже переключается на новый профиль и его шаблон; начатый день не меняется. В ответе week — расписание целиком.",
+            "title": "Weekday profiles",
+            "description": "Which profile each weekday has (full — Full, light — Light, off — Day off). Only the listed days change. The current schedule — get_plan → week. If today's weekday changes and the day hasn't started, today switches to the new profile and its template too; a started day doesn't change. The reply has week — the whole schedule.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "days": {
                         "type": "object",
-                        "description": "Например {\"mon\": \"full\", \"sat\": \"light\"}",
+                        "description": "E.g. {\"mon\": \"full\", \"sat\": \"light\"}",
                         "properties": {
                             "mon": profile_schema(), "tue": profile_schema(), "wed": profile_schema(), "thu": profile_schema(),
                             "fri": profile_schema(), "sat": profile_schema(), "sun": profile_schema()
@@ -185,13 +187,13 @@ fn tools() -> Value {
         },
         {
             "name": "set_day_end",
-            "title": "Сдвинуть конец дня",
-            "description": "Разово меняет время конца учебного дня только на сегодня (шаблон в настройках не трогается). Блокировка, таймеры и уведомление «день закончен» сразу считаются от нового времени. Время — МСК, позже текущего момента и не позже 02:00 следующих суток (00:00–02:00 = ночь после сегодняшнего дня). В ответе: старое и новое время, сколько плана осталось и влезает ли он до нового конца. Каждое изменение пишется в лог дня.",
+            "title": "Move the day end",
+            "description": "Changes the end of the study day for today only (the setting stays untouched). The lock, the timers and the \"day is over\" notice follow the new time at once. Time is in the app's time zone, later than now and no later than 02:00 the next night (00:00–02:00 = the night after today). The reply has the old and the new time, how much of the plan is left and whether it fits before the new end. Every change goes to the day log.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "time": { "type": "string", "pattern": "^\\d{1,2}:\\d{2}$", "description": "ЧЧ:ММ по Москве, например 23:00" },
-                    "reason": { "type": "string", "description": "Почему сдвигаем — попадёт в лог и в уведомление" }
+                    "time": { "type": "string", "pattern": "^\\d{1,2}:\\d{2}$", "description": "HH:MM in the app's time zone, e.g. 23:00" },
+                    "reason": { "type": "string", "description": "Why — goes to the log and the notification" }
                 },
                 "required": ["time"],
                 "additionalProperties": false
@@ -200,13 +202,13 @@ fn tools() -> Value {
         },
         {
             "name": "set_block_note",
-            "title": "Строка в конце блока",
-            "description": "Сохраняет строку пользователя о блоке: что было скучно, куда отвлекался (до 300 символов). Попадает в лог и в get_today_stats как blocks[].note. Без name — последний закрытый блок. Повторный вызов заменяет строку.",
+            "title": "End-of-block line",
+            "description": "Saves the user's line about a block: what was boring, what distracted them (up to 300 characters). Goes to the log and to get_today_stats as blocks[].note. Without name — the latest closed block. Calling again replaces the line.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Блок; по умолчанию последний закрытый" },
-                    "note": { "type": "string", "description": "Слова пользователя, по возможности дословно" }
+                    "name": { "type": "string", "description": "The block; the latest closed one by default" },
+                    "note": { "type": "string", "description": "The user's words, verbatim if possible" }
                 },
                 "required": ["note"],
                 "additionalProperties": false
@@ -215,13 +217,13 @@ fn tools() -> Value {
         },
         {
             "name": "finish_block",
-            "title": "Закрыть блок сейчас",
-            "description": "Закрывает начатый блок прямо сейчас на фактически отработанных минутах: planned_min блока становится равным отработанному в целых минутах вниз (как done_min), нужна хотя бы 1 минута — блок с меньшим просто удаляется через set_plan. День идёт дальше как после обычного конца блока (перерыв между блоками или конец дня), всё пишется в лог. Убирает гонку «урезать set_plan, пока таймер идёт». ДВА ШАГА. Первый вызов (без confirm_token) ничего не меняет: возвращает предпросмотр (сколько отработано, сколько уйдёт из плана) и одноразовый confirm_token на 2 минуты. Перед вторым вызовом ОБЯЗАТЕЛЬНО задай пользователю прямой вопрос из поля ask_user и дождись явного «да». Только потом вызови finish_block с confirm_token. Не подтверждай за пользователя, не делай второй вызов по своей инициативе и не трактуй общие фразы («давай дальше», «ок») как согласие. Если пользователь сам просит перекроить день и закрыть блок в том же шаге — set_plan с close: true.",
+            "title": "Close a block now",
+            "description": "Closes a started block right now at the minutes actually worked: the block's planned_min becomes the time worked in whole minutes rounded down (like done_min); at least 1 minute is needed — a block with less is simply removed with set_plan. The day goes on as after a normal end of a block (the break between blocks or the end of the day), everything goes to the log. Avoids the race of \"cut it with set_plan while the timer runs\". TWO STEPS. The first call (without confirm_token) changes nothing: it returns a preview (time worked, how much leaves the plan) and a one-time confirm_token valid for 2 minutes. Before the second call you MUST ask the user the direct question from the ask_user field and wait for an explicit \"yes\". Only then call finish_block with confirm_token. Don't confirm for the user, don't make the second call on your own and don't take general phrases (\"let's go on\", \"ok\") as consent. If the user asks to reshape the day and close the block in one step — set_plan with close: true.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Какой блок закрыть; по умолчанию текущий" },
-                    "confirm_token": { "type": "string", "description": "Токен из первого вызова — только после явного «да» пользователя" }
+                    "name": { "type": "string", "description": "Which block to close; the current one by default" },
+                    "confirm_token": { "type": "string", "description": "The token from the first call — only after the user's explicit \"yes\"" }
                 },
                 "additionalProperties": false
             },
@@ -229,35 +231,35 @@ fn tools() -> Value {
         },
         {
             "name": "get_blocklist",
-            "title": "Блок-лист",
-            "description": "Что блокируется и действует ли блокировка сейчас. sites — домены (x.com, вместе с поддоменами) и пути (youtube.com/shorts — только политики браузеров, остальной сайт открыт); apps — приложения Windows по имени exe (Telegram.exe): пока идёт блокировка, запущенные закрываются, новые не дают запуститься; phone_apps — приложения телефона (только чтение, выбираются на телефоне). blocking: active — сайты и приложения закрыты прямо сейчас; day_lock — действует блокировка (учебный день, одиночный таймер с блокировкой или фокус-блокировка), возможно временно открытая доступом; reason — study | single | focus | emergency | pause_access | lunch_at_pc | segment_access | not_started | not_study_day | completed | day_end; until — конец открытого доступа; focus_until — конец фокус-блокировки (start_focus_lock). can_remove — можно ли сейчас убирать из списка (только вне блокировки). admin — запущена ли программа с правами администратора: без них сайты не блокируются.",
+            "title": "Block list",
+            "description": "What is blocked and whether the lock is on now. sites — domains (x.com, with its subdomains) and paths (youtube.com/shorts — browser policies only, the rest of the site stays open); apps — Windows apps by exe name (Telegram.exe): while the lock is on, running ones are closed and new ones can't start; phone_apps — phone apps (read only, picked on the phone). blocking: active — sites and apps are closed right now; day_lock — a lock is in force (a study day, a single timer with the lock, or a focus lock), maybe opened for a while by an access; reason — study | single | focus | emergency | pause_access | lunch_at_pc | segment_access | not_started | not_study_day | completed | day_end; until — the end of an open access; focus_until — the end of a focus lock (start_focus_lock). can_remove — whether entries can be removed now (outside the lock only). admin — whether the app runs as administrator: without it sites are not blocked.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "add_to_blocklist",
-            "title": "Добавить в блок-лист",
-            "description": "Добавляет сайты и/или приложения в блок-лист. Можно всегда, в том числе во время блокировки: тогда новое закрывается сразу (сайты — через hosts и политики браузеров, приложение — закрывается, если запущено, и не даёт себя запустить). Сайт: домен (reddit.com — с поддоменами) или домен с путём (youtube.com/shorts — без пути закрывается весь сайт); https://, www. и / в конце убираются. Приложение: имя exe (Steam или Steam.exe; путь отбрасывается); системные процессы (explorer.exe и т. п.) и сам ClockManage не блокируются. Список действует, пока идёт учебный день с блокировкой, одиночный таймер с блокировкой или фокус-блокировка (start_focus_lock) — само добавление вне этого времени ничего не закрывает. В ответе: added (что добавилось, в сохранённом виде), unchanged (уже было), invalid (не сайт / системное приложение), blocklist целиком и blocking.",
+            "title": "Add to the block list",
+            "description": "Adds sites and/or apps to the block list. Always allowed, including during the lock: then the new entries close at once (sites — via hosts and browser policies, an app — closed if running and kept from starting). A site: a domain (reddit.com — with subdomains) or a domain with a path (youtube.com/shorts — without a path the whole site is closed); https://, www. and a trailing / are dropped. An app: an exe name (Steam or Steam.exe; a path is dropped); system processes (explorer.exe etc.) and ClockManage itself are never blocked. The list applies while a study day with the lock, a single timer with the lock or a focus lock (start_focus_lock) runs — adding outside of that closes nothing by itself. The reply has added (what was added, as stored), unchanged (already there), invalid (not a site / a system app), the whole blocklist and blocking.",
             "inputSchema": blocklist_schema(),
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
         },
         {
             "name": "remove_from_blocklist",
-            "title": "Убрать из блок-листа",
-            "description": "Убирает сайты и/или приложения из блок-листа. Только вне блокировки — до «Начать день», после конца дня или когда все блоки отсижены, без одиночного таймера с блокировкой и без фокус-блокировки (get_blocklist → can_remove). Во время блокировки — отказ: список можно только расширять. Убирай только по явной просьбе пользователя. Записи сравниваются без учёта регистра после той же очистки, что при добавлении; youtube.com не убирает youtube.com/shorts — это разные записи. В ответе: removed, unchanged (такого в списке не было), invalid, blocklist целиком.",
+            "title": "Remove from the block list",
+            "description": "Removes sites and/or apps from the block list. Outside the lock only — before \"Start day\", after the day end or when all blocks are done, with no single timer with the lock and no focus lock (get_blocklist → can_remove). During the lock — refused: the list can only grow. Remove only when the user explicitly asks. Entries are compared case-insensitively after the same cleanup as when adding; youtube.com doesn't remove youtube.com/shorts — they are different entries. The reply has removed, unchanged (wasn't in the list), invalid, the whole blocklist.",
             "inputSchema": blocklist_schema(),
             "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
         },
         {
             "name": "start_focus_lock",
-            "title": "Фокус-блокировка",
-            "description": "Включает блокировку всего блок-листа (сайты и приложения; на подключённом телефоне — тоже) прямо сейчас на minutes минут — в любой день: учебный день не начат, уже закончен, выходной — неважно. Снять её раньше нельзя ни агенту, ни в приложении — только аварийным доступом самого пользователя (длинная фраза руками, пишется в лог); доступ на паузе, обед за ПК и «Доступ» у отрезков её не открывают. Пока она идёт, блок-лист можно только расширять и выйти из программы нельзя. Повторный вызов только продлевает: minutes считаются от текущего момента, и новый конец должен быть позже текущего, иначе отказ. Если блокировка идёт за полночь, она переходит на следующий день. Включай только по явной просьбе пользователя и на тот срок, который он назвал (до 720 минут за раз); чтобы закрыть то, чего нет в списке, сначала add_to_blocklist. Учебный день, план и таймер она не трогает. В ответе: until (ЧЧ:ММ по времени программы), until_ms, minutes_left, extended и from (старый конец при продлении), blocklist и blocking. Запуск и каждое продление пишутся в лог дня и в get_today_stats → focus_locks.",
+            "title": "Focus lock",
+            "description": "Blocks the whole block list (sites and apps; on a paired phone too) right now for minutes minutes — on any day: whether the study day hasn't started, is over or it's a day off doesn't matter. Neither the agent nor the app can lift it early — only the user's own emergency access (a long phrase typed by hand, logged); access on pause, lunch at the PC and segment access don't open it. While it runs, the block list can only grow and the app can't be quit. Calling again only extends it: minutes count from now, and the new end must be later than the current one, else it's refused. A lock running past midnight carries over to the next day. Turn it on only when the user explicitly asks, and for the time they named (up to 720 minutes at once); to block something not in the list, add_to_blocklist first. It doesn't touch the study day, the plan or the timer. The reply has until (HH:MM in the app's time), until_ms, minutes_left, extended and from (the old end when extended), blocklist and blocking. The start and every extension go to the day log and to get_today_stats → focus_locks.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "minutes": { "type": "integer", "minimum": 1, "maximum": MAX_FOCUS_MIN, "description": "Сколько минут блокировать, начиная с текущего момента" },
-                    "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Альтернатива minutes: 1.5 = 90 мин" },
-                    "reason": { "type": "string", "description": "Зачем, словами пользователя — попадёт в лог и в уведомление" }
+                    "minutes": { "type": "integer", "minimum": 1, "maximum": MAX_FOCUS_MIN, "description": "How many minutes to block, starting now" },
+                    "hours": { "type": "number", "exclusiveMinimum": 0, "description": "Instead of minutes: 1.5 = 90 min" },
+                    "reason": { "type": "string", "description": "Why, in the user's words — goes to the log and the notification" }
                 },
                 "additionalProperties": false
             },
@@ -288,29 +290,29 @@ fn tool_result(r: Result<Value, String>) -> Value {
 fn parse_blocks(args: &Value) -> Result<Vec<PlanBlock>, String> {
     let (plan, close) = parse_items(args)?;
     if close.iter().any(|c| *c) {
-        return Err("close работает только в set_plan на сегодня: закрыть можно начатый блок сегодняшнего дня.".into());
+        return Err(tr!("mcp_close_works_only_in_set_plan"));
     }
     Ok(plan)
 }
 
 /// Plan items and their "close as is" flags.
 fn parse_items(args: &Value) -> Result<(Vec<PlanBlock>, Vec<bool>), String> {
-    let blocks = args.get("blocks").and_then(Value::as_array).ok_or("Нужен массив blocks.")?;
+    let blocks = args.get("blocks").and_then(Value::as_array).ok_or(tr("mcp_blocks_must_be_an_array"))?;
     if blocks.len() > 16 {
-        return Err("Не больше 16 пунктов плана в день.".into());
+        return Err(tr!("mcp_no_more_than_16_plan_items"));
     }
     let mut plan = vec![];
     let mut close = vec![];
     for b in blocks {
-        let name = b.get("name").and_then(Value::as_str).ok_or("У блока нет name.")?;
+        let name = b.get("name").and_then(Value::as_str).ok_or(tr("mcp_a_block_has_no_name"))?;
         let closing = b.get("close").and_then(Value::as_bool).unwrap_or(false);
         let is_break = match b.get("type").and_then(Value::as_str).unwrap_or("study") {
             "break" => true,
             "study" => false,
-            other => return Err(format!("«{name}»: type бывает \"study\" или \"break\", а не «{other}».")),
+            other => return Err(tr!("mcp_type_is_study_or_break_not", name = name, other = other)),
         };
         if closing && is_break {
-            return Err(format!("«{name}»: close закрывает учебный блок, а это отрезок (type: \"break\")."));
+            return Err(tr!("mcp_close_closes_a_study_block_and", name = name));
         }
         let minutes = if let Some(m) = b.get("minutes").and_then(Value::as_f64) {
             m
@@ -320,11 +322,11 @@ fn parse_items(args: &Value) -> Result<(Vec<PlanBlock>, Vec<bool>), String> {
             // Closing sets the length to the minutes worked.
             1.0
         } else {
-            return Err(format!("У блока «{name}» нет minutes или hours."));
+            return Err(tr!("mcp_block_has_no_minutes_or_hours", name = name));
         };
         let max = if is_break { 240.0 } else { 480.0 };
         if !(1.0..=max).contains(&minutes) {
-            return Err(format!("«{name}»: длительность должна быть от 1 до {max} минут."));
+            return Err(tr!("mcp_the_duration_must_be_1_to", name = name, max = max));
         }
         let m = minutes.round() as u32;
         plan.push(if is_break { PlanBlock::brk(name, m) } else { PlanBlock::new(name, m) });
@@ -338,36 +340,36 @@ fn parse_plan(args: &Value) -> Result<PlanRequest, String> {
     let date = args.get("date").and_then(Value::as_str).map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
     let use_template = flag("use_template");
     if use_template && date.is_none() {
-        return Err("use_template работает только с date: какой день вернуть к шаблону.".into());
+        return Err(tr!("mcp_use_template_works_only_with_date"));
     }
     let (plan, close) = if use_template { (vec![], vec![]) } else { parse_items(args)? };
     if plan.is_empty() && !use_template {
-        return Err("В плане нужен хотя бы один пункт.".into());
+        return Err(tr!("mcp_the_plan_needs_at_least_one"));
     }
     let save_as_template = flag("save_as_template") && !use_template;
     if save_as_template && close.iter().any(|c| *c) {
-        return Err("close и save_as_template вместе нельзя: шаблон получил бы урезанный блок. Сначала закрой блок, шаблон задай отдельно (set_template).".into());
+        return Err(tr!("mcp_close_and_save_as_template_cant"));
     }
     Ok(PlanRequest { plan, save_as_template, date, use_template, close })
 }
 
 fn parse_template(args: &Value) -> Result<(DayKind, Vec<PlanBlock>), String> {
-    let p = args.get("profile").and_then(Value::as_str).ok_or("Нужен profile: full, light или off.")?;
-    let kind = DayKind::from_key(p).ok_or(format!("profile бывает full, light или off, а не «{p}»."))?;
+    let p = args.get("profile").and_then(Value::as_str).ok_or(tr("mcp_profile_is_required_full_light_or"))?;
+    let kind = DayKind::from_key(p).ok_or(tr!("mcp_profile_is_full_light_or_off", p = p))?;
     Ok((kind, parse_blocks(args)?))
 }
 
 fn parse_week(args: &Value) -> Result<Vec<(usize, DayKind)>, String> {
-    let days = args.get("days").and_then(Value::as_object).ok_or("Нужен объект days, например {\"mon\": \"full\"}.")?;
+    let days = args.get("days").and_then(Value::as_object).ok_or(tr("mcp_days_must_be_an_object_e"))?;
     let mut out = vec![];
     for (k, v) in days {
-        let i = WEEKDAYS.iter().position(|d| d == k).ok_or(format!("День недели — mon…sun, а не «{k}»."))?;
+        let i = WEEKDAYS.iter().position(|d| d == k).ok_or(tr!("mcp_a_weekday_is_mon_sun_not", k = k))?;
         let p = v.as_str().unwrap_or("");
-        let kind = DayKind::from_key(p).ok_or(format!("{k}: профиль бывает full, light или off, а не «{p}»."))?;
+        let kind = DayKind::from_key(p).ok_or(tr!("mcp_a_profile_is_full_light_or", k = k, p = p))?;
         out.push((i, kind));
     }
     if out.is_empty() {
-        return Err("В days нет ни одного дня.".into());
+        return Err(tr!("mcp_days_has_no_days"));
     }
     Ok(out)
 }
@@ -375,7 +377,7 @@ fn parse_week(args: &Value) -> Result<Vec<(usize, DayKind)>, String> {
 /// `sites` and `apps` of the block-list tools; at least one entry.
 fn parse_lists(args: &Value) -> Result<(Vec<String>, Vec<String>), String> {
     let list = |k: &str| -> Result<Vec<String>, String> {
-        let bad = || format!("{k}: нужен массив строк, например [\"reddit.com\"].");
+        let bad = || tr!("mcp_must_be_an_array_of_strings", k = k);
         match args.get(k) {
             None | Some(Value::Null) => Ok(vec![]),
             Some(Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or_else(bad)).collect(),
@@ -384,10 +386,10 @@ fn parse_lists(args: &Value) -> Result<(Vec<String>, Vec<String>), String> {
     };
     let (sites, apps) = (list("sites")?, list("apps")?);
     if sites.is_empty() && apps.is_empty() {
-        return Err("Нужен sites или apps — хотя бы одна запись.".into());
+        return Err(tr!("mcp_sites_or_apps_is_required_at"));
     }
     if sites.len() > 50 || apps.len() > 50 {
-        return Err("Не больше 50 сайтов и 50 приложений за раз.".into());
+        return Err(tr!("mcp_no_more_than_50_sites_and"));
     }
     Ok((sites, apps))
 }
@@ -398,10 +400,10 @@ fn parse_focus(args: &Value) -> Result<u32, String> {
     } else if let Some(h) = args.get("hours").and_then(Value::as_f64) {
         h * 60.0
     } else {
-        return Err("Нужен minutes (или hours): на сколько включить блокировку.".into());
+        return Err(tr!("mcp_minutes_or_hours_is_required_how"));
     };
     if !(1.0..=MAX_FOCUS_MIN as f64).contains(&minutes) {
-        return Err(format!("Фокус-блокировка — от 1 до {MAX_FOCUS_MIN} минут ({} ч) за раз.", MAX_FOCUS_MIN / 60));
+        return Err(tr!("mcp_a_focus_lock_is_1_to", max_focus_min = MAX_FOCUS_MIN / 60, MAX_FOCUS_MIN = MAX_FOCUS_MIN));
     }
     Ok(minutes.round() as u32)
 }
@@ -426,8 +428,8 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 json!({
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — учебный таймер", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Учебный таймер с блокировкой отвлекалок. get_session_state — что идёт сейчас (блок, перерыв, отрезок вроде обеда или сна). get_week_stats — часы для журнала за неделю по предметам и дням (с готовым tsv). get_today_stats — фактические часы за день: blocks[].journal_hours (вниз до 0,25 ч) и journal_total для журнала, blocks[].note — строки «что было скучно», breaks[] — обед, сон, прогулки. get_plan — план на сегодня, шаблоны всех профилей, расписание недели и планы следующих 7 дней. set_plan — план дня (учебные блоки и отрезки type: \"break\" на своих местах; переставлять можно всё, блок со случайным стартом меньше минуты — удалять, начатый — закрыть как есть через close: true по просьбе пользователя); с date — план на будущий день, сегодняшний не трогается. Отработанное везде в целых минутах вниз: done_min = предел урезания. set_template — шаблон любого профиля (full/light/off). set_week_schedule — какой профиль у дней недели. set_day_end — разово сдвинуть конец сегодняшнего дня. set_block_note — записать строку пользователя о блоке. finish_block — закрыть начатый блок на отработанном: два шага, второй только после явного «да» пользователя. get_blocklist — что в блок-листе (сайты, приложения .exe) и действует ли блокировка. add_to_blocklist — добавить сайты и приложения (можно всегда, во время блокировки закрываются сразу); remove_from_blocklist — убрать (только вне блокировки и по просьбе пользователя). start_focus_lock — заблокировать весь блок-лист прямо сейчас на N минут в любой день; снять раньше нельзя (только аварийный доступ пользователя), можно только продлить — включай только по явной просьбе пользователя."
+                    "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — study timer", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks."
                 }),
             )
         }
@@ -446,12 +448,12 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "set_week_schedule" => parse_week(&args).and_then(|d| host.set_week_schedule(d)),
                 "set_block_note" => match args.get("note").and_then(Value::as_str) {
                     Some(n) => host.set_block_note(args.get("name").and_then(Value::as_str), n),
-                    None => Err("Нужен note.".into()),
+                    None => Err(tr!("mcp_note_is_required")),
                 },
                 "finish_block" => host.finish_block(args.get("name").and_then(Value::as_str), args.get("confirm_token").and_then(Value::as_str)),
                 "set_day_end" => match args.get("time").and_then(Value::as_str) {
                     Some(t) => host.set_day_end(t, args.get("reason").and_then(Value::as_str)),
-                    None => Err("Нужен time в формате ЧЧ:ММ.".into()),
+                    None => Err(tr!("mcp_time_is_required_hh_mm")),
                 },
                 "get_blocklist" => Ok(host.get_blocklist()),
                 "add_to_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(false, s, a)),

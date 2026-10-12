@@ -5,6 +5,8 @@ use serde::Serialize;
 use crate::clock::{Ts, MIN};
 use crate::config::{fmt_hm, Config, DayKind};
 use crate::day::{fmt_day_min, BreakKind, DayState, Forecast, LockState, Mode, Phase, MAX_DAY_END_MIN};
+use crate::i18n::tr;
+use crate::tr;
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct PhaseView {
@@ -146,7 +148,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
     let phase = match &d.phase {
         Phase::Idle => PhaseView {
             kind: "idle".into(),
-            title: if d.started_at.is_some() { "Пауза дня".into() } else { "День не начат".into() },
+            title: if d.started_at.is_some() { tr!("view_day_paused") } else { tr!("view_day_not_started") },
             subtitle: String::new(),
             block: None,
             dur_ms: 0,
@@ -166,7 +168,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             PhaseView {
                 kind: "work".into(),
                 title: name,
-                subtitle: if parts > 0 { format!("Часть {part} из {parts}") } else { format!("Круг {part}") },
+                subtitle: if parts > 0 { tr!("view_part_of", part = part, parts = parts) } else { tr!("view_round", part = part) },
                 block: current,
                 dur_ms: *dur_ms,
                 elapsed_ms: elapsed,
@@ -180,15 +182,15 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         Phase::Break { brk, dur_ms, since, next, .. } => {
             let (name, part, parts) = d.part_info(*next);
             let (kind, title) = match brk {
-                BreakKind::Short => ("break", "Перерыв"),
-                BreakKind::Between => ("break", "Перерыв между блоками"),
-                BreakKind::Lunch { at_pc: true } => ("lunch_break", "Обед за ПК"),
-                BreakKind::Lunch { at_pc: false } => ("lunch_break", "Обед"),
+                BreakKind::Short => ("break", tr("view_break")),
+                BreakKind::Between => ("break", tr("view_break_between_blocks")),
+                BreakKind::Lunch { at_pc: true } => ("lunch_break", tr("view_lunch_at_the_pc")),
+                BreakKind::Lunch { at_pc: false } => ("lunch_break", tr("config_lunch")),
             };
             PhaseView {
                 kind: kind.into(),
                 title: title.into(),
-                subtitle: if parts > 0 { format!("Дальше: {name}, часть {part} из {parts}") } else { format!("Дальше: круг {part}") },
+                subtitle: if parts > 0 { tr!("view_next_part_of", name = name, part = part, parts = parts) } else { tr!("view_next_round", part = part) },
                 block: current,
                 dur_ms: *dur_ms,
                 elapsed_ms: elapsed,
@@ -203,8 +205,8 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             let (name, part, parts) = d.part_info(*next);
             PhaseView {
                 kind: "await".into(),
-                title: "Перерыв окончен".into(),
-                subtitle: if parts > 0 { format!("{name} · часть {part} из {parts}") } else { format!("Круг {part}") },
+                title: tr!("view_break_over"),
+                subtitle: if parts > 0 { tr!("view_name_part_of", name = name, part = part, parts = parts) } else { tr!("view_round", part = part) },
                 block: current,
                 dur_ms: 0,
                 elapsed_ms: 0,
@@ -219,8 +221,8 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             let (name, part, parts) = d.part_info(*next);
             PhaseView {
                 kind: "lunch".into(),
-                title: "Обед".into(),
-                subtitle: format!("Потом: {name}, часть {part} из {parts}"),
+                title: tr!("config_lunch"),
+                subtitle: tr!("view_then_part_of", name = name, part = part, parts = parts),
                 block: current,
                 dur_ms: 0,
                 elapsed_ms: now - since,
@@ -237,7 +239,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             let queue: Vec<String> = d
                 .segment_queue
                 .iter()
-                .map(|q| if q.open_ended { format!("{} без времени", q.name) } else { format!("{} {} мин", q.name, q.minutes) })
+                .map(|q| if q.open_ended { tr!("view_untimed", name = q.name) } else { tr!("day_name_minutes", name = q.name, minutes = q.minutes) })
                 .collect();
             let prep = r.in_prep();
             let (dur_ms, elapsed) = if prep { (r.prep_min as i64 * MIN, now - r.start) } else { (r.planned_ms(), now - r.countdown_from()) };
@@ -245,13 +247,13 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
                 kind: "segment".into(),
                 title: r.name.clone(),
                 subtitle: if prep {
-                    format!("Подготовка · потом {} {} мин — нажми «Лёг», когда ляжешь", r.name.to_lowercase(), r.planned_min)
+                    tr!("view_getting_ready_then_min_press_in", r = r.name.to_lowercase(), planned_min = r.planned_min)
                 } else if !queue.is_empty() {
-                    format!("Потом: {}", queue.join(" → "))
+                    tr!("view_then", v = queue.join(" → "))
                 } else if d.first_open_block().is_some() && parts > 0 {
-                    format!("Дальше: {name}, часть {part} из {parts}")
+                    tr!("view_next_part_of", name = name, part = part, parts = parts)
                 } else {
-                    "Учебные блоки на сегодня закрыты".into()
+                    tr!("view_todays_study_blocks_are_closed")
                 },
                 block: current,
                 dur_ms,
@@ -269,8 +271,8 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         }
         Phase::Done => PhaseView {
             kind: "done".into(),
-            title: "День закрыт".into(),
-            subtitle: "Все блоки отсижены".into(),
+            title: tr!("view_day_closed"),
+            subtitle: tr!("view_all_blocks_done"),
             block: None,
             dur_ms: 0,
             elapsed_ms: 0,

@@ -4,7 +4,7 @@ plugins {
 }
 
 // versionCode grows with every CI build (the PC offers the phone an update when it is higher).
-val base = "0.4.8"
+val base = "0.4.9"
 val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
 android {
@@ -49,6 +49,8 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // The texts are shared with the PC: one flat JSON per language, read as Java resources.
+    sourceSets["main"].resources.srcDir("../../ui/locales")
     lint {
         // Sideloaded app: Play-only policy checks (exact alarms etc.) must not fail the build.
         abortOnError = false

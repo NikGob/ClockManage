@@ -195,15 +195,15 @@ object Fmt {
         val h = m / 60
         val r = m % 60
         return when {
-            h == 0L -> "$r мин"
-            r == 0L -> "$h ч"
-            else -> "$h ч $r мин"
+            h == 0L -> tr("ui_min", "r" to r)
+            r == 0L -> tr("app_h", "h" to h)
+            else -> tr("ui_h_min", "h" to h, "r" to r)
         }
     }
 
     fun hours(min: Int): String = when {
-        min % 60 == 0 -> "${min / 60} ч"
-        min < 60 -> "$min мин"
-        else -> "${min / 60} ч ${min % 60} мин"
+        min % 60 == 0 -> tr("android_h", "v" to min / 60)
+        min < 60 -> tr("ui_minutes_label", "min" to min)
+        else -> tr("android_h_min", "v" to min / 60, "v2" to min % 60)
     }
 }

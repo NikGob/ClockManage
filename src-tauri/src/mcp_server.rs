@@ -12,6 +12,7 @@ use serde::Serialize;
 use tiny_http::{Header, Method, Response, Server};
 
 use crate::app::Shared;
+use clockmanage_core::tr;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct McpStatus {
@@ -71,7 +72,7 @@ impl McpServer {
                     server = Some(Arc::new(s));
                     break;
                 }
-                Err(e) => st.error = Some(format!("Порт {port} занят: {e}")),
+                Err(e) => st.error = Some(tr!("mcp_port_is_busy", port = port, e = e)),
             }
         }
         st.port = port;

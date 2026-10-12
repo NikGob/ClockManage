@@ -1,5 +1,6 @@
 //! Shared state, the ticker loop, reactions to timer events and Tauri commands.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -23,6 +24,8 @@ use crate::phone_server::{PhoneServer, PhoneStatus};
 use crate::sound::{self, Sound};
 use crate::store::Store;
 use crate::system;
+use clockmanage_core::i18n::tr;
+use clockmanage_core::tr;
 
 pub struct Captcha {
     id: u64,
@@ -54,6 +57,8 @@ pub struct Inner {
 
 #[derive(Clone)]
 pub struct TrayItems {
+    pub open: MenuItem<Wry>,
+    pub mini: MenuItem<Wry>,
     pub action: MenuItem<Wry>,
     pub quit: MenuItem<Wry>,
 }
@@ -97,6 +102,8 @@ pub struct Meta {
     pub mini_contrast: bool,
     pub data_dir: String,
     pub tz_offset_min: i32,
+    /// The interface language in force ("ru" | "en"): the setting, "auto" resolved.
+    pub lang: &'static str,
 }
 
 #[derive(Serialize, Clone)]
@@ -134,6 +141,7 @@ impl Shared {
                 mini_contrast: g.cfg.appearance.mini_contrast,
                 data_dir: self.store.dir.display().to_string(),
                 tz_offset_min: g.cfg.tz_offset_min,
+                lang: clockmanage_core::i18n::get().key(),
             },
         }
     }
@@ -210,9 +218,9 @@ impl Shared {
     fn wake_overlay(&self, name: &str, over_ms: i64) {
         self.show_overlay(json!({
             "kind": "wake", "passive": false, "force": true,
-            "title": "Вставай!",
-            "text": if over_ms > 0 { format!("{name} окончен {} назад", fmt_dur(over_ms)) } else { format!("{name} окончен") },
-            "action": "Встал",
+            "title": tr("app_wake_up"),
+            "text": if over_ms > 0 { tr!("app_ended_ago", over_ms = fmt_dur(over_ms), name = name) } else { tr!("app_is_over", name = name) },
+            "action": tr("app_im_up"),
         }));
     }
 
@@ -220,13 +228,13 @@ impl Shared {
     fn prep_overlay(&self, name: &str, over_ms: i64) {
         self.show_overlay(json!({
             "kind": "prep", "passive": false,
-            "title": "Пора ложиться",
+            "title": tr("app_time_to_lie_down"),
             "text": if over_ms > 0 {
-                format!("Подготовка ко сну идёт уже на {} дольше. {name} начнётся, когда нажмёшь «Лёг».", fmt_dur(over_ms))
+                tr!("app_getting_ready_has_run_longer_starts", over_ms = fmt_dur(over_ms), name = name)
             } else {
-                format!("Подготовка окончена. {name} и будильник пойдут от «Лёг».")
+                tr!("app_times_up_for_getting_ready_and", name = name)
             },
-            "action": "Лёг",
+            "action": tr("app_in_bed"),
         }));
     }
 
@@ -234,9 +242,9 @@ impl Shared {
     fn segment_overlay(&self, name: &str, over_ms: i64, v: &View) {
         self.show_overlay(json!({
             "kind": "segment", "passive": false,
-            "title": if over_ms > 0 { format!("{name}: +{}", fmt_dur(over_ms)) } else { format!("{name} окончен") },
-            "text": if v.phase.queue.is_empty() { v.phase.subtitle.clone() } else { format!("Потом: {}", v.phase.queue.join(" → ")) },
-            "action": format!("Закончил {}", name.to_lowercase()),
+            "title": if over_ms > 0 { format!("{name}: +{}", fmt_dur(over_ms)) } else { tr!("app_is_over", name = name) },
+            "text": if v.phase.queue.is_empty() { v.phase.subtitle.clone() } else { tr!("view_then", v = v.phase.queue.join(" → ")) },
+            "action": tr!("app_done_with", name = name.to_lowercase()),
         }));
     }
 
@@ -245,7 +253,7 @@ impl Shared {
         self.play(Sound::Nope);
         self.show_overlay(json!({
             "kind": "nope", "passive": true, "auto_hide_ms": 3000,
-            "title": "Не-не-не", "text": text,
+            "title": tr("app_nope"), "text": text,
         }));
     }
 
@@ -263,29 +271,36 @@ impl Shared {
         // for `tray` on the main thread, froze the whole app (a click on "Обед" just hung).
         let Some(items) = self.tray.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
         let (label, enabled) = if v.can.resume {
-            ("Продолжить", true)
+            (tr("app_resume"), true)
         } else if v.can.pause {
-            ("Пауза", true)
+            (tr("day_pause"), true)
         } else if v.phase.kind == "await" || v.phase.kind == "lunch" {
-            ("Начать следующую часть", true)
+            (tr("app_start_the_next_part"), true)
         } else if v.can.lay_down {
-            ("Лёг", true)
+            (tr("app_in_bed"), true)
         } else if v.can.end_segment {
-            (if v.phase.alarm { "Встал" } else { "Закончить отрезок" }, true)
+            (if v.phase.alarm { tr("app_im_up") } else { tr("app_end_the_segment") }, true)
         } else if v.can.start_day {
-            ("Начать день", true)
+            (tr("app_start_day"), true)
         } else {
-            ("Пауза", false)
+            (tr("day_pause"), false)
         };
+        // The static items only change with the language (each setter waits for the main thread).
+        static TRAY_LANG: AtomicU8 = AtomicU8::new(u8::MAX);
+        let lang = clockmanage_core::i18n::get() as u8;
+        if TRAY_LANG.swap(lang, Ordering::Relaxed) != lang {
+            let _ = items.open.set_text(tr("app_open"));
+            let _ = items.mini.set_text(tr("app_mini_timer"));
+        }
         let _ = items.action.set_text(label);
         let _ = items.action.set_enabled(enabled);
         let _ = items.quit.set_enabled(!v.lock.base);
         let quit = if !v.lock.base {
-            "Выход"
+            tr("app_quit")
         } else if v.lock.focus_until.is_some() && v.lock.reason != "study" {
-            "Выход недоступен до конца фокус-блокировки"
+            tr("app_quit_is_unavailable_until_the_focus")
         } else {
-            "Выход недоступен во время учёбы"
+            tr("app_quit_is_unavailable_during_study")
         };
         let _ = items.quit.set_text(quit);
         if let Some(t) = self.app.tray_by_id("main") {
@@ -301,50 +316,50 @@ impl Shared {
                     self.play(Sound::BreakStart);
                     let brk = if v.phase.kind == "break" { v.phase.dur_ms / MIN } else { 0 };
                     let body = if *parts > 0 {
-                        format!("{block_name}: часть {part} из {parts} готова. Перерыв {brk} мин.")
+                        tr!("app_part_of_done_break_min", block_name = block_name, part = part, parts = parts, brk = brk)
                     } else {
-                        format!("Круг {part} готов. Перерыв {brk} мин.")
+                        tr!("app_round_done_break_min", part = part, brk = brk)
                     };
-                    self.notify("Перерыв", &body);
+                    self.notify(tr("view_break"), &body);
                     self.show_overlay(json!({
                         "kind": "break", "passive": true, "auto_hide_ms": 5200,
-                        "title": "Перерыв", "text": body,
+                        "title": tr("view_break"), "text": body,
                     }));
                 }
                 Event::WorkEnded { block_done: true, .. } => {}
                 Event::BlockCompleted { block, block_name, work_ms, pauses, pause_ms } => {
                     self.play(Sound::Done);
-                    let facts = format!(
-                        "{} работы · пауз: {}{}",
-                        fmt_dur(*work_ms),
-                        pauses,
-                        if *pauses > 0 { format!(" ({})", fmt_dur(*pause_ms)) } else { String::new() }
+                    let facts = tr!(
+                        "app_of_work_pauses",
+                        work_ms = fmt_dur(*work_ms),
+                        pauses = pauses,
+                        extra = if *pauses > 0 { format!(" ({})", fmt_dur(*pause_ms)) } else { String::new() },
                     );
-                    self.notify(&format!("Блок «{block_name}» закрыт"), "Что было скучно, куда отвлекался? Одна строка — в окне ClockManage или агенту.");
+                    self.notify(&tr!("app_block_closed", block_name = block_name), tr("app_what_was_boring_what_distracted_you"));
                     self.show_overlay(json!({
                         "kind": "block", "passive": false,
-                        "title": format!("«{block_name}» закрыт"),
+                        "title": tr!("app_closed", block_name = block_name),
                         "text": facts,
                         "ask_note": true, "block": block,
                     }));
                 }
                 Event::DayCompleted { work_ms } => {
-                    let tail = if v.lock.blocked { "Фокус-блокировка продолжается." } else { "Блокировка снята." };
-                    self.notify("День закрыт", &format!("{} учёбы. {tail}", fmt_dur(*work_ms)));
+                    let tail = if v.lock.blocked { tr("app_the_focus_lock_goes_on") } else { tr("app_the_lock_is_off") };
+                    self.notify(tr("view_day_closed"), &tr!("app_of_study", work_ms = fmt_dur(*work_ms), tail = tail));
                     self.show_overlay(json!({
                         "kind": "day", "passive": false,
-                        "title": "День закрыт",
-                        "text": format!("{} учёбы. {tail}", fmt_dur(*work_ms)),
+                        "title": tr("view_day_closed"),
+                        "text": tr!("app_of_study", work_ms = fmt_dur(*work_ms), tail = tail),
                     }));
                 }
                 Event::BreakEnded { next_name, next_part, next_parts, lunch } => {
                     self.play(Sound::Alarm);
                     let action = start_label(next_name, *next_part, *next_parts);
-                    self.notify(if *lunch { "Обед окончен" } else { "Перерыв окончен" }, &format!("Жми «{action}». Блокировка не снята."));
+                    self.notify(if *lunch { tr("day_lunch_over") } else { tr("view_break_over") }, &tr!("app_press_the_lock_is_still_on", action = action));
                     self.show_overlay(json!({
                         "kind": "await", "passive": false,
-                        "title": if *lunch { "Обед окончен" } else { "Перерыв окончен" },
-                        "text": if *next_parts > 0 { format!("{next_name} · часть {next_part} из {next_parts}") } else { format!("Круг {next_part}") },
+                        "title": if *lunch { tr("day_lunch_over") } else { tr("view_break_over") },
+                        "text": if *next_parts > 0 { tr!("app_part_of", next_name = next_name, next_part = next_part, next_parts = next_parts) } else { tr!("app_round", next_part = next_part) },
                         "action": action,
                     }));
                 }
@@ -353,95 +368,95 @@ impl Shared {
                     let action = start_label(next_name, *next_part, *next_parts);
                     self.show_overlay(json!({
                         "kind": "await", "passive": false,
-                        "title": format!("Ждём уже {}", fmt_dur(*waiting_ms)),
-                        "text": if *next_parts > 0 { format!("{next_name} · часть {next_part} из {next_parts}") } else { format!("Круг {next_part}") },
+                        "title": tr!("app_waiting_for", waiting_ms = fmt_dur(*waiting_ms)),
+                        "text": if *next_parts > 0 { tr!("app_part_of", next_name = next_name, next_part = next_part, next_parts = next_parts) } else { tr!("app_round", next_part = next_part) },
                         "action": action,
                     }));
                 }
                 Event::PauseReminder { paused_ms } => {
                     self.play(Sound::Ping);
-                    self.notify("Ты на паузе", &format!("Уже {}. Таймер ждёт тебя.", fmt_dur(*paused_ms)));
+                    self.notify(tr("app_youre_paused"), &tr!("app_already_the_timer_is_waiting_for", paused_ms = fmt_dur(*paused_ms)));
                 }
                 Event::PauseAccessWarning { left_ms } => {
                     self.play(Sound::Ping);
-                    self.notify("Доступ скоро закроется", &format!("Осталось {}. Потом блокировка вернётся.", fmt_dur(*left_ms)));
+                    self.notify(tr("app_access_closes_soon"), &tr!("app_left_then_the_lock_comes_back", left_ms = fmt_dur(*left_ms)));
                 }
                 Event::PauseAccessExpired => {
                     self.play(Sound::Ping);
-                    self.notify("Доступ закрыт", "Блокировка вернулась. Продлить — в приложении, через мини-капчу.");
+                    self.notify(tr("app_access_closed"), tr("app_the_lock_is_back_to_extend"));
                     self.show_overlay(json!({
                         "kind": "access", "passive": true, "auto_hide_ms": 4200,
-                        "title": "Доступ закрыт", "text": "Блокировка снова включена",
+                        "title": tr("app_access_closed"), "text": tr("app_the_lock_is_back_on"),
                     }));
                 }
                 Event::EmergencyEnded => {
                     self.play(Sound::Ping);
-                    self.notify("Аварийный доступ закончился", "Блокировка снова включена.");
+                    self.notify(tr("app_emergency_access_is_over"), tr("app_lock_back_on_text"));
                 }
                 Event::FocusEnded => {
                     self.play(Sound::Ping);
                     let text = if !v.lock.base {
-                        "Блокировка снята."
+                        tr("app_the_lock_is_off")
                     } else if v.lock.reason == "single" {
-                        "Блокировка на время таймера продолжается."
+                        tr("app_the_lock_for_the_timer_goes")
                     } else if v.lock.blocked {
-                        "Учебная блокировка продолжается."
+                        tr("app_the_study_lock_goes_on")
                     } else {
-                        "Учебная блокировка продолжается, доступ пока открыт."
+                        tr("app_the_study_lock_goes_on_access")
                     };
-                    self.notify("Фокус-блокировка закончилась", text);
+                    self.notify(tr("app_the_focus_lock_is_over"), text);
                 }
                 Event::DayEndReached => {
                     self.play(Sound::Done);
                     if v.lock.blocked {
-                        self.notify(&format!("{} — учебный день закончился", v.day_end), "Фокус-блокировка продолжается.");
+                        self.notify(&tr!("app_the_study_day_is_over", day_end = v.day_end), tr("app_the_focus_lock_goes_on"));
                     } else {
-                        self.notify(&format!("{} — блокировка снята", v.day_end), "Учебный день закончился по времени.");
+                        self.notify(&tr!("app_day_end_lock_off", day_end = v.day_end), tr("app_the_study_day_ended_on_time"));
                     }
                 }
                 Event::SegmentWarning { name, left_ms } => {
                     self.play(Sound::Ping);
-                    let text = format!("{name}: осталось {}", fmt_dur(*left_ms));
-                    self.notify("Скоро конец", &text);
-                    self.show_overlay(json!({ "kind": "break", "passive": true, "auto_hide_ms": 4200, "title": "Скоро конец", "text": text }));
+                    let text = tr!("app_left", left_ms = fmt_dur(*left_ms), name = name);
+                    self.notify(tr("app_ending_soon"), &text);
+                    self.show_overlay(json!({ "kind": "break", "passive": true, "auto_hide_ms": 4200, "title": tr("app_ending_soon"), "text": text }));
                 }
                 Event::SegmentEnded { name, alarm: true } => {
                     // The nap alarm: the ticker keeps ringing until "Встал".
-                    self.notify(&format!("{name} окончен — вставай!"), "Будильник звонит, пока не нажмёшь «Встал».");
+                    self.notify(&tr!("app_is_over_get_up", name = name), tr("app_the_alarm_rings_until_you_press"));
                     self.wake_overlay(name, 0);
                 }
                 Event::SegmentEnded { name, alarm: false } => {
                     self.play(Sound::Alarm);
-                    self.notify(&format!("{name} окончен"), "Нажми «Закончил», когда вернёшься. Напомню каждые 5 минут.");
+                    self.notify(&tr!("app_is_over", name = name), tr("app_press_done_when_youre_back_ill"));
                     self.segment_overlay(name, 0, &snap.view);
                 }
                 Event::SegmentOverrun { name, alarm, over_ms } => {
-                    let title = format!("{name}: превышено на {}", fmt_dur(*over_ms));
+                    let title = tr!("app_over", over_ms = fmt_dur(*over_ms), name = name);
                     if *alarm {
-                        self.notify(&title, "Вставай — будильник не замолчит, пока не нажмёшь «Встал».");
+                        self.notify(&title, tr("app_get_up_the_alarm_wont_stop"));
                         self.wake_overlay(name, *over_ms);
                     } else {
                         self.play(Sound::Alarm);
-                        self.notify(&title, "Нажми «Закончил», когда вернёшься.");
+                        self.notify(&title, tr("app_press_done_when_youre_back"));
                         self.segment_overlay(name, *over_ms, &snap.view);
                     }
                 }
                 Event::SegmentPrepOver { name, over_ms } => {
                     self.play(Sound::Ping);
-                    self.notify("Пора ложиться", &format!("Подготовка окончена — нажми «Лёг», и пойдёт отсчёт: {}.", name.to_lowercase()));
+                    self.notify(tr("app_time_to_lie_down"), &tr!("app_times_up_for_getting_ready_press", name = name.to_lowercase()));
                     self.prep_overlay(name, *over_ms);
                 }
                 Event::SegmentLong { name, elapsed_ms } => {
                     // A stopwatch segment: no alarm, just a quiet word that it is still on.
-                    self.notify(&format!("{name} идёт уже {}", fmt_dur(*elapsed_ms)), "Без времени. Нажми «Закончил», когда вернёшься.");
+                    self.notify(&tr!("app_has_run_for", elapsed_ms = fmt_dur(*elapsed_ms), name = name), tr("app_untimed_press_done_when_youre_back"));
                 }
                 Event::AskWhatNow => {
                     self.play(Sound::Ping);
                     let types = self.lock().cfg.segments.iter().map(|t| json!({ "name": t.name, "minutes": t.minutes })).collect::<Vec<_>>();
-                    self.notify("Что сейчас?", "Блок закрыт 10 минут назад, а дальше ничего не началось. Обед, сон, перерыв?");
+                    self.notify(tr("app_what_now"), tr("app_a_block_closed_10_minutes_ago"));
                     self.show_overlay(json!({
-                        "kind": "ask", "passive": false, "title": "Что сейчас?",
-                        "text": "Блок закрыт 10 минут назад. Запусти таймер того, чем занят:",
+                        "kind": "ask", "passive": false, "title": tr("app_what_now"),
+                        "text": tr("app_what_now_pick_timer"),
                         "types": types,
                     }));
                 }
@@ -452,11 +467,11 @@ impl Shared {
 
 fn start_label(name: &str, part: u32, parts: u32) -> String {
     if parts == 0 {
-        format!("Начать круг {part}")
+        tr!("app_start_round", part = part)
     } else if part == 1 {
-        format!("Начать «{name}»")
+        tr!("app_start", name = name)
     } else {
-        format!("Начать часть {part}")
+        tr!("app_start_part", part = part)
     }
 }
 
@@ -488,9 +503,9 @@ pub fn app_display_name(exe: &str) -> String {
 pub fn fmt_dur(ms: i64) -> String {
     let m = (ms.max(0) + 30_000) / MIN;
     match (m / 60, m % 60) {
-        (0, m) => format!("{m} мин"),
-        (h, 0) => format!("{h} ч"),
-        (h, m) => format!("{h} ч {m} мин"),
+        (0, m) => tr!("app_min", m = m),
+        (h, 0) => tr!("app_h", h = h),
+        (h, m) => tr!("app_h_min", h = h, m = m),
     }
 }
 
@@ -507,15 +522,15 @@ fn tray_tooltip(v: &View) -> String {
     let p = &v.phase;
     let head = match p.kind.as_str() {
         "work" | "break" | "lunch_break" => {
-            format!("{} — {}{}", p.title, mmss(p.remaining_ms), if p.paused { " (пауза)" } else { "" })
+            format!("{} — {}{}", p.title, mmss(p.remaining_ms), if p.paused { tr("app_paused") } else { "" })
         }
-        "segment" if p.prep => format!("{} — подготовка, {}", p.title, if p.remaining_ms < 0 { "пора ложиться".into() } else { mmss(p.remaining_ms) }),
-        "segment" if p.stopwatch => format!("{} — без времени, {}", p.title, mmss(p.elapsed_ms)),
-        "segment" if p.remaining_ms < 0 => format!("{} — превышено на {}", p.title, mmss(-p.remaining_ms)),
+        "segment" if p.prep => tr!("app_getting_ready", title = p.title, extra = if p.remaining_ms < 0 { tr!("mini_time_to_lie_down") } else { mmss(p.remaining_ms) }),
+        "segment" if p.stopwatch => tr!("app_untimed", title = p.title, elapsed_ms = mmss(p.elapsed_ms)),
+        "segment" if p.remaining_ms < 0 => tr!("app_tray_segment_over", title = p.title, p = mmss(-p.remaining_ms)),
         "segment" => format!("{} — {}", p.title, mmss(p.remaining_ms)),
         _ => p.title.clone(),
     };
-    let lock = if v.lock.blocked { "блокировка включена" } else if v.lock.base { "доступ временно открыт" } else { "без блокировки" };
+    let lock = if v.lock.blocked { tr("app_lock_on") } else if v.lock.base { tr("app_access_open_for_now") } else { tr("app_no_lock") };
     format!("ClockManage\n{head}\n{lock}")
 }
 
@@ -636,8 +651,8 @@ fn ticker(shared: Arc<Shared>) {
                 let s = shared.clone();
                 std::thread::spawn(move || {
                     let text = match crate::blocker::restart_firefox() {
-                        Ok(()) => "Firefox перезапущен, чтобы блокировка в нём заработала. Вкладки восстановятся.".to_string(),
-                        Err(e) => format!("Не удалось перезапустить Firefox ({e}) — перезапусти его вручную."),
+                        Ok(()) => tr!("app_firefox_was_restarted_so_the_lock"),
+                        Err(e) => tr!("app_couldnt_restart_firefox_restart_it_by", e = e),
                     };
                     s.lock().day.log(clock::now_ts(), "firefox", text.clone());
                     s.notify("Firefox", &text);
@@ -646,7 +661,7 @@ fn ticker(shared: Arc<Shared>) {
             last_verify = now;
             if last_blocked.is_some() && last_blocked != Some(blocked) {
                 let mut g = shared.lock();
-                let text = if blocked { "Блокировка включена".to_string() } else { format!("Блокировка снята ({})", snap.view.lock.reason) };
+                let text = if blocked { tr!("app_tray_lock_on") } else { tr!("app_lock_off", reason = snap.view.lock.reason) };
                 g.day.log(now, "lock", text);
                 g.force_emit = true;
             }
@@ -665,20 +680,20 @@ fn ticker(shared: Arc<Shared>) {
                 }
                 if now - last_nope > 3_000 {
                     last_nope = now;
-                    shared.nope(&format!("{} — после учёбы", names.join(", ")));
+                    shared.nope(&tr!("app_after_studying", v = names.join(", ")));
                 }
                 let mut g = shared.lock();
-                g.day.log(now, "app_killed", format!("Закрыто: {}", killed.join(", ")));
+                g.day.log(now, "app_killed", tr!("app_closed_list", v = killed.join(", ")));
                 if killed_note {
                     g.last_kill_note = now;
                     drop(g);
                     let (title, until) = match snap.view.lock.focus_until {
                         Some(u) if snap.view.lock.reason != "study" => {
-                            ("Фокус-блокировка", format!("Блокировка до {}.", clock::hm(u, snap.meta.tz_offset_min)))
+                            (tr("app_focus_lock"), tr!("app_locked_until", clock = clock::hm(u, snap.meta.tz_offset_min)))
                         }
-                        _ => ("Сейчас учёба", "Блокировка до конца блоков дня.".to_string()),
+                        _ => (tr("app_study_time"), tr!("app_locked_until_the_days_blocks_are")),
                     };
-                    shared.notify(title, &format!("{} закрыт. {until}", killed.join(", ")));
+                    shared.notify(title, &tr!("app_is_closed", v = killed.join(", "), until = until));
                 }
             }
         }
@@ -708,10 +723,10 @@ fn ticker(shared: Arc<Shared>) {
                     }
                 }
                 if !names.is_empty() {
-                    shared.lock().day.log(now, "app_blocked", format!("Не дал запустить: {}", names.join(", ")));
+                    shared.lock().day.log(now, "app_blocked", tr!("app_kept_from_starting", v = names.join(", ")));
                     if now - last_nope > 1_500 {
                         last_nope = now;
-                        shared.nope(&format!("{} — после учёбы", names.join(", ")));
+                        shared.nope(&tr!("app_after_studying", v = names.join(", ")));
                     }
                 }
             }
@@ -725,8 +740,8 @@ fn ticker(shared: Arc<Shared>) {
                 Some(site) if last_tab_hit.as_ref().map(|(s, t)| s != &site || now - t > 20_000).unwrap_or(true) => {
                     last_tab_hit = Some((site.clone(), now));
                     last_nope = now;
-                    shared.lock().day.log(now, "site_attempt", format!("Попытка открыть {site}"));
-                    shared.nope(&format!("{site} — после учёбы"));
+                    shared.lock().day.log(now, "site_attempt", tr!("app_tried_to_open", site = site));
+                    shared.nope(&tr!("app_site_after_studying", site = site));
                 }
                 _ => {}
             }
@@ -807,7 +822,7 @@ impl McpHost for McpBridge {
             None => stats::day_stats(&g.day, tz, now),
             Some(d) if d == today => stats::day_stats(&g.day, tz, now),
             Some(d) => {
-                let day = self.0.store.load_day(d).ok_or(format!("За {d} записей нет."))?;
+                let day = self.0.store.load_day(d).ok_or(tr!("app_no_records_for", d = d))?;
                 stats::day_stats(&day, tz, now)
             }
         };
@@ -842,7 +857,7 @@ impl McpHost for McpBridge {
             v["day"] = if d == today {
                 json!({ "date": d.format("%Y-%m-%d").to_string(), "weekday": WEEKDAYS[g.day.weekday()], "profile": g.day.kind, "plan": g.day.plan, "source": "today" })
             } else if d < today {
-                return Err(format!("{d} уже прошёл — план прошлых дней смотри в get_today_stats с date."));
+                return Err(tr!("app_has_passed_for_past_days_see", d = d));
             } else {
                 day_ahead_json(&g.cfg, d)
             };
@@ -878,7 +893,7 @@ impl McpHost for McpBridge {
             .map(|d| d.format("%Y-%m-%d").to_string())
             .collect();
         let days: Vec<&str> = (0..7).filter(|&i| saved.week[i] == profile).map(|i| WEEKDAYS[i]).collect();
-        self.0.notice(&format!("Агент изменил шаблон «{}»", profile.label()), &plan_line(&saved.profile(profile).plan));
+        self.0.notice(&tr!("app_the_agent_changed_the_template", profile = profile.label()), &plan_line(&saved.profile(profile).plan));
         Ok(json!({
             "ok": true,
             "profile": profile,
@@ -905,7 +920,7 @@ impl McpHost for McpBridge {
         let saved = apply_config(&self.0, next)?;
         let kind_now = self.0.lock().day.kind;
         if !changed.is_empty() {
-            self.0.notice("Агент изменил неделю", &changed.join(", "));
+            self.0.notice(tr("app_the_agent_changed_the_week"), &changed.join(", "));
         }
         Ok(json!({
             "ok": true,
@@ -949,7 +964,7 @@ impl McpHost for McpBridge {
             let tz = g.cfg.tz_offset_min;
             let lock = g.day.lock_state(now, &g.cfg);
             let why = g.day.focus.iter().rev().find(|f| f.until == ch.until).and_then(|f| f.reason.clone());
-            let notice = format!("до {}{}", clock::hm(ch.until, tz), why.map(|r| format!(" ({r})")).unwrap_or_default());
+            let notice = tr!("app_until", clock = clock::hm(ch.until, tz), r = why.map(|r| format!(" ({r})")).unwrap_or_default());
             let res = json!({
                 "ok": true,
                 "until": clock::hm(ch.until, tz),
@@ -964,7 +979,7 @@ impl McpHost for McpBridge {
             Ok((res, (ch.extended, notice)))
         })?;
         let (extended, text) = notice;
-        self.0.notice(if extended { "Агент продлил фокус-блокировку" } else { "Агент включил фокус-блокировку" }, &text);
+        self.0.notice(if extended { tr("app_the_agent_extended_the_focus_lock") } else { tr("app_the_agent_turned_on_a_focus") }, &text);
         Ok(res)
     }
 
@@ -978,7 +993,7 @@ impl McpHost for McpBridge {
             let b = g.day.plan[i].clone();
             drop(g);
             if worked < MIN {
-                return Err(format!("По «{}» отработано меньше минуты — закрывать нечего. Если он сегодня не нужен, убери его через set_plan: такой блок удаляется.", b.name));
+                return Err(tr!("app_less_than_a_minute_worked_on", name = b.name));
             }
             // The same rounding as the close itself and done_min: whole minutes, down.
             let to_min = worked_min(worked).max(1);
@@ -997,19 +1012,21 @@ impl McpHost for McpBridge {
                 "cut_min": cut,
                 "confirm_token": token,
                 "expires_in_s": FINISH_TOKEN_MS / 1000,
-                "ask_user": format!(
-                    "Закрыть «{}» сейчас на {} мин из {}?{} Это попадёт в лог.",
-                    b.name, fmt_min(worked), b.minutes,
-                    if cut > 0 { format!(" {cut} мин уйдут из плана.") } else { String::new() }
+                "ask_user": tr!(
+                    "app_close_now_at_min_of_this",
+                    name = b.name,
+                    worked = fmt_min(worked),
+                    minutes = b.minutes,
+                    extra = if cut > 0 { tr!("app_min_will_leave_the_plan", cut = cut) } else { String::new() },
                 ),
-                "next_step": "Задай пользователю вопрос из ask_user. Только после явного «да» вызови finish_block с этим confirm_token.",
+                "next_step": tr("app_ask_the_user_the_question_from"),
             }));
         };
         // Step 2: one-time token for the block shown in step 1.
         let t = self.0.finish_token.lock().unwrap().take();
-        let t = t.ok_or("Нет открытого подтверждения: сначала вызови finish_block без confirm_token и спроси пользователя.")?;
+        let t = t.ok_or(tr("app_no_pending_confirmation_call_finish_block"))?;
         if t.token != typed.trim() || now > t.until {
-            return Err("confirm_token не подходит или истёк — вызови finish_block без токена и снова спроси пользователя.".into());
+            return Err(tr!("app_confirm_token_is_wrong_or_expired"));
         }
         apply_finish(&self.0, Some(&t.block), "mcp")
     }
@@ -1020,12 +1037,12 @@ pub fn apply_block_note(shared: &Arc<Shared>, block: Option<usize>, name: Option
     shared.mutate(|g, now| {
         let i = match (block, name.map(str::trim).filter(|n| !n.is_empty())) {
             (Some(i), _) => i,
-            (None, Some(n)) => g.day.plan.iter().position(|b| !b.is_break() && same_name(&b.name, n)).ok_or(format!("В плане нет блока «{n}»."))?,
+            (None, Some(n)) => g.day.plan.iter().position(|b| !b.is_break() && same_name(&b.name, n)).ok_or(tr!("app_theres_no_block_in_the_plan", n = n))?,
             (None, None) => g
                 .day
                 .pending_note()
                 .or_else(|| (0..g.day.plan.len()).filter(|&i| g.day.is_block_done(i)).max_by_key(|&i| g.day.progress[i].completed_at))
-                .ok_or("Сегодня ещё нет закрытых блоков — укажи name.")?,
+                .ok_or(tr("app_no_blocks_closed_today_yet_give"))?,
         };
         g.day.set_block_note(now, i, note, by)?;
         Ok(json!({ "ok": true, "block": g.day.plan[i].name, "note": g.day.progress[i].note }))
@@ -1053,8 +1070,8 @@ pub fn apply_finish(shared: &Arc<Shared>, name: Option<&str>, by: &str) -> Resul
     let snap = shared.snapshot();
     shared.react(&events, &snap);
     if by == "mcp" {
-        let text = format!("«{}»: {} из {} мин", res["block"].as_str().unwrap_or(""), res["worked_min"], res["planned_min_before"]);
-        shared.notice("Агент закрыл блок", &text);
+        let text = tr!("app_of_min", res = res["block"].as_str().unwrap_or(""), res2 = res["worked_min"], res3 = res["planned_min_before"]);
+        shared.notice(tr("app_the_agent_closed_a_block"), &text);
     }
     Ok(res)
 }
@@ -1073,7 +1090,7 @@ fn forecast_json(f: &Forecast, tz: i32) -> Value {
         "segments_left_min": (f.segments_left_ms + MIN - 1) / MIN,
         "fits": f.fits,
         "margin_min": f.margin_ms.div_euclid(MIN),
-        "note": "Если продолжать прямо сейчас без пауз. Отрезки (обед, сон…) учтены: идущий, очередь и запланированные в плане, с подготовкой ко сну.",
+        "note": tr("app_if_you_go_on_right_now"),
     })
 }
 
@@ -1110,12 +1127,12 @@ fn upcoming_json(shared: &Shared) -> Vec<Value> {
 }
 
 fn parse_plan_date(s: &str) -> Result<NaiveDate, String> {
-    NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| format!("Дата — YYYY-MM-DD, а не «{s}»."))
+    NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| tr!("app_a_date_is_yyyy_mm_dd", s = s))
 }
 
 fn plan_line(plan: &[PlanBlock]) -> String {
     if plan.is_empty() {
-        return "пусто".into();
+        return tr!("app_empty");
     }
     plan.iter().map(|b| format!("{} {}", b.name, b.minutes)).collect::<Vec<_>>().join(" · ")
 }
@@ -1127,13 +1144,13 @@ pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest,
         (g.cfg.clone(), g.day.date, g.day.plan.clone())
     };
     if date < today {
-        return Err(format!("{date} уже прошёл — план можно задать на сегодня или позже."));
+        return Err(tr!("app_has_passed_a_plan_can_be", date = date));
     }
     if req.close.iter().any(|c| *c) {
-        return Err("close закрывает начатый блок сегодняшнего дня — в плане на другой день закрывать нечего.".into());
+        return Err(tr!("app_close_closes_a_started_block_of"));
     }
     if (date - today).num_days() > MAX_PLAN_AHEAD_DAYS {
-        return Err(format!("План можно задать не дальше чем на {MAX_PLAN_AHEAD_DAYS} дней вперёд."));
+        return Err(tr!("app_a_plan_can_be_set_at", MAX_PLAN_AHEAD_DAYS = MAX_PLAN_AHEAD_DAYS));
     }
     let kind = cfg.kind_on(date);
     let mut plan = req.plan;
@@ -1159,8 +1176,8 @@ pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest,
     let _ = shared.app.emit("config", ());
     if by == "mcp" {
         let label = date.format("%d.%m");
-        let text = if req.use_template { format!("{label}: снова шаблон «{}»", kind.label()) } else { format!("{label}: {}", plan_line(&plan)) };
-        shared.notice("Агент задал план на другой день", &text);
+        let text = if req.use_template { tr!("app_back_to_the_template", kind = kind.label(), label = label) } else { format!("{label}: {}", plan_line(&plan)) };
+        shared.notice(tr("app_the_agent_set_a_plan_for"), &text);
     }
     Ok(json!({
         "ok": true,
@@ -1171,7 +1188,7 @@ pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest,
         "source": source,
         "saved_as_template": req.save_as_template,
         "today_plan_changed": today_changed,
-        "note": format!("День {date} начнётся с этого плана (профиль «{}»).{}", kind.label(), if today_changed { "" } else { " Сегодняшний план не менялся." }),
+        "note": tr!("app_will_start_with_this_plan_profile", kind = kind.label(), extra = if today_changed { "" } else { tr("app_todays_plan_didnt_change") }, date = date),
     }))
 }
 
@@ -1203,7 +1220,7 @@ pub fn apply_plan(shared: &Arc<Shared>, plan: Vec<PlanBlock>, close: &[bool], sa
     }
     let _ = shared.app.emit("config", ());
     if by != "ui" && !changes.is_empty() {
-        shared.notice(if by == "mcp" { "Агент изменил план" } else { "Телефон изменил план" }, &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
+        shared.notice(if by == "mcp" { tr("app_the_agent_changed_the_plan") } else { tr("app_the_phone_changed_the_plan") }, &changes.iter().map(fmt_change).collect::<Vec<_>>().join(", "));
     }
     Ok(res)
 }
@@ -1234,7 +1251,7 @@ pub fn apply_blocklist(shared: &Arc<Shared>, remove: bool, sites: &[String], app
             g.cfg = next;
             shared.store.save_config(&g.cfg);
             g.resync = true;
-            g.day.log(now, "blocklist", format!("{}: {line}", if remove { "Убрано из блок-листа" } else { "Добавлено в блок-лист" }));
+            g.day.log(now, "blocklist", format!("{}: {line}", if remove { tr("app_removed_from_the_block_list") } else { tr("app_added_to_the_block_list") }));
         }
         let mut res = json!({
             "ok": true,
@@ -1247,14 +1264,14 @@ pub fn apply_blocklist(shared: &Arc<Shared>, remove: bool, sites: &[String], app
         });
         res[if remove { "removed" } else { "added" }] = json!({ "sites": ch.sites, "apps": ch.apps });
         if !remove && !ch.is_empty() && !lock.base {
-            res["note"] = json!("Сейчас блокировка не действует: список заработает с блокировкой учебного дня, одиночного таймера или фокус-блокировкой (start_focus_lock).");
+            res["note"] = json!(tr("app_the_lock_isnt_active_now_the"));
         }
         Ok((res, (!ch.is_empty()).then_some(line)))
     })?;
     if let Some(line) = changed {
         let _ = shared.app.emit("config", ());
         if by == "mcp" {
-            shared.notice(if remove { "Агент убрал из блок-листа" } else { "Агент добавил в блок-лист" }, &line);
+            shared.notice(if remove { tr("app_the_agent_removed_from_the_block") } else { tr("app_the_agent_added_to_the_block") }, &line);
         }
     }
     Ok(res)
@@ -1288,7 +1305,7 @@ pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by:
         Ok((res, notice))
     })?;
     if let (Some(text), "mcp") = (notice, by) {
-        shared.notice("Агент изменил конец дня", &text);
+        shared.notice(tr("app_the_agent_moved_the_day_end"), &text);
     }
     Ok(res)
 }
@@ -1324,6 +1341,7 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         cfg.plan_overrides = g.cfg.plan_overrides.clone();
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
+        system::apply_lang(&cfg);
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
         let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
@@ -1404,7 +1422,7 @@ pub struct PinView {
 #[tauri::command]
 pub fn phone_pin(s: S) -> Result<PinView, String> {
     if !s.lock().cfg.phone.enabled {
-        return Err("Сначала включи синхронизацию с телефоном.".into());
+        return Err(tr!("app_turn_on_phone_sync_first"));
     }
     let (pin, until) = s.phone.new_pin();
     let _ = s.app.emit("state", s.snapshot());
@@ -1414,10 +1432,10 @@ pub fn phone_pin(s: S) -> Result<PinView, String> {
 #[tauri::command]
 pub fn phone_forget(s: S, id: String) -> Result<(), String> {
     s.mutate(|g, now| {
-        let name = g.cfg.phone.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).ok_or("Такого телефона нет.")?;
+        let name = g.cfg.phone.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).ok_or(tr("app_no_such_phone"))?;
         g.cfg.phone.devices.retain(|d| d.id != id);
         s.store.save_config(&g.cfg);
-        g.day.log(now, "phone", format!("Телефон «{name}» отключён"));
+        g.day.log(now, "phone", tr!("app_phone_disconnected", name = name));
         Ok(())
     })?;
     let _ = s.app.emit("config", ());
@@ -1463,7 +1481,7 @@ pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
         // behind another one), don't skip into the next part by accident.
         if let Some(e) = &expect {
             if view::build(&g.day, &g.cfg, now).phase.kind != *e {
-                return Err("Таймер уже перешёл дальше — ничего не сделал.".into());
+                return Err(tr!("app_the_timer_has_already_moved_on"));
             }
         }
         g.day.start_next(now)
@@ -1643,16 +1661,16 @@ pub fn captcha_new(s: S) -> CaptchaView {
 #[tauri::command]
 pub fn captcha_submit(s: S, id: u64, answers: Vec<i64>) -> Result<Ts, String> {
     s.mutate(|g, now| {
-        let c = g.captcha.take().ok_or("Капча устарела — открой заново.")?;
+        let c = g.captcha.take().ok_or(tr("app_the_captcha_expired_open_it_again"))?;
         if c.id != id {
-            return Err("Капча устарела — открой заново.".into());
+            return Err(tr!("app_the_captcha_expired_open_it_again"));
         }
         if now - c.created < CAPTCHA_WAIT_MS {
             g.captcha = Some(c);
-            return Err("Слишком быстро. Подумай ещё пару секунд.".into());
+            return Err(tr!("app_too_fast_think_for_a_couple"));
         }
         if c.answers != answers {
-            return Err("Есть ошибка. Держи новые примеры.".into());
+            return Err(tr!("app_theres_a_mistake_here_are_new"));
         }
         g.day.extend_pause_access(now, &g.cfg)
     })
@@ -1718,7 +1736,7 @@ pub fn day_stats(s: S, date: String) -> Result<DayStats, String> {
     }
     let tz = g.cfg.tz_offset_min;
     drop(g);
-    let day = s.store.load_day(&date).ok_or(format!("За {date} записей нет."))?;
+    let day = s.store.load_day(&date).ok_or(tr!("app_no_records_for_date", date = date))?;
     Ok(stats::day_stats(&day, tz, now))
 }
 
@@ -1730,7 +1748,7 @@ pub fn week(shared: &Shared, date: Option<&str>) -> Result<(stats::WeekStats, St
         (g.cfg.tz_offset_min, g.day.clone())
     };
     let anchor = match date {
-        Some(d) => clockmanage_core::chrono::NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").map_err(|_| "Дата нужна в виде ГГГГ-ММ-ДД.")?,
+        Some(d) => clockmanage_core::chrono::NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").map_err(|_| tr("app_the_date_must_be_yyyy_mm"))?,
         None => today.date,
     };
     let monday = stats::week_monday(anchor);
@@ -1783,7 +1801,7 @@ pub fn export_log(s: S, format: String) -> Result<String, String> {
         "csv" => (format!("clockmanage_{stamp}.csv"), stats::to_csv(&days)),
         _ => (format!("clockmanage_{stamp}.json"), serde_json::to_string_pretty(&days).map_err(|e| e.to_string())?),
     };
-    let path = s.store.write_export(&name, &data).map_err(|e| format!("Не удалось сохранить: {e}"))?;
+    let path = s.store.write_export(&name, &data).map_err(|e| tr!("app_couldnt_save", e = e))?;
     system::reveal(&path);
     Ok(path.display().to_string())
 }
@@ -1803,10 +1821,10 @@ pub fn test_sound(kind: String) {
 #[tauri::command]
 pub fn preview_overlay(s: S, kind: String) {
     let p = match kind.as_str() {
-        "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": "Перерыв", "text": "Математика: часть 1 из 2 готова. Перерыв 10 мин.", "preview": true}),
-        "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 3000, "title": "Не-не-не", "text": "Telegram — после учёбы", "preview": true}),
-        "block" => json!({"kind": "block", "passive": false, "title": "«Математика» закрыт", "text": "1 ч 30 мин работы · пауз: 1 (6 мин)", "ask_note": true, "block": 0, "preview": true}),
-        _ => json!({"kind": "await", "passive": false, "title": "Перерыв окончен", "text": "Математика · часть 2 из 2", "action": "Начать часть 2", "preview": true}),
+        "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": tr("view_break"), "text": tr("app_math_part_1_of_2_done"), "preview": true}),
+        "nope" => json!({"kind": "nope", "passive": true, "auto_hide_ms": 3000, "title": tr("app_nope"), "text": tr("app_telegram_after_studying"), "preview": true}),
+        "block" => json!({"kind": "block", "passive": false, "title": tr("app_math_closed"), "text": tr("app_1_h_30_min_of_work"), "ask_note": true, "block": 0, "preview": true}),
+        _ => json!({"kind": "await", "passive": false, "title": tr("view_break_over"), "text": tr("app_preview_await_text"), "action": tr("app_preview_await_action"), "preview": true}),
     };
     let was = s.lock().cfg.overlay;
     s.lock().cfg.overlay = true;
@@ -1859,8 +1877,8 @@ pub async fn restart_firefox(s: State<'_, Arc<Shared>>) -> Result<(), String> {
             shared.blocker.lock().unwrap_or_else(|e| e.into_inner()).mark_firefox_restarted();
         }
         let text = match &r {
-            Ok(()) => "Firefox перезапущен вручную".to_string(),
-            Err(e) => format!("Перезапуск Firefox не удался: {e}"),
+            Ok(()) => tr!("app_firefox_restarted_by_hand"),
+            Err(e) => tr!("app_firefox_restart_failed", e = e),
         };
         shared.lock().day.log(clock::now_ts(), "firefox", text);
         r

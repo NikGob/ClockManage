@@ -4,6 +4,8 @@
 // the exact vector frame but keep the crunchy texture, and the whole picture just floats softly
 // (one composited transform: no re-rendering, no jitter). Clicking it wiggles again.
 
+import { tr } from './i18n.js';
+
 let uid = 0;
 
 // `over` sits above the textured layer: no boil, no filter, so it can move all the time
@@ -43,7 +45,7 @@ export function alarmClock(size) {
   <g class="waves">
     ${s('M30 116 Q20 132 30 148', 1100, 260, 'thin')}${s('M14 104 Q0 132 14 160', 1180, 300, 'thin')}
     ${s('M210 116 Q220 132 210 148', 1140, 260, 'thin')}${s('M226 104 Q240 132 226 160', 1220, 300, 'thin')}
-  </g>`, { size, label: 'Будильник звенит' });
+  </g>`, { size, label: tr('art_alarm_ringing') });
 }
 
 export function teaCup(size) {
@@ -57,7 +59,7 @@ export function teaCup(size) {
       ${s('M100 88 Q92 74 102 62 Q112 50 104 36', 800, 500, 'thin')}
       ${s('M122 86 Q114 70 124 58 Q134 46 126 32', 900, 500, 'thin')}
       ${s('M144 88 Q136 74 146 62 Q156 50 148 38', 1000, 500, 'thin')}
-    </g>`, { size, label: 'Чашка чая' });
+    </g>`, { size, label: tr('art_a_cup_of_tea') });
 }
 
 function burst(delay) {
@@ -83,7 +85,7 @@ export function checkStamp(size) {
     ${fill('M124 44 C168 42 200 76 198 122 C200 166 166 198 122 196 C78 198 44 164 46 120 C44 78 78 44 124 44 Z', 'fill-p', 60)}
     ${s('M120 40 C166 38 200 74 200 120 C202 166 164 200 120 200 C74 202 40 166 40 120 C38 76 76 40 126 42', 0, 800)}
     <path class="ink draw" style="stroke-width:11;--delay:650ms;--d:420ms" pathLength="1" d="M80 122 L108 150 L162 88"/>
-    ${burst(900)}`, { size, label: 'Готово' });
+    ${burst(900)}`, { size, label: tr('art_done') });
 }
 
 export function finishFlag(size) {
@@ -92,7 +94,7 @@ export function finishFlag(size) {
     ${s('M78 210 L78 36', 0, 500)}
     ${s('M78 44 Q110 30 134 46 Q158 62 186 48 L186 112 Q158 126 134 110 Q110 94 78 108', 200, 800)}
     ${s('M56 212 Q80 204 104 212', 500, 300, 'thin')}
-    ${burst(1000)}`, { size, label: 'День закрыт' });
+    ${burst(1000)}`, { size, label: tr('view_day_closed') });
 }
 
 export function padlock(size) {
@@ -101,7 +103,7 @@ export function padlock(size) {
     <g class="shackle">${s('M92 112 V84 Q92 54 120 54 Q148 54 148 84 V112', 0, 600)}</g>
     ${s('M72 112 H168 Q176 112 176 120 V188 Q176 196 168 196 H72 Q64 196 64 188 V120 Q64 112 72 112 Z', 200, 800)}
     ${s('M114 146 C114 138 126 138 126 146 C126 154 114 154 114 146 Z', 800, 300, 'thin')}
-    ${s('M120 154 L120 170', 950, 200)}`, { size, label: 'Замок' });
+    ${s('M120 154 L120 170', 950, 200)}`, { size, label: tr('art_lock') });
 }
 
 export function emptyBook(size) {
@@ -110,7 +112,7 @@ export function emptyBook(size) {
     ${s('M40 70 Q80 54 120 76 Q160 54 200 70 L200 182 Q160 166 120 188 Q80 166 40 182 Z', 0, 1000)}
     ${s('M120 76 L120 188', 600, 400)}
     ${s('M140 96 Q160 88 180 94', 900, 250, 'thin')}${s('M140 116 Q160 108 180 114', 1000, 250, 'thin')}
-    ${s('M140 136 Q156 130 170 134', 1100, 250, 'thin')}`, { size, label: 'Пустой журнал' });
+    ${s('M140 136 Q156 130 170 134', 1100, 250, 'thin')}`, { size, label: tr('art_empty_log') });
 }
 
 export function notebook(size) {
@@ -145,7 +147,7 @@ export function notebook(size) {
       ${s('M196 124 Q190 112 198 102 Q206 92 200 82', 1300, 420, 'thin')}
       ${s('M212 122 Q206 110 214 100 Q222 90 216 80', 1400, 420, 'thin')}
     </g>
-    ${sparkle(44, 40, 10, 'fill-t', 1600)}${sparkle(126, 32, 7, 'fill-p', 1700)}`, { size, label: 'Тетрадь, карандаш и чай' });
+    ${sparkle(44, 40, 10, 'fill-t', 1600)}${sparkle(126, 32, 7, 'fill-p', 1700)}`, { size, label: tr('art_notebook_pencil_and_tea') });
 }
 
 export function hammock(size) {
@@ -172,7 +174,7 @@ export function hammock(size) {
       ${s('M74 136 Q120 188 166 136 Q120 158 74 136 Z', 700, 600)}
       ${s('M150 140 Q156 128 164 132', 1000, 200, 'thin')}
     </g>
-    `, { size, label: 'Выходной: гамак и солнце', over: `<g class="zzz">${z(0, 120, 98, 8, 1300)}${z(1, 134, 80, 11, 1450)}${z(2, 152, 58, 14, 1600)}</g>` });
+    `, { size, label: tr('art_day_off_hammock_and_sun'), over: `<g class="zzz">${z(0, 120, 98, 8, 1300)}${z(1, 134, 80, 11, 1450)}${z(2, 152, 58, 14, 1600)}</g>` });
 }
 
 export function bowl(size) {
@@ -184,7 +186,7 @@ export function bowl(size) {
     <g class="steam">
       ${s('M88 108 Q80 94 90 82 Q100 70 92 56', 900, 500, 'thin')}
       ${s('M112 106 Q104 90 114 78 Q124 66 116 52', 1000, 500, 'thin')}
-    </g>`, { size, label: 'Обед' });
+    </g>`, { size, label: tr('config_lunch') });
 }
 
 // The hand is drawn around x=128 and shifted left so the swing is centred in the frame.
@@ -226,7 +228,7 @@ export function fingerWag(size) {
     </g>
     <g class="wag-arcs left">${still(wristArc(194, -35, -24), 0, 'thin')}${still(wristArc(208, -32, -26), 0, 'thin')}</g>
     <g class="wag-arcs right">${still(wristArc(194, 12, 23), 0, 'thin')}${still(wristArc(208, 15, 21), 0, 'thin')}</g>`,
-  { size, label: 'Не-не-не, грозящий палец' });
+  { size, label: tr('art_nope_a_wagging_finger') });
 }
 
 // Circles are drawn with quadratic curves (no arcs): jittering arc flags would break paths.
@@ -245,7 +247,7 @@ export function stretch(size) {
     ${s('M120 164 L102 214', 650, 300)}${s('M120 164 L138 214', 700, 300)}
     ${s('M76 218 Q120 226 164 218', 900, 300, 'thin')}
     <g class="reach-lines">${s('M58 70 Q48 56 58 42', 1100, 250, 'thin')}${s('M182 70 Q192 56 182 42', 1150, 250, 'thin')}</g>
-  `, { size, label: 'Потянись' });
+  `, { size, label: tr('art_stretch') });
 }
 
 export function waterGlass(size) {
@@ -256,7 +258,7 @@ export function waterGlass(size) {
     ${s('M92 112 Q106 104 120 112 Q134 120 148 112', 600, 400, 'thin')}
     ${s('M138 36 L126 160', 800, 300)}${s('M138 36 L166 26', 950, 200)}
     <g class="bubbles">${s(blob(112, 170, 5), 1100, 200, 'thin')}${s(blob(128, 148, 4), 1200, 200, 'thin')}${s(blob(116, 132, 3), 1300, 200, 'thin')}</g>
-  `, { size, label: 'Стакан воды' });
+  `, { size, label: tr('art_a_glass_of_water') });
 }
 
 export function trophy(size) {
@@ -269,7 +271,7 @@ export function trophy(size) {
     ${s('M104 164 L136 164 L140 176 L100 176 Z', 800, 300)}
     ${s('M92 176 L148 176 L148 198 L92 198 Z', 900, 400)}
     ${fill('M120 76 Q122 88 132 90 Q122 92 120 104 Q118 92 108 90 Q118 88 120 76 Z', 'fill-t', 1200)}
-    ${burst(1300)}`, { size, label: 'Кубок' });
+    ${burst(1300)}`, { size, label: tr('art_trophy') });
 }
 
 const DOODLES = {

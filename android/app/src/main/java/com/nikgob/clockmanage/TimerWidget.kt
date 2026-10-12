@@ -58,33 +58,33 @@ class TimerWidget : AppWidgetProvider() {
             }
 
             when {
-                !s.paired -> { big("—"); v.setTextViewText(R.id.w_state, ""); v.setTextViewText(R.id.w_title, "ClockManage"); v.setTextViewText(R.id.w_sub, "Подключи к ПК") }
-                e == null -> { big("—"); v.setTextViewText(R.id.w_state, ""); v.setTextViewText(R.id.w_title, "Жду данных с ПК"); v.setTextViewText(R.id.w_sub, "") }
+                !s.paired -> { big("—"); v.setTextViewText(R.id.w_state, ""); v.setTextViewText(R.id.w_title, "ClockManage"); v.setTextViewText(R.id.w_sub, tr("android_widget_pair_with_a_pc")) }
+                e == null -> { big("—"); v.setTextViewText(R.id.w_state, ""); v.setTextViewText(R.id.w_title, tr("android_main_waiting_for_data_from_the_pc")); v.setTextViewText(R.id.w_sub, "") }
                 else -> {
                     when {
                         e.paused -> countdown(e.remaining(now), false)
                         e.running -> countdown(e.until!! - now, true)
                         e.segment && e.stopwatch -> countup(e.elapsed(now))
                         e.segment -> countdown(e.segmentEnd - now, true) // negative after the planned end
-                        e.kind == "await" -> big("Пора")
+                        e.kind == "await" -> big(tr("android_widget_time"))
                         e.kind == "done" -> big("✓")
                         e.kind == "idle" -> big(Fmt.dur(snap.blocks.filter { !it.isBreak }.sumOf { it.minutes } * Snapshot.MIN))
                         else -> big("")
                     }
                     v.setTextViewText(R.id.w_state, when {
-                        e.paused -> "пауза"
-                        e.kind == "work" -> "работа"
-                        e.kind == "break" || e.kind == "lunch_break" -> "перерыв"
-                        e.segment && e.prep -> "подготовка ко сну"
-                        e.segment && e.stopwatch -> "без времени"
-                        e.segment -> if (e.alarm) "сон" else "отрезок"
-                        e.kind == "await" -> "перерыв окончен"
-                        e.kind == "done" -> "день закрыт"
-                        e.kind == "idle" -> "в плане"
+                        e.paused -> tr("today_paused")
+                        e.kind == "work" -> tr("log_work")
+                        e.kind == "break" || e.kind == "lunch_break" -> tr("log_break")
+                        e.segment && e.prep -> tr("android_widget_getting_ready_for_bed")
+                        e.segment && e.stopwatch -> tr("mini_untimed")
+                        e.segment -> if (e.alarm) tr("android_widget_nap") else tr("today_segment")
+                        e.kind == "await" -> tr("android_widget_break_over")
+                        e.kind == "done" -> tr("android_widget_day_closed")
+                        e.kind == "idle" -> tr("today_planned")
                         else -> ""
                     })
                     v.setTextViewText(R.id.w_title, e.title)
-                    v.setTextViewText(R.id.w_sub, e.subtitle.ifEmpty { if (snap.blockedAt(now, s.syncedAt)) "Блокировка включена" else "" })
+                    v.setTextViewText(R.id.w_sub, e.subtitle.ifEmpty { if (snap.blockedAt(now, s.syncedAt)) tr("app_tray_lock_on") else "" })
                 }
             }
             return v

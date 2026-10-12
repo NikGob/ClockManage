@@ -1,4 +1,6 @@
 // Thin bridge to the Rust side. Outside Tauri (plain browser preview) a mock backend is used.
+import { tr, LOCALE } from './i18n.js';
+
 const T = window.__TAURI__;
 let mock = null;
 
@@ -39,8 +41,8 @@ export function dur(ms) {
   const m = Math.round(Math.max(0, ms) / 60000);
   const h = Math.floor(m / 60);
   const r = m % 60;
-  if (h === 0) return `${r} мин`;
-  return r ? `${h} ч ${r} мин` : `${h} ч`;
+  if (h === 0) return tr('ui_min', { r });
+  return r ? tr('ui_h_min', { h, r }) : tr('app_h', { h });
 }
 
 export function minutes(min) {
@@ -49,7 +51,7 @@ export function minutes(min) {
 
 export function hm(ts) {
   const d = new Date(ts);
-  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
 }
 
 export function esc(s) {

@@ -2,6 +2,7 @@ import { call, on, esc, mmss, installRipples } from './api.js';
 import { applyTheme } from './theme.js';
 import { doodle, play } from './doodles.js';
 import { icon } from './icons.js';
+import { tr, followLang } from './i18n.js';
 
 const stage = document.getElementById('stage');
 const scrim = document.getElementById('scrim');
@@ -15,6 +16,7 @@ const ARM_MS = 900;
 let armedAt = 0;
 
 installRipples();
+document.title = tr('overlay_clockmanage_alarm');
 
 const ART_CLASS = { await: 'ringing', wake: 'ringing', break: 'steaming', segment: 'steaming', access: 'locking', nope: 'wagging' };
 
@@ -31,25 +33,25 @@ function render(p) {
   const actions = [];
   if (p.kind === 'wake') {
     // Only "Встал" stops the alarm: no "hide", no Escape.
-    actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('alarm')}${esc(p.action || 'Встал')}</button>`);
+    actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('alarm')}${esc(p.action || tr('app_im_up'))}</button>`);
   } else if (p.kind === 'prep') {
     // Getting ready is over: the nap starts from "Лёг", never by itself.
-    actions.push(`<button class="btn filled xl interactive" data-act="lay_down">${icon('bed')}${esc(p.action || 'Лёг')}</button>`);
-    actions.push('<button class="btn text lg interactive" data-act="hide">Ещё пару минут</button>');
+    actions.push(`<button class="btn filled xl interactive" data-act="lay_down">${icon('bed')}${esc(p.action || tr('app_in_bed'))}</button>`);
+    actions.push(`<button class="btn text lg interactive" data-act="hide">${tr('overlay_a_couple_more_minutes')}</button>`);
   } else if (p.kind === 'segment') {
-    actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('check')}${esc(p.action || 'Закончил')}</button>`);
-    actions.push('<button class="btn text lg interactive" data-act="hide">Ещё немного</button>');
+    actions.push(`<button class="btn filled xl interactive" data-act="end_segment">${icon('check')}${esc(p.action || tr('overlay_done'))}</button>`);
+    actions.push(`<button class="btn text lg interactive" data-act="hide">${tr('overlay_a_bit_longer')}</button>`);
   } else if (p.kind === 'ask') {
-    (p.types || []).forEach((t) => actions.push(`<button class="btn tonal lg interactive" data-act="seg" data-name="${esc(t.name)}">${esc(t.name)} · ${t.minutes} мин</button>`));
-    actions.push('<button class="btn text lg interactive" data-act="hide">Перерыв</button>');
+    (p.types || []).forEach((t) => actions.push(`<button class="btn tonal lg interactive" data-act="seg" data-name="${esc(t.name)}">${esc(t.name)} · ${t.minutes} ${tr('overlay_min')}</button>`));
+    actions.push(`<button class="btn text lg interactive" data-act="hide">${tr('view_break')}</button>`);
   } else if (p.ask_note) {
-    actions.push(`<button class="btn filled lg interactive" data-act="note">${icon('check')}Сохранить</button>`);
-    actions.push('<button class="btn text lg interactive" data-act="skip">Пропустить</button>');
+    actions.push(`<button class="btn filled lg interactive" data-act="note">${icon('check')}${tr('overlay_save')}</button>`);
+    actions.push(`<button class="btn text lg interactive" data-act="skip">${tr('overlay_skip')}</button>`);
   } else if (p.kind === 'await') {
-    actions.push(`<button class="btn filled xl interactive" data-act="start">${icon('play')}${esc(p.action || 'Начать')}</button>`);
-    actions.push(`<button class="btn text lg interactive" data-act="hide">Скрыть на минуту</button>`);
+    actions.push(`<button class="btn filled xl interactive" data-act="start">${icon('play')}${esc(p.action || tr('overlay_start'))}</button>`);
+    actions.push(`<button class="btn text lg interactive" data-act="hide">${tr('overlay_hide_for_a_minute')}</button>`);
   } else if (!passive) {
-    actions.push(`<button class="btn filled lg interactive" data-act="hide">${icon('check')}Понятно</button>`);
+    actions.push(`<button class="btn filled lg interactive" data-act="hide">${icon('check')}${tr('overlay_got_it')}</button>`);
   }
 
   stage.innerHTML = `
@@ -59,10 +61,10 @@ function render(p) {
       ${p.text ? `<p class="sub">${esc(p.text)}</p>` : ''}
       ${p.kind === 'await' ? '<p class="waiting tnum" id="waiting"></p>' : ''}
       ${p.note ? `<p class="note">${esc(p.note)}</p>` : ''}
-      ${p.ask_note ? `<div class="field note-field"><label for="ov-note">Что было скучно, куда отвлекался? Одна строка, можно пропустить</label>
+      ${p.ask_note ? `<div class="field note-field"><label for="ov-note">${tr('overlay_what_was_boring_what_distracted_you')}</label>
         <input id="ov-note" maxlength="300" autocomplete="off" spellcheck="true"></div>` : ''}
       ${actions.length ? `<div class="actions">${actions.join('')}</div>` : ''}
-      ${p.preview ? '<p class="preview">Предпросмотр — так будет выглядеть оповещение</p>' : ''}
+      ${p.preview ? `<p class="preview">${tr('overlay_preview_this_is_how_the_alert')}</p>` : ''}
     </section>`;
   const card = stage.firstElementChild;
   [...card.children].forEach((el, i) => el.style.setProperty('--i', i));
@@ -95,7 +97,9 @@ function updateWaiting() {
   const el = document.getElementById('waiting');
   if (!el || !lastView) return;
   const ms = lastView.phase.kind === 'await' ? lastView.phase.waiting_ms : 0;
-  el.textContent = ms > 5000 ? `Ждём ${mmss(ms)} — это время не идёт в учёбу, блокировка включена` : 'Блокировка включена, пока не начнёшь';
+  el.textContent = ms > 5000
+    ? tr('overlay_waiting_this_doesnt_count_as_study', { ms: mmss(ms) })
+    : tr('overlay_the_lock_stays_on_until_you');
 }
 
 stage.addEventListener('click', async (e) => {
@@ -149,6 +153,7 @@ window.addEventListener('keydown', (e) => {
 
 on('overlay', (p) => render(p));
 on('state', (s) => {
+  followLang(s.meta.lang);
   lastView = s.view;
   applyTheme({ seed: s.meta.seed, mode: s.meta.theme_mode, variant: s.meta.variant });
   updateWaiting();
@@ -160,6 +165,7 @@ on('state', (s) => {
 
 (async () => {
   const s = await call('get_state');
+  followLang(s.meta.lang);
   lastView = s.view;
   applyTheme({ seed: s.meta.seed, mode: s.meta.theme_mode, variant: s.meta.variant });
   const p = await call('get_overlay');

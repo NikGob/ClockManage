@@ -90,7 +90,7 @@ class BlockerService : AccessibilityService() {
         performGlobalAction(if (home) GLOBAL_ACTION_HOME else GLOBAL_ACTION_BACK)
         if (now - lastToast > 2500) {
             lastToast = now
-            Toast.makeText(this, "Не-не-не: $what — после учёбы", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tr("android_blocker_nope_after_studying", "what" to what), Toast.LENGTH_SHORT).show()
         }
     }
 

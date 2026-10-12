@@ -3,6 +3,7 @@
 pub mod clock;
 pub mod config;
 pub mod day;
+pub mod i18n;
 pub mod mcp;
 pub mod phone;
 pub mod segments;

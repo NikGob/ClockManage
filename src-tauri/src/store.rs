@@ -28,12 +28,16 @@ impl Store {
     }
 
     pub fn load_config(&self) -> Config {
-        let mut cfg: Config = std::fs::read_to_string(self.config_path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        self.load_config_or_new().0
+    }
+
+    /// The saved config, or the defaults (`true`) on the first run.
+    pub fn load_config_or_new(&self) -> (Config, bool) {
+        let saved: Option<Config> = std::fs::read_to_string(self.config_path()).ok().and_then(|s| serde_json::from_str(&s).ok());
+        let new = saved.is_none();
+        let mut cfg = saved.unwrap_or_default();
         cfg.normalize();
-        cfg
+        (cfg, new)
     }
 
     pub fn save_config(&self, cfg: &Config) {

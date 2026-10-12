@@ -1,5 +1,6 @@
 // Shared UI helpers: snackbar, dialogs, number formatting.
 import { esc } from './api.js';
+import { tr, LOCALE, dec } from './i18n.js';
 
 let snackTimer = 0;
 let snackCount = 0;
@@ -107,7 +108,7 @@ export function dialog(html, build) {
 }
 
 /** Yes/no M3 dialog. Resolves true when confirmed. */
-export function ask(title, text, ok = 'Да', cancel = 'Отмена') {
+export function ask(title, text, ok = tr('ui_yes'), cancel = tr('ui_cancel')) {
   return dialog(`<h2>${esc(title)}</h2><p class="body-m muted">${esc(text)}</p>
     <div class="actions"><button class="btn text interactive" data-close>${esc(cancel)}</button><button class="btn filled interactive" data-ok autofocus>${esc(ok)}</button></div>`,
   (d, close) => d.querySelector('[data-ok]').addEventListener('click', () => close(true))).then((v) => v === true);
@@ -229,9 +230,9 @@ export function countUp(el, to, fmt = (v) => String(v), ms = 700) {
 
 export function hoursLabel(min) {
   const h = min / 60;
-  if (min % 60 === 0) return `${h} ч`;
-  if (min < 60) return `${min} мин`;
-  return `${String(Math.round(h * 100) / 100).replace('.', ',')} ч`;
+  if (min % 60 === 0) return tr('app_h', { h });
+  if (min < 60) return tr('ui_minutes_label', { min });
+  return `${dec(Math.round(h * 100) / 100)} ${tr('ui_h')}`;
 }
 
 export function partsPreview(min, seg) {
@@ -248,14 +249,14 @@ export function partsPreview(min, seg) {
   return parts;
 }
 
-export const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
-export const WEEKDAYS_FULL = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+export const WEEKDAYS = [tr('ui_mon'), tr('ui_tue'), tr('ui_wed'), tr('ui_thu'), tr('ui_fri'), tr('ui_sat'), tr('ui_sun')];
+export const WEEKDAYS_FULL = [tr('ui_monday'), tr('ui_tuesday'), tr('ui_wednesday'), tr('ui_thursday'), tr('ui_friday'), tr('ui_saturday'), tr('ui_sunday')];
 
 export function dateLabel(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
   const wd = WEEKDAYS_FULL[(dt.getDay() + 6) % 7];
-  return `${dt.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })} · ${wd}`;
+  return `${dt.toLocaleDateString(LOCALE, { day: 'numeric', month: 'long' })} · ${wd}`;
 }
 
 export { esc };
@@ -336,9 +337,9 @@ export function menu(anchor, items, { title = '', note = '' } = {}) {
 }
 
 export const KINDS = [
-  { id: 'full', label: 'Полный', icon: 'bolt', hint: 'Полный учебный день' },
-  { id: 'light', label: 'Лёгкий', icon: 'eco', hint: 'Облегчённый день — свой план' },
-  { id: 'off', label: 'Выходной', icon: 'weekend', hint: 'Отдых — по умолчанию без блокировки' },
+  { id: 'full', label: tr('config_full'), icon: 'bolt', hint: tr('ui_a_full_study_day') },
+  { id: 'light', label: tr('config_light'), icon: 'eco', hint: tr('ui_a_lighter_day_its_own_plan') },
+  { id: 'off', label: tr('config_day_off'), icon: 'weekend', hint: tr('ui_rest_no_lock_by_default') },
 ];
 export const KIND_RANK = { off: 0, light: 1, full: 2 };
 export const kindLabel = (id) => KINDS.find((k) => k.id === id)?.label || id;
@@ -355,9 +356,9 @@ export function tsHm(ts, tzOffsetMin) {
 
 /** "Математика 1,5 ч · Словацкий 1 ч" / "5 ч 30 мин" summary of a plan. */
 export function planSummary(plan) {
-  if (!plan?.length) return 'Плана нет';
+  if (!plan?.length) return tr('ui_no_plan');
   const total = plan.reduce((a, b) => a + b.minutes, 0);
   const h = Math.floor(total / 60);
   const m = total % 60;
-  return `${h ? `${h} ч` : ''}${h && m ? ' ' : ''}${m ? `${m} мин` : ''} · ${plan.map((b) => b.name).join(', ')}`;
+  return `${h ? `${h} ${tr('ui_h')}` : ''}${h && m ? ' ' : ''}${m ? `${m} ${tr('overlay_min')}` : ''} · ${plan.map((b) => b.name).join(', ')}`;
 }

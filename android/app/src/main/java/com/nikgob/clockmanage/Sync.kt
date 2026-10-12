@@ -58,7 +58,7 @@ object Sync {
 
     private fun handle(ctx: Context, e: Exception) {
         if (e is ApiError && e.unauthorized) Store(ctx).forget()
-        publish(ctx, Store(ctx).snapshot(), e.message ?: "Ошибка")
+        publish(ctx, Store(ctx).snapshot(), e.message ?: tr("blocking_error"))
     }
 
     /** A single sync in the background (screen on, alarm, boot). Rate-limited to once a minute. */
@@ -136,7 +136,7 @@ object Sync {
                 null
             } catch (e: Exception) {
                 if (e is ApiError && e.unauthorized) s.forget()
-                e.message ?: "Ошибка"
+                e.message ?: tr("blocking_error")
             }
             main.post { done(err) }
         }
