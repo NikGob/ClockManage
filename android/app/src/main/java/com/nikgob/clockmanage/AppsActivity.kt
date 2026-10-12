@@ -34,10 +34,10 @@ class AppsActivity : Activity() {
             v.setPadding(0, insets.systemWindowInsetTop, 0, insets.systemWindowInsetBottom)
             insets
         }
-        col.addWithMargins(label("Приложения", 28f, p.text, bold = true))
-        col.addWithMargins(label("Во время учёбы отмеченные закрываются сразу при открытии. Пока идёт учебный день, список можно только расширять. Сайты берутся с ПК.", 14f, p.muted), top = dp(8))
+        col.addWithMargins(label(L("Приложения", "Apps"), 28f, p.text, bold = true))
+        col.addWithMargins(label(L("Во время учёбы отмеченные закрываются сразу при открытии. Пока идёт учебный день, список можно только расширять. Сайты берутся с ПК.", "During study the checked apps close as soon as they open. While a study day runs, the list can only grow. Sites come from the PC."), 14f, p.muted), top = dp(8))
 
-        val save = pill("Сохранить", p) {}
+        val save = pill(L("Сохранить", "Save"), p) {}
         col.addWithMargins(save, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
 
         val pm = packageManager
@@ -61,7 +61,7 @@ class AppsActivity : Activity() {
             Sync.setApps(this, chosen) { err ->
                 save.isEnabled = true
                 if (err == null) {
-                    Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, L("Сохранено", "Saved"), Toast.LENGTH_SHORT).show()
                     finish()
                 } else {
                     Toast.makeText(this, err, Toast.LENGTH_LONG).show()

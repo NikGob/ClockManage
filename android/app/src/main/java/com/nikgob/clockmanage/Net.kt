@@ -80,16 +80,16 @@ class Api(private val host: String, private val port: Int, private val token: St
             val code = c.responseCode
             val text = (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
             if (code >= 400) {
-                val msg = try { JSONObject(text).getString("error") } catch (e: Exception) { "Ошибка $code" }
+                val msg = try { JSONObject(text).getString("error") } catch (e: Exception) { L("Ошибка $code", "Error $code") }
                 throw ApiError(msg, unauthorized = code == 401)
             }
             return text
         } catch (e: SocketTimeoutException) {
-            throw ApiError("ПК не отвечает")
+            throw ApiError(L("ПК не отвечает", "The PC doesn’t answer"))
         } catch (e: ApiError) {
             throw e
         } catch (e: IOException) {
-            throw ApiError("Нет связи с ПК")
+            throw ApiError(L("Нет связи с ПК", "No connection to the PC"))
         } finally {
             c.disconnect()
         }

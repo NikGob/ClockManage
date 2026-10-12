@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="blocker_description">Во время учебного дня ClockManage закрывает заблокированные приложения и сайты (список приходит с ПК). Читает только адресную строку браузера и название открытого приложения, ничего никуда не отправляет.</string>
-    <string name="widget_description">Таймер ClockManage: что идёт и сколько осталось</string>
+    <string name="blocker_description">During a study day ClockManage closes blocked apps and sites (the list comes from the PC). It only reads the browser address bar and the name of the open app, and sends nothing anywhere.</string>
+    <string name="widget_description">ClockManage timer: what is running and how much is left</string>
+    <string name="apps_title">Apps</string>
+    <string name="blocker_label">ClockManage — blocking</string>
 </resources>

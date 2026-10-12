@@ -112,22 +112,22 @@ class MainActivity : Activity() {
         updateBox.visibility = if (a == null) View.GONE else View.VISIBLE
         if (a == null) return
         if (was != View.VISIBLE) updateBox.riseIn()
-        updateBox.addWithMargins(label("Доступна версия ${a.name}", 16f, p.onContainer, bold = true))
-        val info = label("С ПК по Wi-Fi, ${"%.1f".format(a.size / 1048576.0)} МБ. Настройки и подключение сохранятся.", 14f, p.onContainer)
+        updateBox.addWithMargins(label(L("Доступна версия ${a.name}", "Version ${a.name} is available"), 16f, p.onContainer, bold = true))
+        val info = label(L("С ПК по Wi-Fi, ${"%.1f".format(a.size / 1048576.0)} МБ. Настройки и подключение сохранятся.", "From the PC over Wi-Fi, ${"%.1f".format(Locale.US, a.size / 1048576.0)} MB. Settings and pairing are kept."), 14f, p.onContainer)
         updateBox.addWithMargins(info, top = dp(2))
-        val go = pill("Обновить", p) {}
+        val go = pill(L("Обновить", "Update"), p) {}
         go.setOnClickListener {
             if (!Updater.canInstall(this)) {
-                Toast.makeText(this, "Разреши ClockManage устанавливать приложения и вернись", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, L("Разреши ClockManage устанавливать приложения и вернись", "Allow ClockManage to install apps and come back"), Toast.LENGTH_LONG).show()
                 Updater.openInstallPermission(this)
                 return@setOnClickListener
             }
             go.isEnabled = false
             Thread {
-                val err = Updater.downloadAndInstall(this) { pct -> ui.post { go.text = "Скачиваю… $pct%" } }
+                val err = Updater.downloadAndInstall(this) { pct -> ui.post { go.text = L("Скачиваю… $pct%", "Downloading… $pct%") } }
                 ui.post {
                     go.isEnabled = true
-                    go.text = "Обновить"
+                    go.text = L("Обновить", "Update")
                     if (err != null) info.text = err
                 }
             }.start()
@@ -174,35 +174,35 @@ class MainActivity : Activity() {
         ui.removeCallbacks(tick)
         val col = page()
         col.addWithMargins(label("ClockManage", 32f, p.text, bold = true))
-        col.addWithMargins(label("Подключи телефон к ПК в той же сети Wi-Fi.", 16f, p.muted), top = dp(8))
+        col.addWithMargins(label(L("Подключи телефон к ПК в той же сети Wi-Fi.", "Pair the phone with a PC on the same Wi-Fi network."), 16f, p.muted), top = dp(8))
         col.addWithMargins(
-            label("На ПК: Настройки → Телефон → включи синхронизацию и нажми «Подключить телефон». Потом выбери ПК здесь и введи PIN.", 15f, p.muted),
+            label(L("На ПК: Настройки → Телефон → включи синхронизацию и нажми «Подключить телефон». Потом выбери ПК здесь и введи PIN.", "On the PC: Settings → Phone → turn on sync and press “Pair a phone”. Then pick the PC here and enter the PIN."), 15f, p.muted),
             top = dp(16),
         )
 
         var host = store.host
         var port = store.port
-        val chosen = label(if (host.isNotEmpty()) "ПК: ${store.pcName.ifEmpty { host }}" else "ПК не выбран", 16f, p.text, bold = true)
+        val chosen = label(if (host.isNotEmpty()) L("ПК: ${store.pcName.ifEmpty { host }}", "PC: ${store.pcName.ifEmpty { host }}") else L("ПК не выбран", "No PC selected"), 16f, p.text, bold = true)
         val found = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val find = pill("Найти ПК", p, "tonal") {}
+        val find = pill(L("Найти ПК", "Find PC"), p, "tonal") {}
         col.addWithMargins(find, top = dp(24), width = ViewGroup.LayoutParams.WRAP_CONTENT)
         col.addWithMargins(found, top = dp(8))
         find.setOnClickListener {
             find.isEnabled = false
-            find.text = "Ищу…"
+            find.text = L("Ищу…", "Searching…")
             Thread {
                 val list = Discovery.find()
                 ui.post {
                     find.isEnabled = true
-                    find.text = "Найти ещё раз"
+                    find.text = L("Найти ещё раз", "Search again")
                     found.removeAllViews()
-                    if (list.isEmpty()) found.addWithMargins(label("Не нашёл. Проверь, что ПК в той же сети и синхронизация включена, — или введи адрес вручную.", 14f, p.error))
+                    if (list.isEmpty()) found.addWithMargins(label(L("Не нашёл. Проверь, что ПК в той же сети и синхронизация включена, — или введи адрес вручную.", "Not found. Check that the PC is on the same network and sync is on — or enter the address by hand."), 14f, p.error))
                     list.forEach { pc ->
                         found.addWithMargins(pill("${pc.name} · ${pc.host}", p, "text") {
                             host = pc.host
                             port = pc.port
                             store.pcName = pc.name
-                            chosen.text = "ПК: ${pc.name}"
+                            chosen.text = L("ПК: ${pc.name}", "PC: ${pc.name}")
                         }, width = ViewGroup.LayoutParams.WRAP_CONTENT)
                     }
                 }
@@ -210,14 +210,14 @@ class MainActivity : Activity() {
         }
 
         val manual = EditText(this).apply {
-            hint = "или адрес вручную: 192.168.1.5:47811"
+            hint = L("или адрес вручную: 192.168.1.5:47811", "or the address by hand: 192.168.1.5:47811")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setSingleLine()
         }
         col.addWithMargins(manual, top = dp(8))
         col.addWithMargins(chosen, top = dp(20))
         val pin = EditText(this).apply {
-            hint = "PIN с экрана ПК"
+            hint = L("PIN с экрана ПК", "PIN from the PC screen")
             inputType = InputType.TYPE_CLASS_NUMBER
             textSize = 24f
             letterSpacing = 0.2f
@@ -225,7 +225,7 @@ class MainActivity : Activity() {
         }
         col.addWithMargins(pin, top = dp(8))
         val err = label("", 14f, p.error)
-        val go = pill("Подключить", p) {}
+        val go = pill(L("Подключить", "Pair"), p) {}
         col.addWithMargins(go, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
         col.addWithMargins(err, top = dp(8))
         go.setOnClickListener {
@@ -235,9 +235,9 @@ class MainActivity : Activity() {
                 port = typed.substringAfter(':', "47811").toIntOrNull() ?: 47811
                 store.pcName = host
             }
-            if (host.isEmpty()) { err.text = "Сначала найди ПК или введи адрес"; return@setOnClickListener }
+            if (host.isEmpty()) { err.text = L("Сначала найди ПК или введи адрес", "Find the PC or enter its address first"); return@setOnClickListener }
             val code = pin.text.toString().trim()
-            if (code.length != 6) { err.text = "PIN — 6 цифр"; return@setOnClickListener }
+            if (code.length != 6) { err.text = L("PIN — 6 цифр", "The PIN is 6 digits"); return@setOnClickListener }
             go.isEnabled = false
             err.text = ""
             val h = host
@@ -251,11 +251,11 @@ class MainActivity : Activity() {
                         store.port = pt
                         store.token = token
                         store.pcName = name
-                        Toast.makeText(this, "Подключено к $name", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, L("Подключено к $name", "Paired with $name"), Toast.LENGTH_SHORT).show()
                         showTimer()
                         Sync.startLive(this)
                         ui.post(tick)
-                    }.onFailure { err.text = it.message ?: "Не получилось" }
+                    }.onFailure { err.text = it.message ?: L("Не получилось", "Didn’t work") }
                 }
             }.start()
         }
@@ -298,7 +298,7 @@ class MainActivity : Activity() {
         col.addWithMargins(hero, top = dp(28), bottom = dp(28))
 
         val plan = card(p)
-        plan.addWithMargins(label("План дня", 18f, p.text, bold = true))
+        plan.addWithMargins(label(L("План дня", "Day plan"), 18f, p.text, bold = true))
         total = label("", 14f, p.muted)
         plan.addWithMargins(total, top = dp(2))
         rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -306,24 +306,24 @@ class MainActivity : Activity() {
         col.addWithMargins(plan)
 
         val bl = card(p)
-        bl.addWithMargins(label("Блокировка на телефоне", 18f, p.text, bold = true))
+        bl.addWithMargins(label(L("Блокировка на телефоне", "Blocking on the phone"), 18f, p.text, bold = true))
         blocker = label("", 14f, p.muted)
         bl.addWithMargins(blocker, top = dp(4))
-        blockerBtn = pill("Включить в спецвозможностях", p, "tonal") {
+        blockerBtn = pill(L("Включить в спецвозможностях", "Turn on in Accessibility"), p, "tonal") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, "Найди «ClockManage — блокировка» и включи", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, L("Найди «ClockManage — блокировка» и включи", "Find “ClockManage — blocking” and turn it on"), Toast.LENGTH_LONG).show()
         }
         bl.addWithMargins(blockerBtn, top = dp(12), width = ViewGroup.LayoutParams.WRAP_CONTENT)
         // Android 13+ greys out accessibility for sideloaded apps until "restricted settings" are
         // allowed on the app's info page.
-        restrictedBtn = pill("О приложении", p, "text") {
+        restrictedBtn = pill(L("О приложении", "App info"), p, "text") {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", packageName, null)))
         }
         bl.addWithMargins(restrictedBtn, top = dp(4), width = ViewGroup.LayoutParams.WRAP_CONTENT)
-        appsBtn = pill("Приложения", p, "text") { startActivity(Intent(this, AppsActivity::class.java)) }
+        appsBtn = pill(L("Приложения", "Apps"), p, "text") { startActivity(Intent(this, AppsActivity::class.java)) }
         bl.addWithMargins(appsBtn, top = dp(4), width = ViewGroup.LayoutParams.WRAP_CONTENT)
         val notify = Switch(this).apply {
-            text = "Уведомления: отсчёт в шторке и конец перерыва"
+            text = L("Уведомления: отсчёт в шторке и конец перерыва", "Notifications: the countdown in the shade and the break end")
             setTextColor(p.text)
             isChecked = store.notify
             setOnCheckedChangeListener { _, on ->
@@ -334,14 +334,14 @@ class MainActivity : Activity() {
         bl.addWithMargins(notify, top = dp(8))
         col.addWithMargins(bl, top = dp(16))
 
-        col.addWithMargins(pill("Отключиться от ПК", p, "text") {
+        col.addWithMargins(pill(L("Отключиться от ПК", "Unpair from the PC"), p, "text") {
             store.forget()
             store.host = ""
             Sync.stopLive()
             showPair()
         }, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
-        col.addWithMargins(label("Версия ${Updater.currentName(this)}", 12f, p.muted).apply {
-            setOnClickListener { checkUpdate(true); Toast.makeText(this@MainActivity, "Проверяю обновление на ПК…", Toast.LENGTH_SHORT).show() }
+        col.addWithMargins(label(L("Версия ${Updater.currentName(this)}", "Version ${Updater.currentName(this)}"), 12f, p.muted).apply {
+            setOnClickListener { checkUpdate(true); Toast.makeText(this@MainActivity, L("Проверяю обновление на ПК…", "Checking the PC for an update…"), Toast.LENGTH_SHORT).show() }
         }, top = dp(8))
 
         snap = store.snapshot()
@@ -356,17 +356,17 @@ class MainActivity : Activity() {
         val on = Sync.blockerEnabled(this)
         val s = snap
         blocker.text = when {
-            !on && Build.VERSION.SDK_INT >= 33 -> "Выключена. Без неё телефон только показывает таймер.\n\n" +
-                "Если переключатель серый и пишет «Ограниченная настройка»: «О приложении» → ⋮ справа сверху → " +
-                "«Разрешить ограниченные настройки», потом включи снова."
-            !on -> "Выключена. Без неё телефон только показывает таймер."
-            s == null -> "Включена. Ждёт данных с ПК."
-            s.blockedAt(store.now(), store.syncedAt) -> "Включена и работает: ${s.sites.size} сайтов, ${s.apps.size} приложений."
-            else -> "Включена. Сейчас блокировки нет."
+            !on && Build.VERSION.SDK_INT >= 33 -> L("Выключена. Без неё телефон только показывает таймер.\n\n", "Off. Without it the phone only shows the timer.\n\n") +
+                L("Если переключатель серый и пишет «Ограниченная настройка»: «О приложении» → ⋮ справа сверху → ", "If the switch is grey and says “Restricted setting”: “App info” → ⋮ at the top right → ") +
+                L("«Разрешить ограниченные настройки», потом включи снова.", "“Allow restricted settings”, then turn it on again.")
+            !on -> L("Выключена. Без неё телефон только показывает таймер.", "Off. Without it the phone only shows the timer.")
+            s == null -> L("Включена. Ждёт данных с ПК.", "On. Waiting for data from the PC.")
+            s.blockedAt(store.now(), store.syncedAt) -> L("Включена и работает: ${s.sites.size} сайтов, ${s.apps.size} приложений.", "On and working: ${s.sites.size} sites, ${s.apps.size} apps.")
+            else -> L("Включена. Сейчас блокировки нет.", "On. No lock right now.")
         }
         blockerBtn.visibility = if (on) View.GONE else View.VISIBLE
         restrictedBtn.visibility = if (!on && Build.VERSION.SDK_INT >= 33) View.VISIBLE else View.GONE
-        appsBtn.text = "Приложения (${s?.apps?.size ?: 0})"
+        appsBtn.text = L("Приложения (${s?.apps?.size ?: 0})", "Apps (${s?.apps?.size ?: 0})")
     }
 
     private fun act(action: String, expect: String?) {
@@ -379,58 +379,58 @@ class MainActivity : Activity() {
         val now = store.now()
         val hm = SimpleDateFormat("HH:mm", Locale.forLanguageTag("ru"))
         status.text = when {
-            Sync.online -> "● ${store.pcName} · синхронизировано"
-            store.syncedAt > 0 -> "○ ${Sync.lastError ?: "Нет связи с ПК"} — считаю сам · связь была в ${hm.format(Date(store.syncedAt - store.offset))}"
-            else -> "○ ${Sync.lastError ?: "Подключаюсь…"}"
+            Sync.online -> L("● ${store.pcName} · синхронизировано", "● ${store.pcName} · synced")
+            store.syncedAt > 0 -> "○ ${Sync.lastError ?: L("Нет связи с ПК", "No connection to the PC")} — ${L("считаю сам · связь была в", "counting on my own · last synced at")} ${hm.format(Date(store.syncedAt - store.offset))}"
+            else -> "○ ${Sync.lastError ?: L("Подключаюсь…", "Connecting…")}"
         }
         status.setTextColor(if (Sync.online) p.primary else p.muted)
         if (s == null) {
-            title.text = "Жду данных с ПК"
+            title.text = L("Жду данных с ПК", "Waiting for data from the PC")
             return
         }
         val focusUntil = s.focusUntil?.takeIf { now < it }
         lock.text = if (s.blockedAt(now, store.syncedAt)) {
-            if (focusUntil != null && (s.lockReason != "study" || focusUntil >= minOf(s.dayEndAt, s.doneAt ?: s.dayEndAt))) "🔒 Фокус-блокировка · до ${hm.format(Date(focusUntil - store.offset))}"
-            else "🔒 Блокировка включена · до ${s.dayEnd} или до конца плана"
+            if (focusUntil != null && (s.lockReason != "study" || focusUntil >= minOf(s.dayEndAt, s.doneAt ?: s.dayEndAt))) L("🔒 Фокус-блокировка · до ${hm.format(Date(focusUntil - store.offset))}", "🔒 Focus lock · until ${hm.format(Date(focusUntil - store.offset))}")
+            else L("🔒 Блокировка включена · до ${s.dayEnd} или до конца плана", "🔒 Lock on · until ${s.dayEnd} or until the plan is done")
         } else when (s.lockReason) {
-            "pause_access" -> "Доступ на паузе открыт"
-            "emergency" -> "Аварийный доступ"
-            "completed" -> "Все блоки отсижены — блокировки нет"
-            "day_end" -> "После ${s.dayEnd} блокировки нет"
-            else -> "Без блокировки"
+            "pause_access" -> L("Доступ на паузе открыт", "Access on pause is open")
+            "emergency" -> L("Аварийный доступ", "Emergency access")
+            "completed" -> L("Все блоки отсижены — блокировки нет", "All blocks done — no lock")
+            "day_end" -> L("После ${s.dayEnd} блокировки нет", "No lock after ${s.dayEnd}")
+            else -> L("Без блокировки", "No lock")
         }
 
         val e = s.entryAt(now)
         when (e?.kind) {
             "work", "break", "lunch_break" -> {
-                state.text = if (e.paused) "пауза" else if (e.kind == "work") "работа" else "перерыв"
+                state.text = if (e.paused) L("пауза", "paused") else if (e.kind == "work") L("работа", "work") else L("перерыв", "break")
                 big.text = Fmt.mmss(e.remaining(now))
                 big.textSize = 72f
             }
-            "await" -> { state.text = "ждём тебя"; big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
+            "await" -> { state.text = L("ждём тебя", "waiting for you"); big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
             "segment" -> {
                 val left = e.remaining(now)
                 if (e.stopwatch) {
                     // "Без времени": counts up.
-                    state.text = if (left < 0) "без времени · дольше обычного" else "без времени"
+                    state.text = if (left < 0) L("без времени · дольше обычного", "untimed · longer than usual") else L("без времени", "untimed")
                     big.text = Fmt.mmss(e.elapsed(now))
                     big.setTextColor(p.text)
                 } else {
                     state.text = when {
-                        e.prep -> if (left < 0) "пора ложиться" else "подготовка"
-                        left < 0 -> "превышено"
-                        e.alarm -> "сон · будильник"
-                        else -> "отрезок"
+                        e.prep -> if (left < 0) L("пора ложиться", "time to lie down") else L("подготовка", "getting ready")
+                        left < 0 -> L("превышено", "over")
+                        e.alarm -> L("сон · будильник", "nap · alarm")
+                        else -> L("отрезок", "segment")
                     }
                     big.text = if (left < 0) "+" + Fmt.mmss(-left) else Fmt.mmss(left)
                     big.setTextColor(if (left < 0) p.error else p.text)
                 }
                 big.textSize = 72f
             }
-            "lunch" -> { state.text = "обед"; big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
-            "done" -> { state.text = "готово"; big.text = "✓"; big.textSize = 56f }
+            "lunch" -> { state.text = L("обед", "lunch"); big.text = Fmt.mmss(e.elapsed(now)); big.textSize = 56f }
+            "done" -> { state.text = L("готово", "done"); big.text = "✓"; big.textSize = 56f }
             else -> {
-                state.text = "в плане"
+                state.text = L("в плане", "planned")
                 big.text = Fmt.dur(s.blocks.filter { !it.isBreak }.sumOf { it.minutes } * Snapshot.MIN)
                 big.textSize = 44f
             }
@@ -453,15 +453,15 @@ class MainActivity : Activity() {
         // Buttons: rebuilt only when what they do changes.
         val wanted = mutableListOf<Triple<String, String, String?>>()
         when {
-            e == null || e.kind == "idle" -> if (s.canStartDay) wanted += Triple("Начать день", "start_day", null)
-            e.paused -> wanted += Triple("Продолжить", "resume", null)
-            e.kind == "work" || e.kind == "break" -> wanted += Triple("Пауза", "pause", null)
-            e.kind == "await" || e.kind == "lunch" -> wanted += Triple("Начать", "start_next", e.kind)
+            e == null || e.kind == "idle" -> if (s.canStartDay) wanted += Triple(L("Начать день", "Start day"), "start_day", null)
+            e.paused -> wanted += Triple(L("Продолжить", "Resume"), "resume", null)
+            e.kind == "work" || e.kind == "break" -> wanted += Triple(L("Пауза", "Pause"), "pause", null)
+            e.kind == "await" || e.kind == "lunch" -> wanted += Triple(L("Начать", "Start"), "start_next", e.kind)
             e.segment && e.prep -> {
-                wanted += Triple("Лёг", "lay_down", "segment")
-                wanted += Triple("Не буду спать", "end_segment", "segment")
+                wanted += Triple(L("Лёг", "In bed"), "lay_down", "segment")
+                wanted += Triple(L("Не буду спать", "Skip the nap"), "end_segment", "segment")
             }
-            e.segment -> wanted += Triple(if (e.alarm) "Встал" else "Закончил", "end_segment", "segment")
+            e.segment -> wanted += Triple(if (e.alarm) L("Встал", "I’m up") else L("Закончил", "Done"), "end_segment", "segment")
         }
         val sig = wanted.joinToString { it.second } + Sync.online
         if (actions.tag != sig) {
@@ -480,7 +480,7 @@ class MainActivity : Activity() {
         val studyMin = s.blocks.filter { !it.isBreak }.sumOf { it.minutes }
         // "0 мин из 0 ч учёбы" says nothing: an empty plan shows only its hint below.
         total.visibility = if (studyMin > 0) View.VISIBLE else View.GONE
-        total.text = "${Fmt.dur(work)} из ${Fmt.hours(studyMin)} учёбы"
+        total.text = L("${Fmt.dur(work)} из ${Fmt.hours(studyMin)} учёбы", "${Fmt.dur(work)} of ${Fmt.hours(studyMin)} of study")
         if (shownVersion != s.version + Sync.online) {
             shownVersion = s.version + Sync.online
             buildRows(s)
@@ -488,11 +488,11 @@ class MainActivity : Activity() {
         s.blocks.forEachIndexed { i, b ->
             val (meta, bar) = rowViews.getOrNull(i) ?: return@forEachIndexed
             if (b.isBreak) {
-                meta.text = "${b.minutes} мин · " + when { b.done -> "прошёл"; b.started -> "идёт"; else -> "отрезок, не учёба" }
+                meta.text = L("${b.minutes} мин · ", "${b.minutes} min · ") + when { b.done -> L("прошёл", "done"); b.started -> L("идёт", "running"); else -> L("отрезок, не учёба", "segment, not study") }
                 return@forEachIndexed
             }
             val w = e?.work(i, now) ?: 0L
-            meta.text = "${w / Snapshot.MIN} из ${b.minutes} мин" + if (b.done) " · готово" else ""
+            meta.text = L("${w / Snapshot.MIN} из ${b.minutes} мин", "${w / Snapshot.MIN} of ${b.minutes} min") + if (b.done) L(" · готово", " · done") else ""
             val to = ((w * 1000) / (b.minutes * Snapshot.MIN).coerceAtLeast(1)).toInt().coerceIn(0, 1000)
             // Big jumps (a fresh list, a block closed) glide; the per-second creep is set directly.
             if (kotlin.math.abs(to - bar.progress) > 20) {
@@ -508,7 +508,7 @@ class MainActivity : Activity() {
     private fun buildRows(s: Snapshot) {
         rows.removeAllViews()
         rowViews.clear()
-        if (s.blocks.isEmpty()) rows.addWithMargins(label("План на сегодня пуст — составь его на ПК.", 14f, p.muted))
+        if (s.blocks.isEmpty()) rows.addWithMargins(label(L("План на сегодня пуст — составь его на ПК.", "Today’s plan is empty — make it on the PC."), 14f, p.muted))
         val editable = s.canEditPlan && Sync.online
         s.blocks.forEachIndexed { i, b ->
             val r = row()

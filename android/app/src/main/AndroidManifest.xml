@@ -42,12 +42,12 @@
         <activity
             android:name=".AppsActivity"
             android:exported="false"
-            android:label="Приложения" />
+            android:label="@string/apps_title" />
 
         <service
             android:name=".BlockerService"
             android:exported="false"
-            android:label="ClockManage — блокировка"
+            android:label="@string/blocker_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
