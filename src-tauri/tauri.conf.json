@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClockManage",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "identifier": "com.nikgob.clockmanage",
   "build": {
     "frontendDist": "../ui"
@@ -22,7 +22,7 @@
       },
       {
         "label": "mini",
-        "title": "ClockManage — мини-таймер",
+        "title": "ClockManage — mini timer",
         "url": "mini.html",
         "width": 320,
         "height": 120,
@@ -37,7 +37,7 @@
       },
       {
         "label": "overlay",
-        "title": "ClockManage — будильник",
+        "title": "ClockManage — alarm",
         "url": "overlay.html",
         "width": 900,
         "height": 600,
@@ -61,7 +61,7 @@
       "nsis"
     ],
     "publisher": "NikGob",
-    "shortDescription": "Учебный режим: блокировка, таймер, лог",
+    "shortDescription": "Study mode: blocking, timer, log",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

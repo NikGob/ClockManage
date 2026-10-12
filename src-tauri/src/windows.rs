@@ -7,6 +7,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent};
 
 use crate::app::{Shared, TrayItems};
+use clockmanage_core::i18n::pick;
+use clockmanage_core::tr;
 
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -72,13 +74,14 @@ pub fn try_quit(app: &AppHandle, shared: &Arc<Shared>) {
     if snap.view.lock.base {
         use tauri_plugin_notification::NotificationExt;
         let body = match snap.view.lock.focus_until {
-            Some(u) if snap.view.lock.reason != "study" => format!(
+            Some(u) if snap.view.lock.reason != "study" => tr!(
                 "Идёт фокус-блокировка до {}. Раньше её снимает только аварийный доступ.",
+                "A focus lock runs until {}. Only emergency access lifts it earlier.",
                 clockmanage_core::clock::hm(u, snap.meta.tz_offset_min)
             ),
-            _ => "Идёт учебный день. Блокировка снимется после всех блоков или в конце дня.".to_string(),
+            _ => tr!("Идёт учебный день. Блокировка снимется после всех блоков или в конце дня.", "A study day is running. The lock lifts after all blocks or at the day end."),
         };
-        let _ = app.notification().builder().title("Выйти нельзя").body(body).show();
+        let _ = app.notification().builder().title(pick("Выйти нельзя", "Can’t quit")).body(body).show();
         show_main(app);
         return;
     }
@@ -93,14 +96,14 @@ pub fn try_quit(app: &AppHandle, shared: &Arc<Shared>) {
 }
 
 pub fn build_tray(app: &AppHandle, shared: Arc<Shared>) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Открыть", true, None::<&str>)?;
-    let mini = MenuItem::with_id(app, "mini", "Мини-таймер", true, None::<&str>)?;
-    let action = MenuItem::with_id(app, "action", "Начать день", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", pick("Открыть", "Open"), true, None::<&str>)?;
+    let mini = MenuItem::with_id(app, "mini", pick("Мини-таймер", "Mini timer"), true, None::<&str>)?;
+    let action = MenuItem::with_id(app, "action", pick("Начать день", "Start day"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", pick("Выход", "Quit"), true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&action, &sep1, &open, &mini, &sep2, &quit])?;
-    *shared.tray.lock().unwrap() = Some(TrayItems { action, quit });
+    *shared.tray.lock().unwrap() = Some(TrayItems { open, mini, action, quit });
 
     let s2 = shared.clone();
     let mut builder = TrayIconBuilder::with_id("main")

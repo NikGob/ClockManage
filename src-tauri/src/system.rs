@@ -4,6 +4,8 @@
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::Path;
+use clockmanage_core::i18n::Lang;
+use clockmanage_core::tr;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -50,7 +52,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     if a && b {
         Ok(())
     } else {
-        Err("Не удалось создать задачи автозапуска (нужны права администратора).".into())
+        Err(tr!("Не удалось создать задачи автозапуска (нужны права администратора).", "Couldn’t create the autostart tasks (administrator rights needed)."))
     }
 }
 
@@ -161,8 +163,35 @@ pub fn remove_phone_firewall() {
 pub fn remove_phone_firewall() {}
 
 /// Name of this PC, shown on the phone when it finds it.
+/// The Windows display language: Russian for ru/uk/be, else English.
+#[cfg(windows)]
+pub fn ui_lang() -> Lang {
+    let id = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    // Primary language ids: 0x19 Russian, 0x22 Ukrainian, 0x23 Belarusian.
+    if matches!(id & 0x3ff, 0x19 | 0x22 | 0x23) {
+        Lang::Ru
+    } else {
+        Lang::En
+    }
+}
+
+#[cfg(not(windows))]
+pub fn ui_lang() -> Lang {
+    Lang::from_locale(&std::env::var("LANG").unwrap_or_default())
+}
+
+/// The interface language from the setting ("auto" = the Windows language), applied process-wide.
+pub fn apply_lang(cfg: &clockmanage_core::Config) {
+    clockmanage_core::i18n::set(cfg.lang.resolve(ui_lang()));
+}
+
+/// The local UTC offset right now, in minutes (the default "study clock" of a new install).
+pub fn utc_offset_min() -> i32 {
+    clockmanage_core::chrono::Local::now().offset().local_minus_utc() / 60
+}
+
 pub fn pc_name() -> String {
-    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "ПК".into())
+    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| tr!("ПК", "PC"))
 }
 
 /// `lan_ip`, looked up at most every 30 s (the state goes to the UI every second).

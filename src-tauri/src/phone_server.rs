@@ -26,6 +26,8 @@ use tauri::Emitter;
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::app::Shared;
+use clockmanage_core::i18n::pick;
+use clockmanage_core::tr;
 
 const PIN_TTL_MS: i64 = 120_000;
 const PIN_ATTEMPTS: u32 = 5;
@@ -185,7 +187,7 @@ impl PhoneServer {
         let server = match Server::http(("0.0.0.0", port)) {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                *self.running.lock().unwrap() = (false, port, Some(format!("Порт {port} занят: {e}")));
+                *self.running.lock().unwrap() = (false, port, Some(tr!("Порт {port} занят: {e}", "Port {port} is busy: {e}")));
                 return;
             }
         };
@@ -263,7 +265,7 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
         }
         (m, p) if p.starts_with("/api/") => {
             let Some(dev) = device(shared, &req) else {
-                return error(req, 401, "Телефон не подключён к этому ПК — подключи заново по PIN.");
+                return error(req, 401, pick("Телефон не подключён к этому ПК — подключи заново по PIN.", "The phone isn’t paired with this PC — pair again with a PIN."));
             };
             match (m, p) {
                 (Method::Get, "/api/state") => {
@@ -300,7 +302,7 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
                                     .with_header(header("Cache-Control", "no-store")),
                             );
                         }
-                        None => error(req, 404, "В этой сборке ПК нет APK для телефона."),
+                        None => error(req, 404, pick("В этой сборке ПК нет APK для телефона.", "This PC build has no phone APK.")),
                     }
                 }
                 (Method::Post, "/api/action") => {
@@ -325,31 +327,31 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
                         Err(e) => error(req, 409, &e),
                     }
                 }
-                _ => error(req, 404, "Нет такого запроса."),
+                _ => error(req, 404, pick("Нет такого запроса.", "No such request.")),
             }
         }
-        _ => error(req, 404, "Нет такого запроса."),
+        _ => error(req, 404, pick("Нет такого запроса.", "No such request.")),
     }
 }
 
 fn pair(shared: &Arc<Shared>, b: &Value) -> Result<Value, String> {
     let typed = b.get("pin").and_then(Value::as_str).unwrap_or("").trim().to_string();
-    let name: String = b.get("name").and_then(Value::as_str).unwrap_or("Телефон").trim().chars().take(40).collect();
+    let name: String = b.get("name").and_then(Value::as_str).unwrap_or(pick("Телефон", "Phone")).trim().chars().take(40).collect();
     {
         let mut pin = shared.phone.pin.lock().unwrap();
-        let p = pin.as_mut().filter(|p| p.until > clock::now_ts()).ok_or("PIN не открыт: нажми «Подключить телефон» в настройках ПК.")?;
+        let p = pin.as_mut().filter(|p| p.until > clock::now_ts()).ok_or(pick("PIN не открыт: нажми «Подключить телефон» в настройках ПК.", "No PIN is open: press “Pair a phone” in the PC settings."))?;
         if p.attempts >= PIN_ATTEMPTS {
-            return Err("Слишком много попыток — открой новый PIN на ПК.".into());
+            return Err(tr!("Слишком много попыток — открой новый PIN на ПК.", "Too many attempts — open a new PIN on the PC."));
         }
         if p.code != typed {
             p.attempts += 1;
-            return Err("PIN не подходит.".into());
+            return Err(tr!("PIN не подходит.", "Wrong PIN."));
         }
         *pin = None;
     }
     let dev = PhoneDevice {
         id: random_hex(6),
-        name: if name.is_empty() { "Телефон".into() } else { name },
+        name: if name.is_empty() { tr!("Телефон", "Phone") } else { name },
         token: random_hex(24),
         paired_at: clock::now_ts(),
     };
@@ -360,11 +362,11 @@ fn pair(shared: &Arc<Shared>, b: &Value) -> Result<Value, String> {
             g.cfg.phone.devices.drain(..n - MAX_DEVICES);
         }
         shared.store.save_config(&g.cfg);
-        g.day.log(now, "phone", format!("Подключён телефон «{}»", dev.name));
+        g.day.log(now, "phone", tr!("Подключён телефон «{}»", "Phone “{}” paired", dev.name));
         Ok(())
     })?;
     let _ = shared.app.emit("config", ());
-    shared.notice("Телефон подключён", &dev.name);
+    shared.notice(pick("Телефон подключён", "Phone paired"), &dev.name);
     Ok(json!({ "token": dev.token, "id": dev.id, "pc_name": crate::system::pc_name() }))
 }
 
@@ -377,7 +379,7 @@ fn seen(shared: &Shared, dev: &PhoneDevice, blocker: Option<bool>) {
     drop(seen);
     if prev.is_some_and(|p| p != blocker) {
         let mut g = shared.lock();
-        let text = format!("Телефон «{}»: блокировка {}", dev.name, if blocker { "включена" } else { "выключена" });
+        let text = tr!("Телефон «{}»: блокировка {}", "Phone “{}”: lock {}", dev.name, if blocker { pick("включена", "on") } else { pick("выключена", "off") });
         g.day.log(now, "phone", text);
     }
 }
@@ -388,7 +390,7 @@ fn action(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
     let r = shared.mutate(|g, now| {
         if let Some(e) = &expect {
             if clockmanage_core::view::build(&g.day, &g.cfg, now).phase.kind != *e {
-                return Err("Таймер уже перешёл дальше — ничего не сделал.".into());
+                return Err(tr!("Таймер уже перешёл дальше — ничего не сделал.", "The timer has already moved on — nothing done."));
             }
         }
         match act {
@@ -400,7 +402,7 @@ fn action(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
             "lay_down" => g.day.lay_down(now),
             "segment_stopwatch" => g.day.set_segment_mode(now, true),
             "segment_timer" => g.day.set_segment_mode(now, false),
-            _ => Err("Неизвестное действие.".into()),
+            _ => Err(tr!("Неизвестное действие.", "Unknown action.")),
         }
     });
     if r.is_ok() && matches!(act, "start_next" | "end_segment" | "lay_down") {
@@ -411,13 +413,13 @@ fn action(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
 
 /// `{"index": 1, "minutes": 105}`: new length of one block (the phone's "+ / −").
 fn plan(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
-    let i = b.get("index").and_then(Value::as_u64).ok_or("Нужен index.")? as usize;
-    let minutes = b.get("minutes").and_then(Value::as_u64).ok_or("Нужны minutes.")?;
+    let i = b.get("index").and_then(Value::as_u64).ok_or(pick("Нужен index.", "index is required."))? as usize;
+    let minutes = b.get("minutes").and_then(Value::as_u64).ok_or(pick("Нужны minutes.", "minutes are required."))?;
     if !(1..=480).contains(&minutes) {
-        return Err("Длительность — от 1 до 480 минут.".into());
+        return Err(tr!("Длительность — от 1 до 480 минут.", "The duration is 1 to 480 minutes."));
     }
     let mut blocks: Vec<PlanBlock> = shared.lock().day.plan.clone();
-    let blk = blocks.get_mut(i).ok_or("Нет такого блока.")?;
+    let blk = blocks.get_mut(i).ok_or(pick("Нет такого блока.", "No such block."))?;
     blk.minutes = minutes as u32;
     crate::app::apply_plan(shared, blocks, &[], false, "phone").map(|_| ())
 }
@@ -427,7 +429,7 @@ fn apps(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
     let list: Vec<String> = b
         .get("apps")
         .and_then(Value::as_array)
-        .ok_or("Нужен массив apps.")?
+        .ok_or(pick("Нужен массив apps.", "apps must be an array."))?
         .iter()
         .filter_map(|v| v.as_str().map(str::to_string))
         .collect();
@@ -439,7 +441,7 @@ fn apps(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
         g.cfg.check_update(&next, ctx)?;
         g.cfg = next;
         shared.store.save_config(&g.cfg);
-        g.day.log(now, "phone", format!("Приложения телефона: {}", g.cfg.phone.apps.join(", ")));
+        g.day.log(now, "phone", tr!("Приложения телефона: {}", "Phone apps: {}", g.cfg.phone.apps.join(", ")));
         Ok(())
     })?;
     let _ = shared.app.emit("config", ());

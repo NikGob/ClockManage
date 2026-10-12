@@ -5,6 +5,8 @@ use serde::Serialize;
 use crate::clock::{self, MIN};
 use crate::config::DayKind;
 use crate::day::{fmt_day_min, DayState, MIN_PAUSE_MS};
+use crate::i18n::pick;
+use crate::tr;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockStats {
@@ -181,7 +183,7 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
         extensions += p.access.len().saturating_sub(1) as u32;
         pauses.push(PauseStats {
             start: iso(p.since),
-            end: "идёт".into(),
+            end: tr!("идёт", "running"),
             minutes: m(now - p.since),
             during: p.what.clone(),
             block: p.block.and_then(|b| d.plan.get(b)).map(|b| b.name.clone()),
@@ -303,15 +305,16 @@ pub fn week_stats(monday: chrono::NaiveDate, days: &[DayStats]) -> WeekStats {
 
 /// The week as tab-separated text: pastes straight into a spreadsheet or a journal.
 pub fn week_tsv(w: &WeekStats) -> String {
-    let num = |h: f64| if h == 0.0 { String::new() } else { format!("{h}").replace('.', ",") };
-    let mut out = String::from("Предмет");
+    // Decimal comma for a Russian spreadsheet, point for an English one.
+    let num = |h: f64| if h == 0.0 { String::new() } else { format!("{h}").replace('.', pick(",", ".")) };
+    let mut out = tr!("Предмет", "Subject");
     for d in &w.days {
         out.push('\t');
         out.push_str(&d[8..10]);
         out.push('.');
         out.push_str(&d[5..7]);
     }
-    out.push_str("\tИтого\n");
+    out.push_str(pick("\tИтого\n", "\tTotal\n"));
     for s in &w.subjects {
         out.push_str(&s.name);
         for h in s.hours {
@@ -322,7 +325,7 @@ pub fn week_tsv(w: &WeekStats) -> String {
         out.push_str(&num(s.total));
         out.push('\n');
     }
-    out.push_str("Итого");
+    out.push_str(pick("Итого", "Total"));
     for h in w.day_totals {
         out.push('\t');
         out.push_str(&num(h));
@@ -340,7 +343,7 @@ fn breaks(d: &DayState, now: clock::Ts, tz: i32) -> Vec<BreakStats> {
         let end = l.end.unwrap_or(now);
         let planned = if l.with_timer { d.timing.lunch_min } else { 0 };
         BreakStats {
-            kind: "Обед".into(),
+            kind: tr!("Обед", "Lunch"),
             planned_min: planned,
             actual_min: m(end - l.start),
             overrun_min: if l.with_timer { m((end - l.start - planned as i64 * MIN).max(0)) } else { 0.0 },

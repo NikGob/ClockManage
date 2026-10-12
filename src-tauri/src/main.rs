@@ -50,7 +50,13 @@ fn main() {
             let handle = tauri_app.handle().clone();
             let dir = handle.path().app_data_dir().expect("app data dir");
             let store = store::Store::new(dir.clone());
-            let mut cfg = store.load_config();
+            // A first run fills the defaults (plan names, the phrase) in the Windows language.
+            clockmanage_core::i18n::set(system::ui_lang());
+            let (mut cfg, first_run) = store.load_config_or_new();
+            if first_run {
+                cfg.tz_offset_min = system::utc_offset_min();
+            }
+            system::apply_lang(&cfg);
             if cfg.mcp_port == 0 {
                 cfg.mcp_port = mcp_server::random_port();
             }
