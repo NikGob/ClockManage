@@ -1,156 +1,182 @@
+<div align="center">
+
+<img src="docs/media/cover.png" alt="ClockManage in dark and light theme" width="820">
+
 # ClockManage
 
-Учебный режим для Windows: блокировка отвлекалок, таймер блоков с перерывами, журнал и локальный MCP для Claude.
-Tauri 2 (Rust) + WebView, интерфейс в Material 3, живёт в трее.
+**A deep-work timer for Windows that blocks distractions for real — and lets Claude run your day.**
 
-## Установка
+[![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#install)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
+[![MCP](https://img.shields.io/badge/MCP-14%20tools-6E56CF)](#claude-runs-your-day-mcp)
+[![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
+[![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
-1. Скачай инсталлятор `ClockManage_<версия>_x64-setup.exe` из артефактов GitHub Actions (вкладка **Actions → build → ClockManage-<версия>-setup**) или из Releases. Это единственный файл: он ставит программу в `Program Files`, а новая версия ставится поверх старой (настройки и журнал сохраняются). Версия видна в «Настройки → Система».
-2. Установи. Программа просит права администратора: без них не записать hosts и политики браузеров и не закрыть заблокированные приложения.
-3. При первом запуске она сама создаёт две задачи в планировщике: запуск при входе в Windows (без окна UAC) и перезапуск раз в 5 минут, если процесс убили.
+[Install](#install) · [Features](#features) · [MCP](#claude-runs-your-day-mcp) · [Android](#android-companion) · [Development](#development)
 
-## Как устроен день
+</div>
 
-1. **Типы дней**: у каждого дня недели свой тип — **Полный**, **Лёгкий** или **Выходной** («Настройки → Неделя»). У типа свой план-шаблон и переключатель «блокировка в этот день». По умолчанию Пн–Пт полные, Сб–Вс выходные без блокировки.
-2. **План** — список блоков: «Математика 1,5 ч · Словацкий 1,5 ч · Экстернат 2,5 ч». День начинается с шаблона своего типа (или с плана, который агент заранее задал на эту дату). Сегодняшний план и шаблоны правятся на экране «План» (вкладки «Сегодня / Полный / Лёгкий / Выходной») или через MCP.
-3. Тип сегодняшнего дня меняется чипом рядом с «План дня». До старта — любой (план заменяется шаблоном). Во время учёбы — только на более плотный: блоки нового типа добавляются к плану, начатое не пропадает.
-4. **Начать день** — в любое время. Включает блокировку (если она включена у типа дня) и первую часть.
-5. Блок делится на части по 45 мин с перерывом 10 мин. Между блоками перерыв 20 мин. Перерывы не съедают учебное время.
-6. **Конец работы** → звук, уведомление, карточка «Перерыв» сверху экрана (не забирает фокус и клики).
-7. **Конец перерыва** → будильник поверх экрана. Таймер **ждёт**, пока нажмёшь «Начать часть N». Блокировка при этом не снимается, звонок повторяется каждую минуту.
-8. **«Начать сейчас» на перерыве** срабатывает в один клик, но 10 секунд внизу висит «Отменить»: перерыв вернётся, как будто его не прерывали (эти секунды — перерыв, не работа; пауза и «блок ещё не начат» тоже восстанавливаются). Защита от мисклика.
-9. **Пауза** честно останавливает счёт — и работы, и перерыва. После паузы таймер сам не продолжает. Паузы короче 10 секунд (мисклик, «нажал проверить») время останавливают, но в журнал, `pauses` и `pauses_count` не попадают.
-10. **Отрезки — неучебное время по таймеру** (обед, сон, прогулка, свои). Кнопка «Отрезок» в перерыве или перед следующей частью: выбираешь один или несколько подряд (обед → сон) — идут очередью. Обратный отсчёт; за 5 минут и в момент конца — уведомление, дальше каждые 5 минут «превышено на N мин», пока не нажмёшь «Закончил». **Без времени** — переключатель в том же окне: секундомер вверх, без напоминаний о конце (только тихое уведомление, если отрезок идёт на полчаса дольше обычного); факт и превышение над обычной длиной пишутся в статистику, прогноз конца дня сдвигается на ходу. У идущего отрезка режим переключается кнопкой «Без времени» / «По таймеру» — так и запланированный обед, который стартовал сам, можно пустить без отсчёта. **Сон** начинается с **подготовки** (кофе, дойти до кровати; длина — в типе отрезка, по умолчанию 10 мин): отсчёт сна не идёт, пока не нажмёшь «Лёг»; когда подготовка вышла — только напоминание «Пора ложиться», сон сам не стартует. Будильник считается от «Лёг»: громкий звонок без перерыва (даже если звук в настройках выключен и карточки выключены), пока не нажмёшь «Встал»; предупреждения за 5 минут нет. «Не буду спать» на подготовке закрывает отрезок без сна. В статистике подготовка и сон раздельно (`prep_min` и `actual_min`). Если подключён телефон — он звонит тоже, каналом будильника. Блокировка во время отрезка — как на перерыве (у типа можно включить «Доступ» — бывшее «ем за ПК», только вне учёбы). Если блок закрыт 10 минут назад и ничего не началось — «Что сейчас: обед, сон, перерыв?» с кнопками. Отрезки можно заложить в план (`type: "break"`, экран «План» → «Добавить отрезок»): когда закрывается блок перед ним, вместо перерыва между блоками сам стартует этот отрезок. Отрезок, взятый вручную раньше своего места, **гасит** ближайший такой же в плане: тот считается взятым и второй раз не запустится (второй обед будет, только если он есть в плане; убрал взятый вручную из очереди — запланированный возвращается). В учебные часы и в «часы для журнала» отрезки не входят, а прогноз «влезает ли план» их честно учитывает. Типы и длительности — «Настройки → Отрезки».
-11. Блокировка снимается, когда отсижены все блоки, или в конце дня (22:00 МСК) — что раньше. Таймер после этого продолжает работать, просто без блокировки.
-12. **Конец дня на сегодня**: время «до 22:00» на карточке таймера — это кнопка. Быстро: +30 мин, +1 ч, +2 ч. «Другое время…» — любое время позже текущего и не позже 02:00 ночи, в том числе раньше (закончить день пораньше), с причиной для лога. Через MCP — `set_day_end`. Меняется только сегодня, настройка по умолчанию остаётся; каждый сдвиг пишется в лог. После конца дня так же можно вернуть блокировку. Если конец уходит за полночь, день длится до него.
-13. Конец блока → на карточке поле **«Что было скучно / куда отвлекался?»** (Enter — сохранить, «Пропустить» — одним кликом, Esc — спрятать до потом). Если карточки выключены или спрятаны, то же поле ждёт на экране «Сегодня». Строку можно надиктовать и агенту (`set_block_note`). Сохраняется в блок: журнал, CSV и `get_today_stats` → `blocks[].note`.
-14. **Закрыть блок сейчас** — тихая кнопка «Закрыть блок…» под таймером: начатый блок закрывается на фактически отработанных минутах (план блока = факт в целых минутах **вниз** — то же число, что «отработано» везде; нужна хотя бы минута), дальше перерыв между блоками или конец дня, всё в лог. Специально медленно: диалог с цифрами («58 из 90 мин, 32 мин уйдут из плана») и удержание кнопки 3 секунды — на автомате не закроешь. Позже удлинить такой блок в плане — он откроется снова.
+---
 
-Есть режим **«Один таймер»**: без плана, работа + перерыв по кругу, блокировка по желанию.
+Plan your day as study blocks, press **Start day**, and ClockManage does the rest: it runs each block in focused parts with breaks, rings when a break is over, and keeps Telegram, Discord, Shorts and whatever else you listed **closed until the work is done**. No browser extension to switch off, no "just five minutes": blocked sites are cut off in `hosts` and browser policies, and blocked apps simply can't start.
 
-### Что можно менять во время учёбы
-Правило: во время учёбы — только то, что делает день строже или длиннее. Исключения — план и конец дня на сегодня: если не успеваешь или нужно закончить раньше, их можно поправить, но каждый шаг пишется в лог.
+And because it speaks [MCP](https://modelcontextprotocol.io), Claude can see where you are, rearrange the rest of the day, add a site to the block list or lock everything for two hours — when you ask it to.
 
-| Что | Во время учёбы |
+<div align="center">
+  <img src="docs/media/timer.gif" alt="The timer: a wavy progress ring, pause and resume" width="860">
+  <br><sub>The ring breathes while you work. Pause stops the clock honestly — and shows how long you've been away.</sub>
+</div>
+
+## Features
+
+### A day, not a stopwatch
+
+Every weekday gets a type — **Full**, **Light** or **Day off** — each with its own plan template and lock setting. Today starts from its template; edit it on the **Plan** screen or let Claude do it. A block of 90 minutes runs as 45 + 45 with a 10-minute break, blocks are 20 minutes apart, and breaks never eat into study time. The day end (22:00 by default) is the hard stop: the lock lifts then even if the plan isn't done, and you can move it for today only — every shift goes to the log.
+
+<div align="center">
+  <img src="docs/media/plan.png" alt="Plan screen" width="49%">
+  <img src="docs/media/today-light.png" alt="A break, light theme" width="49%">
+</div>
+
+### Breaks that wait for you
+
+When a break ends the timer **doesn't** quietly carry on: a hand-drawn alarm pops up over everything and keeps ringing every minute until you press **Start part 2**. The lock stays on while it waits. When a block closes you get a little trophy and one line to answer — *what was boring, what distracted you?* — that lands in your log.
+
+<div align="center">
+  <img src="docs/media/alarm.gif" alt="Break over alarm" width="45%">
+  <img src="docs/media/block.gif" alt="Block closed, with a note field" width="45%">
+</div>
+
+### Blocking that bites
+
+| What | How |
 |---|---|
-| Блок-лист | только добавлять |
-| План | добавлять, удлинять и переставлять что угодно; не начатые блоки и любые отрезки — урезать и удалять; начатый блок — урезать не меньше отработанных целых минут (10 мин 40 с → до 10), удалить — только если в нём меньше минуты (случайный старт) |
-| Тип дня | только на более плотный |
-| Конец дня на сегодня | любое время позже текущего, до 02:00 ночи (в лог); в настройках по умолчанию — только позже |
-| Перерывы и отрезки | только короче, и подготовка тоже (перерывы сразу действуют и на сегодня); «Доступ» у отрезка — только вне учёбы |
-| Длина отрезка, часовой пояс, аварийный доступ, доступ на паузе | нельзя |
-| Неделя и шаблоны | можно — они для следующих дней, сегодняшний день уже зафиксирован |
+| Domains — `x.com`, `twitch.tv`, `web.telegram.org` | a section in `hosts` + `URLBlocklist` policies of Chrome, Edge, Brave, Yandex and Firefox |
+| Paths — `youtube.com/shorts` | browser policies only, so the rest of YouTube keeps working |
+| Apps — `Telegram.exe`, `Discord.exe` | can't start (a tiny guard runs instead and says *Nope*); already running ones are closed within a second |
 
-## Блокировка
+During a study day the block list **can only grow**, the app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler brings it back within 5 minutes. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
 
-| Что | Как |
-|---|---|
-| Домены (`x.com`, `twitch.tv`, `web.telegram.org`…) | секция в `hosts` + политики `URLBlocklist` браузеров |
-| Пути (`youtube.com/shorts`) | только политики браузеров — обычный YouTube остаётся доступен |
-| Приложения (`Telegram.exe`, `Discord.exe`…) | не дать запуститься: через Image File Execution Options вместо приложения стартует маленький `cm-guard.exe` (без прав админа), показывает «Не-не-не» и тихо выходит — никаких ошибок Windows. Уже запущенные к началу блокировки — закрываются watchdog'ом |
+<div align="center">
+  <img src="docs/media/blocking.png" alt="Blocking screen" width="62%">
+  <img src="docs/media/nope.gif" alt="Nope: a wagging finger" width="30%">
+</div>
 
-Поддержаны Chrome, Edge, Brave, Яндекс (политики применяются сразу) и Firefox: он читает политики только при старте, поэтому при включении блокировки программа сама перезапускает его, и вкладки восстанавливаются.
-Всё, что программа пишет в систему, записано в `blocker.json`, и при снятии блокировки удаляется только своё.
-Если процесс убить, hosts и политики остаются в силе, а планировщик поднимает программу обратно.
+### Lunch, naps and walks
 
-Если во время учёбы открыть заблокированное — поверх экрана выскакивает «Не-не-не» с грозящим пальцем (для приложений — всегда; для сайтов — когда активная вкладка браузера показывает страницу блокировки: браузеры не сообщают о блокировке другим программам, поэтому это эвристика по заголовку окна). Попытки пишутся в лог.
+**Segments** are non-study time with a countdown — or untimed, as a stopwatch. Put them in the plan ("lunch after Math") and they start by themselves when the block before them closes. A **nap** waits while you get ready, counts from the moment you press **In bed**, and ends with an alarm that won't stop until you press **I'm up** — even with the sound off. Segments never count as study, but the forecast "does the rest of the plan still fit?" takes them into account.
 
-Во время учебного дня список можно только **расширять** (полные правила — в таблице выше).
-Выход из трея тоже недоступен, пока идёт учёба.
+<div align="center">
+  <img src="docs/media/nap.png" alt="Getting ready for a nap" width="56%">
+  <img src="docs/media/wake.gif" alt="Nap alarm" width="36%">
+</div>
 
-### Доступ на паузе
-Настройка «пускать в заблокированное на паузе» меняется только вне учёбы: до «Начать день» или после 22:00. Если она включена, пауза даёт 10 минут доступа, потом блок возвращается, даже если пауза продолжается. Продлить можно через мини-капчу: три примера в уме, 15 секунд ожидания и удержание кнопки 3 секунды. Каждое продление пишется в лог.
+### A journal that writes itself
 
-### Аварийный доступ
-Длинную фразу нужно переписать руками (вставка отключена). После этого доступ открывается на 10 минут, потом блокировка возвращается. Каждый случай пишется в лог.
+Every day is logged: actual time per block, pauses, segments, emergency accesses, your end-of-block lines. The **Week** view adds it up into journal hours per subject (each block rounded down to 0.25 h) — one click copies it as a table for a spreadsheet. JSON and CSV export are one click too.
 
-### Фокус-блокировка
-«Заблокируй всё на 2 часа» — через MCP (`start_focus_lock`), в любой день: учебный день не начат, уже закончен или сегодня выходной. Блокируется весь блок-лист, на подключённом телефоне тоже. Снять раньше нельзя — только аварийным доступом; доступ на паузе, обед за ПК и «Доступ» у отрезков её не открывают. Срок можно только продлить. Пока она идёт, список можно только расширять и выйти из трея нельзя; если она идёт за полночь, переходит на следующий день и переживает перезапуск. Запуск и продления — в логе дня и в `get_today_stats` → `focus_locks`.
+<div align="center">
+  <img src="docs/media/log.png" alt="Log of a day" width="49%">
+  <img src="docs/media/week.png" alt="Journal hours of a week" width="49%">
+</div>
 
-### Известные ограничения
-- Shorts, открытый кликом внутри YouTube, может показаться без перезагрузки страницы: сайт меняет URL без навигации. Политика сработает на следующем переходе или обновлении. Закрыть это на 100% можно только расширением браузера.
-- Пользователь с правами администратора технически может всё откатить руками. Цель программы — создать трение, а не сделать это невозможным.
+### Looks good doing it
 
-## Телефон (Android)
+Material 3 with your own colour: pick a swatch and the whole scheme is rebuilt from it, spreading across the window from where you clicked. Light, dark or follow Windows. Hand-drawn illustrations "boil" like a cartoon while they move. Springy navigation, a cascade of content on every screen.
 
-Приложение `ClockManage-android-<версия>.apk` — в артефактах GitHub Actions (job **android**). Нативное (Kotlin, голый Android SDK, без библиотек), APK меньше мегабайта.
+<div align="center">
+  <img src="docs/media/theme.gif" alt="Changing the colour and the theme" width="49%">
+  <img src="docs/media/tour.gif" alt="Moving between screens" width="49%">
+</div>
 
-**Подключение.** На ПК: «Настройки → Телефон» → включить синхронизацию → «Подключить телефон» (PIN на 2 минуты). На телефоне: «Найти ПК» (UDP-широковещание в той же Wi-Fi) или адрес вручную → PIN. Дальше телефон ходит к ПК с длинным токеном; отключить телефон можно в тех же настройках. Программа сама добавляет правило брандмауэра Windows для своего exe.
+### A mini timer that stays on top
 
-**Что умеет.**
-- Таймер, фаза, план с фактом по блокам; пауза / продолжить / «Начать часть» / «Начать день»; «−/+» 15 минут на блок (по тем же правилам, что на ПК: начатый блок во время учёбы — не меньше отработанных целых минут); «Лёг» для сна, секундомер для отрезка без времени.
-- **Без связи продолжает считать.** ПК отдаёт не только текущее состояние, но и прогноз: «работа до 14:45 → перерыв до 14:55 → ждём тебя» (движок детерминированный, ПК просто прогоняет день вперёд). Телефон идёт по этому прогнозу своими часами (поправка на разницу часов меряется при каждой синхронизации).
-- Уведомление с обратным отсчётом в шторке (системный хронометр) и кнопкой «Пауза/Продолжить/Начать»; громкое «Перерыв окончен» (канал будильника).
-- **Блокировка на телефоне** через спецвозможности: приложения из списка (хранится на ПК, во время учёбы — только расширять; выбирается из установленных прямо на телефоне) и сайты из блок-листа ПК — по адресной строке Chrome/Firefox/Samsung/Edge/Brave/Opera/Яндекс/DuckDuckGo. `youtube.com/shorts` закрывает и Shorts в приложении YouTube. Звонилку, настройки и лаунчер заблокировать нельзя. Включена ли блокировка на телефоне — видно в настройках ПК и пишется в лог.
+A small always-on-top pill with the countdown and one button that does the right thing — pause, resume, start the next part, *In bed*. Drag it anywhere; there's a high-contrast variant for busy wallpapers.
 
-**Виджет на домашний экран** (3×2, тянется): фаза, обратный отсчёт, блок и часть, «Пора» после перерыва, превышение отрезка. Отсчёт рисует системный хронометр, а сам виджет перерисовывается только при смене фазы — батарею не ест.
+<div align="center">
+  <img src="docs/media/mini-dark.png" alt="Mini timer, dark" width="380">
+  <img src="docs/media/mini-light.png" alt="Mini timer, light" width="380">
+</div>
 
-**Обновление по Wi-Fi.** APK из той же сборки CI лежит внутри Windows-инсталлятора. Обновил программу на ПК — телефон при следующем открытии (проверка не чаще раза в час, тап по «Версия …» внизу — проверить сразу) покажет «Доступна версия … — Обновить», скачает APK с ПК и передаст системному установщику. Один раз нужно разрешить ClockManage «установку неизвестных приложений». Подключение и настройки сохраняются: все сборки подписаны одним ключом, номер версии = номер прогона CI.
+### Focus lock
 
-**Энергопотребление.** Фонового опроса нет совсем:
-- пока открыт экран таймера — один «долгий» запрос (`/api/state?wait=25`): ПК отвечает, только когда день реально изменился;
-- в фоне — одна синхронизация при включении экрана, на переходе фазы (точный будильник AlarmManager, один на следующий переход) и после действия из уведомления;
-- служба блокировки просыпается только на смене окна; события прокрутки склеиваются (400 мс) и проверяются не чаще ~1,5 раза в секунду и только в браузерах;
-- отсчёт в шторке рисует система, приложение для этого не просыпается.
+"Block everything for 2 hours" — any day, even on a day off or after the study day ended. It can only be extended, never lifted early (except by your own emergency access), and survives a restart.
 
-**Ограничения.** Chrome на Android в адресной строке часто показывает только домен — правила с путём (кроме Shorts в приложении YouTube) там срабатывают не всегда; домены — всегда. Связь — HTTP внутри локальной сети (токен виден тому, кто слушает эту Wi-Fi). Отключить спецвозможность может любой, у кого телефон в руках, — это трение, а не замок.
+## Claude runs your day (MCP)
 
-## Журнал
-
-Каждый день хранится в `%APPDATA%\com.nikgob.clockmanage\days\YYYY-MM-DD.json`: фактическое время по блокам, паузы (сколько и сколько длились, был ли доступ), продления, аварийные доступы, отрезки (обед, сон…), строки конца блоков, закрытые приложения.
-Экспорт в JSON/CSV — кнопками на экране «Журнал» (файлы попадают в `Документы\ClockManage`).
-
-## MCP для Claude
-
-Порт выбирается случайно из диапазона 20000–49151 и сохраняется в конфиге. Выше 49151 — динамический диапазон Windows: Hyper-V, WSL и Docker при каждой загрузке резервируют в нём блоки портов, и сохранённый порт мог оказаться занят после перезагрузки. Сервер слушает только `127.0.0.1` и отклоняет запросы с чужими `Origin`/`Host`.
-Точный адрес и готовая команда — в «Настройки → MCP для Claude»:
+ClockManage runs a local MCP server (`127.0.0.1` only). The exact address and a ready-to-paste command are in **Settings → MCP for Claude**:
 
 ```sh
-claude mcp add --transport http clockmanage http://127.0.0.1:<порт>/mcp
+claude mcp add --transport http clockmanage http://127.0.0.1:<port>/mcp
 ```
 
-Инструменты:
+Then just talk:
 
-| Инструмент | Что делает |
+> - *"I'm behind on the thesis — move lunch after it and cut Spanish to one hour."*
+> - *"How many hours did I study this week? Give me the table for the journal."*
+> - *"Block Reddit and Steam and lock everything until 18:00."*
+> - *"Close the current block, I'm done with math for today."*
+
+| Tool | What it does |
 |---|---|
-| `set_plan` | задать план дня по порядку: `{"blocks":[{"name":"Математика","hours":1.5},{"name":"Обед","minutes":45,"type":"break"},{"name":"Экстернат","minutes":150}], "save_as_template": false}`. `type: "break"` — неучебный отрезок на своём месте (стартует сам после блока перед ним, в учебные часы не входит). Пункты сопоставляются по имени (регистр не важен) и типу, порядок любой — переставлять можно всё. Не начатые блоки и любые отрезки можно урезать/удалять; начатый блок — не меньше отработанных целых минут (ровно `done_min` из `get_session_state`), удалить — только если в нём меньше минуты. `{"name":"Математика","close":true}` — закрыть начатый блок как есть (план = отработанное, остаток снимается, день идёт дальше). Всё или ничего: при ошибке план не меняется. В ответе `changes` (`added`/`removed`/`shortened`/`lengthened`/`moved`/`closed`) и `plan_forecast` (с отрезками и подготовкой ко сну); `save_as_template` сохраняет план в шаблон сегодняшнего типа дня. С `"date":"2026-10-05"` — план на будущий день (до 60 дней вперёд): тот день начнётся с него вместо шаблона, сегодняшний план не меняется, `save_as_template` тогда пишет в шаблон профиля того дня; `{"date":…, "use_template":true}` убирает такой план |
-| `set_template` | шаблон любого профиля в любой день: `{"profile":"full","blocks":[{"name":"Экстернат","minutes":180},{"name":"Обед","minutes":45,"type":"break"},{"name":"Словацкий","minutes":90}]}` (`full` / `light` / `off`, формат `blocks` как в `set_plan`, `[]` — пустой шаблон). Начатый сегодняшний день не меняется; не начатый и с нетронутым шаблоном того же профиля — берёт новый (`today_plan_updated`) |
-| `set_week_schedule` | профили дней недели: `{"days":{"mon":"full","sat":"light"}}` — меняются только перечисленные дни. Не начатый сегодняшний день переключается вслед за своим днём недели |
-| `set_day_end` | разово сдвинуть конец сегодняшнего дня: `{"time":"23:00","reason":"..."}` (МСК, позже текущего момента, не позже 02:00). В ответе старое/новое время и влезает ли остаток плана (`plan.fits`, `plan.margin_min`) |
-| `get_plan` | план на сегодня (с отрезками `type: "break"`), тип дня и шаблон этого типа, `day_end` (сегодня), `day_end_default` (из настроек), `segment_types`; `templates` — шаблоны всех профилей, `week` — профиль каждого дня недели, `upcoming` — следующие 7 дней (профиль, план и откуда он: `date` или `template`). С `{"date":"2026-10-05"}` — ещё `day` с планом этого дня |
-| `get_session_state` | какой блок и часть, работа/перерыв/**отрезок**/пауза/ожидание, сколько осталось, действует ли блокировка, `day_end` / `day_end_default`, `blocks[].done_min` (целые минуты вниз — тот же предел урезания), `segment` (тип, план, превышение, будильник, `prep` — подготовка до «Лёг», `stopwatch` — без времени, очередь), у отрезков плана `taken`, прогноз плана с отрезками (`plan_forecast.segments_left_min`) |
-| `set_block_note` | строка в конце блока: `{"note":"скучно на интегралах, лез в телефон","name":"Математика"}` (без `name` — последний закрытый блок) |
-| `finish_block` | закрыть начатый блок на отработанном: `{"name":"Математика"}` (по умолчанию текущий). **Два шага**: первый вызов ничего не меняет и возвращает предпросмотр, вопрос для пользователя (`ask_user`) и одноразовый `confirm_token` на 2 минуты; агент обязан спросить и только после явного «да» вызвать ещё раз с `confirm_token`. План блока = отработанное в целых минутах вниз. Приложение показывает «Агент закрыл блок» |
-| `get_today_stats` | статистика дня (или `{"date":"2026-09-28"}`): план/факт по блокам, `blocks[].journal_hours` — факт, округлённый **вниз** до 0,25 ч (165 мин → 2.75, 84.6 → 1.25, 60 → 1.0), и `journal_total` — их сумма, `blocks[].note` — строка конца блока, `breaks` — отрезки `[{type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}]` (вместо старого `lunch`; у сна `actual_min` — от «Лёг», подготовка отдельно в `prep_min`), паузы (короче 10 с не пишутся), доступы, аварийные доступы, сдвиги конца дня (`day_end_changes`), фокус-блокировки (`focus_locks`) |
-| `get_blocklist` | блок-лист: `sites`, `apps`, `phone_apps` (только чтение); `blocking` — действует ли блокировка сейчас (`active`, `day_lock`, `reason`, `focus_until`), `can_remove` — можно ли сейчас убирать, `admin` — есть ли права администратора |
-| `add_to_blocklist` | добавить: `{"sites":["reddit.com","youtube.com/shorts"],"apps":["Steam"]}` — можно всегда; во время блокировки закрывается сразу, не через 30 секунд. Записи чистятся как в настройках (`https://www.` и `/` в конце убираются, к приложению дописывается `.exe`, системные процессы не блокируются). В ответе `added`, `unchanged` (уже было), `invalid` |
-| `remove_from_blocklist` | убрать: тот же формат. Только вне блокировки (до «Начать день», после конца дня, без фокус-блокировки) — во время неё отказ, список можно только расширять |
-| `start_focus_lock` | фокус-блокировка: `{"minutes":120,"reason":"ютуб"}` (или `hours`; до 720 мин за раз) — весь блок-лист закрыт прямо сейчас, в любой день. Снять раньше — только аварийный доступ; повторный вызов только продлевает (`minutes` от текущего момента, новый конец позже текущего). В ответе `until`, `extended`, `blocking` |
+| `get_session_state` | what's running now: block, part, break or segment, time left, whether the lock is on |
+| `get_today_stats` | actual time per block, journal hours, pauses, segments, notes — today or any `date` |
+| `get_week_stats` | journal hours for a week by subject and day, with a ready TSV |
+| `get_plan` | today's plan, all templates, the weekday schedule and the next 7 days |
+| `set_plan` | replace today's plan or set one for a future date; reorder anything, close a started block "as is" |
+| `set_template` · `set_week_schedule` | edit the Full / Light / Day off templates and which weekday gets which |
+| `set_day_end` | move today's day end once, with a reason for the log |
+| `set_block_note` | save your line about a block |
+| `finish_block` | close the current block at the time worked — two steps, needs your explicit "yes" |
+| `get_blocklist` · `add_to_blocklist` · `remove_from_blocklist` | read and edit the block list (removing only outside the lock) |
+| `start_focus_lock` | block the whole list right now for N minutes; can only be extended |
 
-Когда план, шаблон, неделю, конец дня или блок-лист меняет агент или включает фокус-блокировку, приложение показывает тост и уведомление «Агент изменил …» / «Агент добавил в блок-лист» / «Агент включил фокус-блокировку», чтобы было видно, что это не ты.
+The rules hold for the agent too: it can't erase worked time, can't shrink the block list during the lock, and can't close a block without asking you. Every change it makes shows up in the app as *"The agent changed …"*, so you always know it wasn't you.
 
-## Настройки
+## Android companion
 
-Всё редактируется в приложении, а также в `%APPDATA%\com.nikgob.clockmanage\config.json`:
-неделя (тип каждого дня) и шаблоны типов, конец дня, длительности отрезков и перерывов, блок-лист, доступ на паузе, фраза аварийного доступа, звук, будильник на экране, цвет (по умолчанию зелёный, схема строится по Material 3 из любого цвета), тема, контрастный мини-таймер, MCP, автозапуск.
-Старый `config.json` (с `study_days` и `plan_template`) переносится автоматически: учебные дни становятся полными, шаблон — планом полного дня.
+A native app under a megabyte. Pair it on the same Wi-Fi: **Settings → Phone → Pair a phone** on the PC, **Find PC** and the PIN on the phone. It shows the timer and the plan, pauses and starts parts, keeps counting when offline, rings at the end of a break, has a home-screen widget — and blocks the chosen apps and the PC's sites on the phone through Accessibility. When you update the desktop app, the phone offers the update itself over Wi-Fi.
 
-Подсказка к любой настройке — при наведении на неё (или на значок ⓘ).
+## Install
 
-## Разработка
+1. Download `ClockManage_<version>_x64-setup.exe` from [Releases](https://github.com/NikGob/ClockManage/releases) or from the latest run in [Actions → build](https://github.com/NikGob/ClockManage/actions/workflows/build.yml) (artifact `ClockManage-<version>-setup`; the Android APK is next to it).
+2. Run it. A new version installs over the old one — settings and the log are kept.
+3. ClockManage asks for **administrator rights**: without them it can't write `hosts` and browser policies or close blocked apps. On first start it registers itself in Task Scheduler, so it starts at sign-in without a UAC prompt.
+
+Uninstalling from *Apps & features* rolls back everything ClockManage wrote to the system.
+
+### Quick start
+
+1. **Plan** — add today's blocks (or edit the Full / Light templates).
+2. **Blocking** — check the sites and apps.
+3. **Today** — press **Start day**.
+
+## Good to know
+
+- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
+- Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
+- Shorts opened by a click inside YouTube may show until the next navigation or refresh.
+- An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
+- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The phone talks to the PC over your local network only.
+
+## Development
 
 ```sh
-cargo test -p clockmanage-core              # логика таймера/блокировки/лога/MCP, работает на любой ОС
-npx @tauri-apps/cli@2 dev                    # запуск на Windows (нужна консоль администратора)
-npx @tauri-apps/cli@2 build                  # NSIS-инсталлятор
+cargo test -p clockmanage-core -p cm-guard   # timer, lock rules, stats, MCP — runs on any OS
+npx @tauri-apps/cli@2 dev                    # run on Windows (from an administrator console)
+npx @tauri-apps/cli@2 build                  # NSIS installer
 ```
 
-Превью интерфейса в обычном браузере с мок-бэкендом: `cd ui && python -m http.server`, затем
-`index.html?state=work|paused|break|await|idle|done|segment` (у `segment`: `&prep=1` — подготовка ко сну, `&sw=1` — без времени, `&over=1`), `overlay.html?demo=await|break|block|day|access|wake|segment|prep`, `mini.html?state=work`.
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; add `&lang=en` or `&lang=ru`.
 
-Структура:
+| Folder | What's inside |
+|---|---|
+| `core/` | platform-independent logic: config, the day engine, stats, the MCP handler, translations — covered by tests |
+| `src-tauri/` | the Windows app: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
+| `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler |
+| `android/` | the phone app, Kotlin with no dependencies: `cd android && gradle assembleRelease` |
 
-- `core/` — платформонезависимая логика: конфиг, движок дня (фазы, паузы, доступы), статистика и CSV, обработчик MCP. Покрыта тестами.
-- `src-tauri/` — приложение: тикер, блокировщик Windows (hosts, реестр, процессы), синтез звуков, HTTP-сервер MCP, трей и окна.
-- `android/` — приложение для телефона (Kotlin, без зависимостей). Сборка: `cd android && gradle assembleRelease` (нужны Android SDK и Gradle 8.14).
-- `ui/` — главное окно, мини-таймер и оверлей-будильник; чистый JS без сборщика; цветовая схема через `@material/material-color-utilities`. Анимации — на пружинах M3 Expressive (токены из Material Components: spatial 0.8/380 и 0.8/200, fast spatial 0.6/800, effects 1.0), отрисованных как CSS `linear()`.
+The pictures and GIFs above are recorded from the UI on the mock backend by `scripts/media` (headless Chrome + ffmpeg) — rerun it after UI changes.
+
+Texts live next to the code as Russian/English pairs — `tr!("…", "…")` and `pick(…)` in Rust, `L('…', '…')` in JS and Kotlin — so a new string can't miss its translation.
