@@ -1346,6 +1346,10 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
         let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
         let old = std::mem::replace(&mut g.cfg, cfg.clone());
+        // A site added during the lock is blocked at once, not on the next 30 s check.
+        if old.blocklist != g.cfg.blocklist {
+            g.resync = true;
+        }
         if g.day.started_at.is_none() {
             let wd = g.day.weekday();
             let kind = g.day.kind;

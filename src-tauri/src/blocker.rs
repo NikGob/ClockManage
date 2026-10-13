@@ -328,10 +328,13 @@ mod platform {
         let _ = std::process::Command::new("ipconfig").arg("/flushdns").creation_flags(CREATE_NO_WINDOW).status();
     }
 
-    /// Chromium rereads policies on a Group Policy refresh or every ~15 min; signal the refresh
-    /// so a rule added mid-lock applies now (behind a VPN extension hosts does nothing).
-    fn refresh_policies() {
-        unsafe { windows_sys::Win32::System::GroupPolicy::RefreshPolicyEx(1, 0) };
+    /// Chromium rereads policies when Group Policy signals a refresh, otherwise only every ~15 min,
+    /// so without the signal the lock reaches the browser up to 15 min late (behind a VPN extension
+    /// or on a kept-alive connection hosts does nothing). A plain refresh finds no changed GPO and
+    /// signals nothing: only `RP_FORCE` wakes the browsers.
+    pub fn refresh_policies() {
+        use windows_sys::Win32::System::GroupPolicy::{RefreshPolicyEx, RP_FORCE};
+        unsafe { RefreshPolicyEx(1, RP_FORCE) };
     }
 
     fn read_list(key: &RegKey) -> Vec<String> {
@@ -392,11 +395,12 @@ mod platform {
     pub fn apply(a: &mut Applied, sites: &[String]) -> Result<(), String> {
         // Start from a clean state so removed entries disappear.
         let (ff_rules, ff_at) = (std::mem::take(&mut a.ff_rules), a.ff_rules_at);
-        let _ = clear(a);
+        let _ = take_out(a);
         a.ff_rules = ff_rules;
         a.ff_rules_at = ff_at;
         let content = std::fs::read_to_string(hosts_path()).unwrap_or_default();
-        write_hosts(&with_section(&content, sites))?;
+        // Policies go in even if hosts is locked: behind a proxy they are the only block.
+        let hosts = write_hosts(&with_section(&content, sites));
         let mut errors = vec![];
         let chromium = chromium_rules(sites);
         for key in CHROMIUM_KEYS {
@@ -420,40 +424,52 @@ mod platform {
         a.sites = sites.to_vec();
         flush_dns();
         refresh_policies();
-        if errors.is_empty() {
+        let mut problems: Vec<String> = hosts.err().into_iter().collect();
+        if !errors.is_empty() {
+            problems.push(tr!("blocker_browser_policies", v = errors.join("; ")));
+        }
+        if problems.is_empty() {
             Ok(())
         } else {
-            Err(tr!("blocker_browser_policies", v = errors.join("; ")))
+            Err(problems.join("; "))
         }
     }
 
     pub fn verify(a: &mut Applied) -> Result<(), String> {
         let content = std::fs::read_to_string(hosts_path()).unwrap_or_default();
         let expected = hosts_section(&a.sites);
-        let mut repaired = false;
+        let mut hosts = Ok(());
         if !content.replace("\r\n", "\n").contains(&expected.replace("\r\n", "\n")) {
-            write_hosts(&with_section(&content, &a.sites))?;
-            repaired = true;
+            hosts = write_hosts(&with_section(&content, &a.sites));
+            if hosts.is_ok() {
+                flush_dns();
+            }
         }
+        // Put back rules someone removed, without a forced refresh: if a GPO owns the key, forcing
+        // would wipe them again every 30 s. Browsers pick the repair up on their own ~15 min reload.
         let mut ff_repaired = false;
         for (key, ours) in &a.policies {
             if !policy_present(key, ours) {
                 let _ = add_policy(key, ours);
-                repaired = true;
                 ff_repaired |= key == FIREFOX_KEY;
             }
         }
         if ff_repaired {
             a.ff_rules_at = now_ms();
         }
-        if repaired {
-            flush_dns();
-            refresh_policies();
-        }
-        Ok(())
+        hosts
     }
 
     pub fn clear(a: &mut Applied) -> Result<(), String> {
+        take_out(a)?;
+        flush_dns();
+        refresh_policies();
+        Ok(())
+    }
+
+    /// Remove our hosts section and policy rules without telling DNS and browsers yet: `apply`
+    /// does that once, after the new rules are in (a forced refresh reapplies all of Group Policy).
+    fn take_out(a: &mut Applied) -> Result<(), String> {
         let content = std::fs::read_to_string(hosts_path()).unwrap_or_default();
         let stripped = strip_section(&content);
         if stripped != content {
@@ -465,8 +481,6 @@ mod platform {
         a.active = false;
         a.sites.clear();
         a.ff_rules.clear();
-        flush_dns();
-        refresh_policies();
         Ok(())
     }
 
@@ -769,5 +783,24 @@ mod tests {
     fn firefox_patterns() {
         let r = firefox_rules(&["youtube.com/shorts".into()]);
         assert!(r.contains(&"*://*.youtube.com/shorts*".to_string()));
+    }
+
+    /// Chromium browsers reread URLBlocklist only on this signal (or every ~15 min).
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "runs a real Group Policy refresh: cargo test -p clockmanage -- --ignored"]
+    fn policy_refresh_wakes_browsers() {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::GroupPolicy::{RegisterGPNotification, UnregisterGPNotification};
+        use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+        unsafe {
+            let event = CreateEventW(std::ptr::null(), 0, 0, std::ptr::null());
+            assert!(RegisterGPNotification(event, 1) != 0);
+            platform::refresh_policies();
+            let signaled = WaitForSingleObject(event, 30_000) == WAIT_OBJECT_0;
+            UnregisterGPNotification(event);
+            CloseHandle(event);
+            assert!(signaled, "no Group Policy signal: browsers keep the old block list for up to 15 min");
+        }
     }
 }
