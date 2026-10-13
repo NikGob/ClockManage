@@ -4,7 +4,7 @@ import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm, tsHm } from '../ui.js';
 import { tr } from '../i18n.js';
-import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog } from './dialogs.js';
+import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog, nightStartDialog } from './dialogs.js';
 
 export function endLabel(v) {
   return v.day_end + (v.day_end_next_day ? NIGHT() : '');
@@ -491,7 +491,7 @@ export function mountToday(root, ctx) {
       return;
     }
     switch (act) {
-      case 'start_day': await run(() => call('start_day'), b); break;
+      case 'start_day': if (v.can.night_start) await nightStartDialog(); else await run(() => call('start_day'), b); break;
       case 'pause': await run(() => call('pause'), b); break;
       case 'resume': await run(() => call('resume'), b); break;
       // `expect`: the backend refuses if the phase moved on since this button was drawn.

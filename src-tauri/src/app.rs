@@ -281,7 +281,8 @@ impl Shared {
         } else if v.can.end_segment {
             (if v.phase.alarm { tr("app_im_up") } else { tr("app_end_the_segment") }, true)
         } else if v.can.start_day {
-            (tr("app_start_day"), true)
+            // At night the day starts only from the app window, with a confirmation.
+            (tr("app_start_day"), !v.can.night_start)
         } else {
             (tr("day_pause"), false)
         };
@@ -1447,8 +1448,13 @@ pub fn phone_forget(s: S, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn start_day(s: S) -> Result<(), String> {
-    s.mutate(|g, now| g.day.start_day(now, &g.cfg))
+/// `night`: the user confirmed a start at night (see `DayState::night_start`).
+pub fn start_day(s: S, night: Option<bool>) -> Result<(), String> {
+    if night == Some(true) {
+        s.mutate(|g, now| g.day.start_day_at_night(now, &g.cfg))
+    } else {
+        s.mutate(|g, now| g.day.start_day(now, &g.cfg))
+    }
 }
 
 #[tauri::command]
@@ -1584,7 +1590,7 @@ pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
         let r = shared.mutate(|g, now| g.day.end_segment(now));
         hide_overlay_window(&shared.app);
         r
-    } else if v.can.start_day {
+    } else if v.can.start_day && !v.can.night_start {
         shared.mutate(|g, now| g.day.start_day(now, &g.cfg))
     } else {
         Ok(())

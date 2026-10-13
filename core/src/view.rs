@@ -70,6 +70,8 @@ pub struct PauseView {
 #[derive(Debug, Clone, Serialize)]
 pub struct Can {
     pub start_day: bool,
+    /// Starting the day now is a night start: only with a confirmation in the app window.
+    pub night_start: bool,
     pub pause: bool,
     pub resume: bool,
     pub start_next: bool,
@@ -322,6 +324,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
     let day_end = d.day_end(cfg);
     let can = Can {
         start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.first_open_block().is_some(),
+        night_start: d.mode == Mode::Plan && d.started_at.is_none() && d.night_start(now, cfg),
         segment: d.can_start_segment(),
         end_segment: matches!(d.phase, Phase::Segment { .. }),
         lay_down: d.segment().is_some_and(|r| r.in_prep()),

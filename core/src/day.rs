@@ -22,6 +22,8 @@ pub const SKIP_UNDO_MS: i64 = 10 * crate::clock::SEC;
 /// not recorded and not counted.
 pub const MIN_PAUSE_MS: i64 = 10 * crate::clock::SEC;
 const MAX_BLOCK_MIN: u32 = 8 * 60;
+/// Before this time (minutes after midnight) a start of the day needs a confirmation.
+pub const NIGHT_UNTIL_MIN: u32 = 5 * 60;
 /// Latest allowed day end: 02:00 of the next day, in minutes after the day's midnight.
 pub const MAX_DAY_END_MIN: u32 = 26 * 60;
 /// "00:00".."02:00" typed as a day end mean the night after the study day.
@@ -999,7 +1001,21 @@ impl DayState {
         self.phase = Phase::Work { block, dur_ms, elapsed_ms: 0, since: Some(now) };
     }
 
+    /// A start right now is a night one: before 05:00 or after today's day end. One click
+    /// there is most likely a miss, so only a confirmed start (`start_day_at_night`) works.
+    pub fn night_start(&self, now: Ts, cfg: &Config) -> bool {
+        clock::minute_of_day(now, cfg.tz_offset_min) < NIGHT_UNTIL_MIN || self.after_day_end(now, cfg)
+    }
+
     pub fn start_day(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
+        if self.started_at.is_none() && self.night_start(now, cfg) {
+            return Err(tr!("day_its_night_the_day_starts_only"));
+        }
+        self.start_day_at_night(now, cfg)
+    }
+
+    /// The start the user confirmed: works at night too.
+    pub fn start_day_at_night(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
         if self.mode != Mode::Plan || self.started_at.is_some() {
             return Err(tr!("day_the_day_has_already_started"));
         }
@@ -2108,6 +2124,24 @@ mod tests {
         assert!(d.lock_state(p + 15 * MIN, &c).blocked);
         assert_eq!(d.pauses[0].access_ms, 13 * MIN);
         assert_eq!(d.pauses[0].extensions, 1);
+    }
+
+    #[test]
+    fn night_start_needs_a_confirmation() {
+        let c = cfg();
+        // 00:05 MSK: one click does not start the day, a confirmed start does.
+        let night = t("2026-09-28T21:05:00Z");
+        let mut d = DayState::new(night, &c);
+        assert!(d.night_start(night, &c));
+        assert!(d.start_day(night, &c).is_err());
+        assert!(d.started_at.is_none());
+        d.start_day_at_night(night, &c).unwrap();
+        assert!(d.started_at.is_some());
+        // 05:00 is morning; after the day end (22:00) it is night again.
+        let d = DayState::new(start(), &c);
+        assert!(!d.night_start(t("2026-09-28T02:00:00Z"), &c));
+        assert!(!d.night_start(start(), &c));
+        assert!(d.night_start(t("2026-09-28T19:00:00Z"), &c));
     }
 
     #[test]

@@ -97,9 +97,13 @@ function render(s) {
       label = tr('mini_min_of_study_lock_off', { v: Math.round(v.work_ms / 60000) });
       break;
     default:
-      setTime(v.can.start_day ? tr('mini_start') : '--:--');
-      label = v.can.start_day ? tr('mini_start_the_study_day') : p.title;
-      btn = v.can.start_day ? ['play', tr('app_start_day')] : null;
+      {
+        // At night the day starts only from the app window, with a confirmation.
+        const start = v.can.start_day && !v.can.night_start;
+        setTime(start ? tr('mini_start') : '--:--');
+        label = start ? tr('mini_start_the_study_day') : v.can.start_day ? tr('mini_night_start_the_day_in') : p.title;
+        btn = start ? ['play', tr('app_start_day')] : null;
+      }
   }
   el('bar').style.strokeDashoffset = String(100 - Math.min(1, Math.max(0, frac)) * 100);
   el('label').textContent = label;

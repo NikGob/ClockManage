@@ -219,7 +219,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
         blocks,
         timeline,
         can: PhoneCan {
-            start_day: v.can.start_day,
+            start_day: v.can.start_day && !v.can.night_start,
             pause: v.can.pause,
             resume: v.can.resume,
             start_next: matches!(v.phase.kind.as_str(), "await" | "lunch"),

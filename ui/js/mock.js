@@ -102,7 +102,7 @@ function snapshot() {
       emergency_count: 0, lunch_used: false, single: null, undo_until: null,
       pending_note: q.get('note') && !noteDone ? { block: 0, name: L('Математика', 'Math') } : null,
       can: {
-        start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
+        start_day: STATE === 'idle', night_start: STATE === 'idle' && q.has('night'), pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
         extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1560, lighter_kind: !lock.base, set_day_end: true,
@@ -157,6 +157,7 @@ export async function invoke(cmd, args) {
       setTimeout(() => (listeners.agent || []).forEach((cb) => cb({ title: L('Агент изменил конец дня', 'The agent moved the day end'), text: `${fmt(old)} → ${fmt(dayEnd)} (${L('превью', 'preview')})` })), 1500);
       return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
     }
+    case 'start_day': STATE = 'work'; return null;
     case 'pause': STATE = 'paused'; return null;
     case 'resume': STATE = 'work'; return null;
     case 'start_next': STATE = 'work'; return null;

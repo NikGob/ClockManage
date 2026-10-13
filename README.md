@@ -157,6 +157,7 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 - **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
+- **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then.
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
 - Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The phone talks to the PC over your local network only.
 
@@ -168,7 +169,7 @@ npx @tauri-apps/cli@2 dev                    # run on Windows (from an administr
 npx @tauri-apps/cli@2 build                  # NSIS installer
 ```
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; add `&lang=en` or `&lang=ru`.
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; add `&lang=en` or `&lang=ru`.
 
 | Folder | What's inside |
 |---|---|
