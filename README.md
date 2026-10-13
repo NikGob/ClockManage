@@ -156,7 +156,7 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 
 - **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
-- Shorts opened by a click inside YouTube may show until the next navigation or refresh.
+- Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
 - Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The phone talks to the PC over your local network only.
 
