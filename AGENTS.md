@@ -2,7 +2,7 @@
 
 Instructions for coding agents working on ClockManage. Two rules are not optional:
 
-1. **Every user-visible text of the app ships in Russian and English.** The only exceptions are listed under [Deliberately not translated](#deliberately-not-translated).
+1. **Every user-visible text of the app ships in every supported language.** Today that is Russian and English, and both are always required. A language added later is just as required. The only exceptions are listed under [Deliberately not translated](#deliberately-not-translated).
 2. **README.md stays true.** A change that makes any README sentence wrong is not finished.
 
 ## Checks
@@ -22,59 +22,92 @@ Copy-Item target/release/cm-guard.exe src-tauri/binaries/cm-guard-x86_64-pc-wind
 cargo check -p clockmanage
 ```
 
-For UI changes, look at the mock preview **in both languages**:
+For UI changes, look at the mock preview **in every language**:
 
 ```sh
 python -m http.server -d ui
 ```
 
-Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed, then the same with `&lang=ru`. The screens are `today`, `plan`, `block`, `log` and `settings`. Check `overlay.html?demo=await` and `mini.html?state=work` the same way. Always pass `&lang=`: without it the mock follows the browser's language.
+Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed, then the same with every other language (`&lang=ru`, …). The screens are `today`, `plan`, `block`, `log` and `settings`. Check `overlay.html?demo=await` and `mini.html?state=work` the same way. Always pass `&lang=`: without it the mock follows the browser's language.
 
-## Localization: Russian and English, always
+## Localization: every language, every change
 
-The app is fully bilingual: Settings → System → Language (Auto follows Windows; on the phone, the phone's language). Any change that adds or changes visible text ships **both** languages in the same commit. Visible text includes labels, buttons, tooltips, `placeholder`/`title`/`aria-label`, toasts, notifications, tray items, overlays, refusals and errors shown to the user, MCP result texts, phone screens and the widget.
+The app is multilingual: Settings → System → Language (Auto follows Windows; on the phone, the phone's language). Any change that adds or changes visible text ships it in **every** supported language in the same commit. Visible text includes:
 
-- Never hardcode visible text in Russian or in English.
-- Never leave one language as a TODO, and never copy one language's text into the other file.
-- If code you touch still has a hardcoded or one-language text, wire it through `tr` too.
+- labels, buttons, tooltips, `placeholder`/`title`/`aria-label`
+- toasts, notifications, tray items, overlays
+- refusals and errors shown to the user, MCP result texts
+- phone screens and the widget
+
+Rules for every text:
+
+- Never hardcode visible text in any language.
+- Never leave a language as a TODO, and never copy one language's text into another language's file.
+- If code you touch still has a hardcoded or missing-language text, wire it through `tr` too.
 
 ### How to add a text
 
-1. Add the key to **both** `ui/locales/en.json` and `ui/locales/ru.json`.
+1. Add the key to **every** file in `ui/locales/`: today `en.json` and `ru.json`.
    - Key format: snake_case `<area>_<first words of the English text>`, where the area is the file or module (`today_`, `settings_`, `dialog_`, `app_`, `day_`, `mcp_`, `android_main_`, …). Reuse an existing key when the text is the same.
-   - Placeholders are named, `{min}`. Both languages need the same set of placeholders; the order may differ.
+   - Placeholders are named, `{min}`. Every language needs the same set of placeholders; the order may differ.
    - Keep the file format: keys sorted, 2-space indent, UTF-8 without `\u` escapes, trailing newline (`json.dumps(d, indent=2, ensure_ascii=False, sort_keys=True) + "\n"`).
-   - Russian uses «» and ё.
+   - Follow each language's typography. Russian uses «» and ё.
 2. Call `tr` with a **literal** key:
    - Rust: `tr("key")`, or `tr!("key", name = value)` when the text has placeholders. Imports: `use crate::i18n::tr; use crate::tr;` in `core`, `use clockmanage_core::i18n::tr; use clockmanage_core::tr;` in `src-tauri`. Don't write a path-qualified `i18n::tr(…)`: the checker skips it.
    - JS: `import { tr } from './i18n.js'`, then `tr('key', { name })`. The arguments must be an object literal.
    - Kotlin: `tr("key", "name" to value)`.
    - Key chosen at runtime: use a `match` or a lookup object of literal `tr` calls (see `DayKind::label` in `core/src/config.rs` and the tip tables in `ui/js/views/settings.js`). Never `tr(variable)`.
-3. When code goes away, delete its keys from both files. Unused keys fail the test.
+3. When code goes away, delete its keys from every file. Unused keys fail the test.
 
-`core/tests/locales.rs` catches mismatched keys and placeholders, a wrong or non-literal key, wrong argument names and unused keys. It does **not** catch hardcoded text, a value left untranslated, or `strings.xml` parity. Check those yourself.
+`core/tests/locales.rs` catches mismatched keys and placeholders between `ru.json` and `en.json`, a wrong or non-literal key, wrong argument names and unused keys. It does **not** catch:
 
-### Outside `ui/locales`, still in both languages
+- hardcoded text
+- a value left untranslated
+- `strings.xml` parity
+- any locale file other than `ru.json` and `en.json` (see [Adding a language](#adding-a-language))
 
-- **Android texts the system reads** (manifest labels, the accessibility service and widget descriptions) cannot use `tr`. Add them to `android/app/src/main/res/values/strings.xml` (English, the default) **and** `values-ru/strings.xml`.
-- **Mock preview data** in `ui/js/mock.js` uses inline `L(ru, en)` pairs. A new `Config` setting also needs its default in the mock `cfg` there, or the preview and the README pictures show it unset.
+Check those yourself.
+
+### Outside `ui/locales`, still in every language
+
+- **Android texts the system reads** (manifest labels, the accessibility service and widget descriptions) cannot use `tr`. Add them to `android/app/src/main/res/values/strings.xml` (English, the default) **and** to `values-<lang>/strings.xml` for every other language (today `values-ru`).
+- **Mock preview data** in `ui/js/mock.js` keeps its texts inline, one per language: today `L(ru, en)` pairs. A new `Config` setting also needs its default in the mock `cfg` there, or the preview and the README pictures show it unset.
 - **Static tray items**: set them in `src-tauri/src/windows.rs` and again in the `TRAY_LANG` block of `src-tauri/src/app.rs`. Otherwise they keep the old language after a switch.
 
 ### Deliberately not translated
 
-- MCP tool descriptions and the server instructions in `core/src/mcp.rs`: English only, because the model reads them. MCP *results* do go through `tr`. `core/tests/english.rs` rejects Cyrillic in `tools/list` only, so keep the `initialize` instructions English yourself.
-- User data: block and segment names, the emergency phrase. Defaults are written once in the Windows language and are the user's data after that.
-- Config and JSON keys, the language names «Русский» / «English» in the picker, and the brand name.
-- `README.md` and its pictures in `docs/media/`: English.
+- **MCP tool descriptions and server instructions** in `core/src/mcp.rs`: English only, because the model reads them. MCP *results* do go through `tr`. `core/tests/english.rs` rejects Cyrillic in `tools/list` only, so keep the `initialize` instructions English yourself.
+- **User data**: block and segment names, the emergency phrase. Defaults are written once in the Windows language and are the user's data after that.
+- **Fixed strings**: config and JSON keys, the brand name, and the language names in the picker (each written in its own language).
+- **`README.md` and its pictures** in `docs/media/`: English.
 
 ### Formats and traps
 
-- There is no plural helper. Write `label: N` or abbreviated units (`{r} мин` / `{r} min`), not inflected words.
-- In JS, format decimals with `dec()` and dates with `LOCALE` from `ui/js/i18n.js`. In app texts, format durations with `fmt_dur` in `src-tauri/src/app.rs`. Don't use `fmt_min` from `core/src/day.rs` for new English text: it always prints a decimal comma.
-- The UI parses some backend texts. Regexes in `ui/js/mini.js` and `ui/js/views/today.js` read `view_part_of`, `view_*_part_of` and the h/min units, and `ui/js/views/log.js` compares against both values of `stats_running`. If you reword those texts, update both sides.
-- Core unit tests run in Russian, because the process-wide language defaults to Russian. Assert English texts only in `core/tests/english.rs`, which runs as a separate process.
-- The locale files are compiled into the Rust binary (`include_str!`) and packed into the APK. Rebuild after editing them.
-- The CSP in `src-tauri/tauri.conf.json` must keep `connect-src 'self'`, or the UI shows raw keys. `core/tests/locales.rs` checks this.
+- **Plurals.** There is no plural helper. Write `label: N` or abbreviated units (`{r} мин` / `{r} min`), not inflected words.
+- **Numbers and dates.** In JS, format decimals with `dec()` and dates with `LOCALE` from `ui/js/i18n.js`. In app texts, format durations with `fmt_dur` in `src-tauri/src/app.rs`. Don't use `fmt_min` from `core/src/day.rs` for new non-Russian text: it always prints a decimal comma.
+- **The UI parses some backend texts.**
+  - Regexes in `ui/js/mini.js` and `ui/js/views/today.js` match the wording of `view_part_of`, `view_*_part_of` and the h/min units in every language.
+  - `ui/js/views/log.js` compares against every language's value of `stats_running`.
+  - If you reword those texts or add a language, update both sides.
+- **Tests.** Core unit tests run in Russian, because the process-wide language defaults to Russian. Assert texts of any other language only in a separate file under `core/tests/` (like `english.rs`): each file runs as its own process.
+- **Rebuild.** The locale files are compiled into the Rust binary (`include_str!`) and packed into the APK. Rebuild after editing them.
+- **CSP.** The CSP in `src-tauri/tauri.conf.json` must keep `connect-src 'self'`, or the UI shows raw keys. `core/tests/locales.rs` checks this.
+
+### Adding a language
+
+Copying a locale file is not enough: the list of languages is wired into the code. A new language needs all of these, in the same PR:
+
+- `ui/locales/<lang>.json` with every key.
+- `core/src/i18n.rs`: `Lang`, `LangPref`, `from_locale` and `FILES`.
+- `src-tauri/src/system.rs`: map the Windows UI language id to the new `Lang`.
+- `ui/js/i18n.js`: the accepted codes, the `navigator.language` check, `LOCALE`, `dec()` and `followLang`.
+- `android/.../I18n.kt`, plus `res/values-<lang>/strings.xml`.
+- `core/tests/locales.rs`: compare every locale file, not only `ru` and `en`.
+- `ui/js/views/settings.js`: the language picker.
+- `src-tauri/tauri.conf.json`: the NSIS installer `languages`.
+- The texts the UI parses (see the trap above) and the mock's `L()` in `ui/js/mock.js`.
+- The README: the Languages badge and Good to know.
+- This file: the "today" lists.
 
 ## README: keep it up to date
 
@@ -98,7 +131,7 @@ The app is fully bilingual: Settings → System → Language (Auto follows Windo
 
 ### Pictures
 
-The pictures and GIFs in `docs/media/` are recorded in English from the mock backend. When a visible change alters what a picture shows, re-record the pictures. Leave the media alone for invisible, Rust-only or Russian-only changes.
+The pictures and GIFs in `docs/media/` are recorded in English from the mock backend. When a visible change alters what a picture shows, re-record the pictures. Leave the media alone for invisible changes, Rust-only changes, and text changes that don't touch English.
 
 ```sh
 python -m http.server 8766 -d ui
