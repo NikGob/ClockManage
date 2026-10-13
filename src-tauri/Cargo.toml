@@ -29,4 +29,5 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_Shell",
   "Win32_Graphics_Dwm",
   "Win32_System_GroupPolicy",
+  "Win32_Security",
 ] }
