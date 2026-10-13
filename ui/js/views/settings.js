@@ -14,6 +14,7 @@ const TIP = {
   block: tr('settings_on_such_a_day_start_day'),
   plan: tr('settings_every_such_day_starts_with_this'),
   dayEnd: tr('settings_when_the_lock_lifts_by_itself'),
+  night: tr('settings_at_night_start_day_works_only'),
   seg: tr('settings_a_block_is_cut_into_parts'),
   short: tr('settings_rest_between_the_parts_of_one'),
   between: tr('settings_rest_after_a_closed_block_before'),
@@ -157,6 +158,7 @@ export function mountSettings(root, ctx) {
     const custom = !SWATCHES.some(([c]) => c.toLowerCase() === cfg.appearance.seed.toLowerCase());
     const focusKey = keyOf(document.activeElement);
     const t = cfg.timing;
+    const ns = cfg.night_start;
     box.innerHTML = `
       ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${tr('settings_a_study_day_is_running_the')}</div></div>` : ''}
       ${weekSection(locked, v.weekday)}
@@ -168,6 +170,14 @@ export function mountSettings(root, ctx) {
             <div class="grow"><div class="t">${tr('dialog_day_end')}${info('dayEnd')}</div><div class="d">${tr('settings_the_lock_lifts_at_this_time')} (${utcLabel(cfg.tz_offset_min)})${v.day_end_changed ? ` · ${tr('settings_today_until')} ${esc(v.day_end)}${v.day_end_next_day ? tr('settings_night') : ''}` : ''}</div></div>
             <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" ${locked ? `min="${hm(cfg.day_end_min)}"` : ''} aria-label="${tr('dialog_day_end')}" ${tipAttr('dayEnd')}></div>
           </div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_start_at_night')}${info('night')}</div><div class="d">${ns.enabled ? tr('app_night_start_until_hold', { until: hm(ns.until_min), after: ns.after_day_end ? tr('app_night_start_and_after_the_day_end') : '', hold: ns.hold_sec }) : tr('settings_one_click_starts_the_day_any')}</div></div>
+            ${sw('night_start.enabled', ns.enabled, tr('settings_start_at_night'), 'night')}</div>
+          ${ns.enabled ? `<div class="setting"><div class="grow"><div class="t">${tr('settings_night_lasts_until')}</div></div>
+            <div class="field"><input type="time" id="nightuntil" value="${hm(ns.until_min)}" max="12:00" aria-label="${tr('settings_night_lasts_until')}"></div></div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_after_the_day_end_too')}</div></div>
+            ${sw('night_start.after_day_end', ns.after_day_end, tr('settings_after_the_day_end_too'))}</div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_hold_to_start')}</div></div>
+            ${stepper('night_start.hold_sec', { min: 1, max: 10, step: 1, unit: tr('settings_s'), label: tr('settings_hold_to_start') })}</div>` : ''}
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_work_part')}${info('seg')}</div><div class="d">${tr('settings_work_part_example')}</div></div>
             ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_of_work_per_part'), disabled: locked })}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_break_between_parts')}${info('short')}</div></div>
@@ -242,7 +252,7 @@ export function mountSettings(root, ctx) {
         <h2>${tr('settings_mcp_for_claude')}</h2>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: set_plan, set_day_end, get_plan, get_session_state, get_today_stats, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -357,6 +367,10 @@ export function mountSettings(root, ctx) {
     } else if (t.id === 'dayend') {
       const [h, mm] = t.value.split(':').map(Number);
       if (Number.isFinite(h)) save((c) => { c.day_end_min = h * 60 + (mm || 0); });
+    } else if (t.id === 'nightuntil') {
+      const [h, mm] = t.value.split(':').map(Number);
+      // The backend caps the night at 12:00.
+      if (Number.isFinite(h)) save((c) => { c.night_start.until_min = Math.min(720, h * 60 + (mm || 0)); });
     } else if (t.id === 'seed-in') {
       save((c) => { c.appearance.seed = t.value; });
     } else if (t.id === 'tz') {

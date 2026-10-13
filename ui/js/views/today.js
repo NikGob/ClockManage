@@ -491,7 +491,7 @@ export function mountToday(root, ctx) {
       return;
     }
     switch (act) {
-      case 'start_day': if (v.can.night_start) await nightStartDialog(); else await run(() => call('start_day'), b); break;
+      case 'start_day': if (v.can.night_start) await nightStartDialog(v); else await run(() => call('start_day'), b); break;
       case 'pause': await run(() => call('pause'), b); break;
       case 'resume': await run(() => call('resume'), b); break;
       // `expect`: the backend refuses if the phase moved on since this button was drawn.

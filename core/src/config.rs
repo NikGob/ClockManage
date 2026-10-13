@@ -286,6 +286,31 @@ pub fn default_phrase() -> &'static str {
     tr("config_i_am_consciously_interrupting_my_study")
 }
 
+/// Latest end of the night for `NightStart::until_min` (12:00).
+pub const MAX_NIGHT_UNTIL_MIN: u32 = 12 * 60;
+/// Longest hold of the night start button, seconds.
+pub const MAX_NIGHT_HOLD_SEC: u32 = 10;
+
+/// "Start day" at night: only in the app window and after holding the button, so a stray
+/// click doesn't start a new day.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct NightStart {
+    pub enabled: bool,
+    /// The night runs from midnight until this time (minutes after midnight; 0 = no such part).
+    pub until_min: u32,
+    /// After today's day end it is night too.
+    pub after_day_end: bool,
+    /// How long to hold the button, seconds.
+    pub hold_sec: u32,
+}
+
+impl Default for NightStart {
+    fn default() -> Self {
+        Self { enabled: true, until_min: 5 * 60, after_day_end: true, hold_sec: 2 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
@@ -320,6 +345,7 @@ pub struct Config {
     #[serde(default = "Vec::new")]
     pub segments: Vec<SegmentType>,
     pub phone: Phone,
+    pub night_start: NightStart,
     /// Plans set ahead for particular dates (MCP `set_plan` with `date`): that day starts with
     /// it instead of its profile's template. Dropped once that date's day exists.
     pub plan_overrides: BTreeMap<NaiveDate, Vec<PlanBlock>>,
@@ -363,6 +389,7 @@ impl Default for Config {
             lang: LangPref::Auto,
             segments: default_segments(45),
             phone: Phone::default(),
+            night_start: NightStart::default(),
             plan_overrides: BTreeMap::new(),
             study_days: None,
             plan_template: None,
@@ -421,6 +448,8 @@ impl Config {
         self.emergency_min = self.emergency_min.clamp(1, 60);
         self.reminder_sec = self.reminder_sec.clamp(15, 600);
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
+        self.night_start.until_min = self.night_start.until_min.min(MAX_NIGHT_UNTIL_MIN);
+        self.night_start.hold_sec = self.night_start.hold_sec.clamp(1, MAX_NIGHT_HOLD_SEC);
         self.blocklist.sites = normalize_list(&self.blocklist.sites, normalize_site);
         self.blocklist.apps = normalize_list(&self.blocklist.apps, normalize_app);
         // Configs from before 0.3 have no segment types: start from the defaults, lunch keeps

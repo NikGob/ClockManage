@@ -22,8 +22,6 @@ pub const SKIP_UNDO_MS: i64 = 10 * crate::clock::SEC;
 /// not recorded and not counted.
 pub const MIN_PAUSE_MS: i64 = 10 * crate::clock::SEC;
 const MAX_BLOCK_MIN: u32 = 8 * 60;
-/// Before this time (minutes after midnight) a start of the day needs a confirmation.
-pub const NIGHT_UNTIL_MIN: u32 = 5 * 60;
 /// Latest allowed day end: 02:00 of the next day, in minutes after the day's midnight.
 pub const MAX_DAY_END_MIN: u32 = 26 * 60;
 /// "00:00".."02:00" typed as a day end mean the night after the study day.
@@ -1001,10 +999,12 @@ impl DayState {
         self.phase = Phase::Work { block, dur_ms, elapsed_ms: 0, since: Some(now) };
     }
 
-    /// A start right now is a night one: before 05:00 or after today's day end. One click
-    /// there is most likely a miss, so only a confirmed start (`start_day_at_night`) works.
+    /// A start right now is a night one (`Config::night_start`: until 05:00 and after the day
+    /// end by default). One click there is most likely a miss, so only a confirmed start
+    /// (`start_day_at_night`) works.
     pub fn night_start(&self, now: Ts, cfg: &Config) -> bool {
-        clock::minute_of_day(now, cfg.tz_offset_min) < NIGHT_UNTIL_MIN || self.after_day_end(now, cfg)
+        let n = &cfg.night_start;
+        n.enabled && (clock::minute_of_day(now, cfg.tz_offset_min) < n.until_min || (n.after_day_end && self.after_day_end(now, cfg)))
     }
 
     pub fn start_day(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
@@ -2142,6 +2142,14 @@ mod tests {
         assert!(!d.night_start(t("2026-09-28T02:00:00Z"), &c));
         assert!(!d.night_start(start(), &c));
         assert!(d.night_start(t("2026-09-28T19:00:00Z"), &c));
+        // The settings: night until 07:00, not after the day end; or off altogether.
+        let mut c = cfg();
+        c.night_start.until_min = 7 * 60;
+        c.night_start.after_day_end = false;
+        assert!(d.night_start(t("2026-09-28T03:30:00Z"), &c));
+        assert!(!d.night_start(t("2026-09-28T19:00:00Z"), &c));
+        c.night_start.enabled = false;
+        assert!(!d.night_start(night, &c));
     }
 
     #[test]

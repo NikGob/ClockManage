@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::chrono::{self, Datelike, NaiveDate};
-use clockmanage_core::config::{DayKind, EditContext, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
+use clockmanage_core::config::{DayKind, EditContext, NightStart, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
 use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, same_name, worked_min, Event, Forecast, LockState, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
-use clockmanage_core::mcp::{McpHost, PlanRequest};
+use clockmanage_core::mcp::{McpHost, NightStartRequest, PlanRequest};
 use clockmanage_core::{Config, DayState};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -984,6 +984,47 @@ impl McpHost for McpBridge {
         Ok(res)
     }
 
+    fn set_night_start(&self, r: NightStartRequest) -> Result<Value, String> {
+        let mut next = self.0.lock().cfg.clone();
+        let before = next.night_start.clone();
+        let n = &mut next.night_start;
+        if let Some(v) = r.enabled {
+            n.enabled = v;
+        }
+        if let Some(v) = r.until_min {
+            n.until_min = v;
+        }
+        if let Some(v) = r.after_day_end {
+            n.after_day_end = v;
+        }
+        if let Some(v) = r.hold_sec {
+            n.hold_sec = v;
+        }
+        let changed = next.night_start != before;
+        if changed {
+            apply_config(&self.0, next)?;
+        }
+        let g = self.0.lock();
+        let ns = g.cfg.night_start.clone();
+        let night_now = g.day.started_at.is_none() && g.day.night_start(clock::now_ts(), &g.cfg);
+        drop(g);
+        if changed {
+            self.0.notice(tr("app_the_agent_changed_the_night_start"), &night_summary(&ns));
+        }
+        Ok(json!({
+            "ok": true,
+            "changed": changed,
+            "night_start": {
+                "enabled": ns.enabled,
+                "until": fmt_day_min(ns.until_min),
+                "after_day_end": ns.after_day_end,
+                "hold_sec": ns.hold_sec,
+            },
+            "summary": night_summary(&ns),
+            "night_now": night_now,
+        }))
+    }
+
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
         let now = clock::now_ts();
         let Some(typed) = confirm_token else {
@@ -1569,6 +1610,15 @@ pub fn drop_queued(s: S, index: usize) -> Result<(), String> {
 #[tauri::command]
 pub fn undo_skip(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.undo_skip(now))
+}
+
+/// "Night until 05:00 and after the day end, hold 2 s", or "Off: ...".
+fn night_summary(n: &NightStart) -> String {
+    if !n.enabled {
+        return tr("app_night_start_off").into();
+    }
+    let after = if n.after_day_end { tr("app_night_start_and_after_the_day_end") } else { "" };
+    tr!("app_night_start_until_hold", until = fmt_day_min(n.until_min), after = after, hold = n.hold_sec)
 }
 
 /// Tray / mini window "main button": whatever the primary action is right now.

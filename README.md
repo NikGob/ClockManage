@@ -9,7 +9,7 @@
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#install)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
-[![MCP](https://img.shields.io/badge/MCP-14%20tools-6E56CF)](#claude-runs-your-day-mcp)
+[![MCP](https://img.shields.io/badge/MCP-15%20tools-6E56CF)](#claude-runs-your-day-mcp)
 [![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
 [![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
@@ -117,6 +117,7 @@ Then just talk:
 > - *"How many hours did I study this week? Give me the table for the journal."*
 > - *"Block Reddit and Steam and lock everything until 18:00."*
 > - *"Close the current block, I'm done with math for today."*
+> - *"I get up at 7 — make it night until 7 and hold for 3 seconds."*
 
 | Tool | What it does |
 |---|---|
@@ -127,6 +128,7 @@ Then just talk:
 | `set_plan` | replace today's plan or set one for a future date; reorder anything, close a started block "as is" |
 | `set_template` · `set_week_schedule` | edit the Full / Light / Day off templates and which weekday gets which |
 | `set_day_end` | move today's day end once, with a reason for the log |
+| `set_night_start` | the night start guard: until when it's night, whether after the day end too, how long to hold — or off |
 | `set_block_note` | save your line about a block |
 | `finish_block` | close the current block at the time worked — two steps, needs your explicit "yes" |
 | `get_blocklist` · `add_to_blocklist` · `remove_from_blocklist` | read and edit the block list (removing only outside the lock) |
@@ -157,7 +159,7 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 - **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
-- **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then.
+- **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
 - Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The phone talks to the PC over your local network only.
 
