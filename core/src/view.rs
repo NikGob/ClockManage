@@ -70,6 +70,8 @@ pub struct PauseView {
 #[derive(Debug, Clone, Serialize)]
 pub struct Can {
     pub start_day: bool,
+    /// Starting the day now is a night start: only with a confirmation in the app window.
+    pub night_start: bool,
     pub pause: bool,
     pub resume: bool,
     pub start_next: bool,
@@ -110,6 +112,8 @@ pub struct View {
     pub started: bool,
     pub completed: bool,
     pub after_day_end: bool,
+    /// Seconds to hold "Start day" when `can.night_start`.
+    pub night_hold_sec: u32,
     /// Today's day end ("23:00"); may differ from the template after a one-off shift.
     pub day_end: String,
     /// Effective day end and the current time, minutes after the day's own midnight
@@ -322,6 +326,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
     let day_end = d.day_end(cfg);
     let can = Can {
         start_day: d.mode == Mode::Plan && d.started_at.is_none() && d.first_open_block().is_some(),
+        night_start: d.mode == Mode::Plan && d.started_at.is_none() && d.night_start(now, cfg),
         segment: d.can_start_segment(),
         end_segment: matches!(d.phase, Phase::Segment { .. }),
         lay_down: d.segment().is_some_and(|r| r.in_prep()),
@@ -358,6 +363,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         started: d.started_at.is_some(),
         completed: d.completed_at.is_some(),
         after_day_end,
+        night_hold_sec: cfg.night_start.hold_sec,
         day_end: fmt_day_min(day_end),
         day_end_min: day_end,
         now_min: ((now - d.day_end_at(cfg)) / MIN + day_end as i64).max(0) as u32,

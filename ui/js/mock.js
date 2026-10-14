@@ -13,7 +13,8 @@ const t0 = Date.now();
 const MIN = 60000;
 
 const cfg = {
-  week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180, lang: q.get('lang') || 'auto',
+  week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
+  night_start: { enabled: true, until_min: 300, after_day_end: true, hold_sec: 2 }, lang: q.get('lang') || 'auto',
   profiles: {
     full: { plan: [{ name: L('Математика', 'Math'), minutes: 90 }, { name: L('Словацкий', 'Spanish'), minutes: 90 }, { name: L('Экстернат', 'Thesis'), minutes: 150 }], block: true },
     light: { plan: [{ name: L('Математика', 'Math'), minutes: 60 }, { name: L('Словацкий', 'Spanish'), minutes: 60 }], block: true },
@@ -94,7 +95,7 @@ function snapshot() {
           : { blocked: true, base: true, reason: 'study', until: null, focus_until };
   return {
     view: {
-      now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, mode: 'plan',
+      now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, night_hold_sec: cfg.night_start.hold_sec, mode: 'plan',
       day_end: `${String(Math.floor(dayEnd / 60) % 24).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
       day_end_at: dayEndAt(), day_end_next_day: dayEnd >= 1440, day_end_changed: dayEnd !== 1320, forecast: forecast(now, b),
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
@@ -102,7 +103,7 @@ function snapshot() {
       emergency_count: 0, lunch_used: false, single: null, undo_until: null,
       pending_note: q.get('note') && !noteDone ? { block: 0, name: L('Математика', 'Math') } : null,
       can: {
-        start_day: STATE === 'idle', pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
+        start_day: STATE === 'idle', night_start: STATE === 'idle' && q.has('night'), pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
         emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
         extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1560, lighter_kind: !lock.base, set_day_end: true,
@@ -157,6 +158,7 @@ export async function invoke(cmd, args) {
       setTimeout(() => (listeners.agent || []).forEach((cb) => cb({ title: L('Агент изменил конец дня', 'The agent moved the day end'), text: `${fmt(old)} → ${fmt(dayEnd)} (${L('превью', 'preview')})` })), 1500);
       return { ok: true, changed: old !== dayEnd, old: fmt(old), new: fmt(dayEnd), new_is_next_day: dayEnd >= 1440 };
     }
+    case 'start_day': STATE = 'work'; return null;
     case 'pause': STATE = 'paused'; return null;
     case 'resume': STATE = 'work'; return null;
     case 'start_next': STATE = 'work'; return null;

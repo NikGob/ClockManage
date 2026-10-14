@@ -4,7 +4,8 @@
 
 use serde_json::{json, Value};
 
-use crate::config::{DayKind, WEEKDAYS};
+use crate::clock;
+use crate::config::{DayKind, MAX_NIGHT_HOLD_SEC, MAX_NIGHT_UNTIL_MIN, WEEKDAYS};
 use crate::day::{PlanBlock, MAX_FOCUS_MIN};
 use crate::i18n::tr;
 use crate::tr;
@@ -36,6 +37,17 @@ pub trait McpHost {
     fn edit_blocklist(&self, remove: bool, sites: Vec<String>, apps: Vec<String>) -> Result<Value, String>;
     /// Block the whole list from now for `minutes`, any day; a running focus lock only moves later.
     fn start_focus_lock(&self, minutes: u32, reason: Option<&str>) -> Result<Value, String>;
+    /// The night start guard; an empty request only reads it.
+    fn set_night_start(&self, req: NightStartRequest) -> Result<Value, String>;
+}
+
+/// Arguments of `set_night_start`: only the given fields change.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NightStartRequest {
+    pub enabled: Option<bool>,
+    pub until_min: Option<u32>,
+    pub after_day_end: Option<bool>,
+    pub hold_sec: Option<u32>,
 }
 
 /// Arguments of `set_plan`.
@@ -181,6 +193,22 @@ fn tools() -> Value {
                     }
                 },
                 "required": ["days"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_night_start",
+            "title": "Night start guard",
+            "description": "Settings of the night start guard. At night \"Start day\" works only in the app window and only after holding the button (the tray, the mini timer and the phone don't start a day then), so a stray click doesn't start a new day. Night = from midnight until `until`, plus after today's day end when `after_day_end` is on. Only the given fields change; with no arguments it just returns the current settings. The reply has night_start (the settings) and night_now (whether a start right now counts as a night one). Allowed at any time, also during the lock.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean", "description": "false = one click starts the day at any time" },
+                    "until": { "type": "string", "pattern": "^\\d{1,2}:\\d{2}$", "description": "HH:MM, 00:00–12:00, in the app's time zone: the night lasts from midnight until then (00:00 = only after the day end)" },
+                    "after_day_end": { "type": "boolean", "description": "It is night after today's day end too" },
+                    "hold_sec": { "type": "integer", "minimum": 1, "maximum": 10, "description": "How many seconds to hold the button" }
+                },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
@@ -408,6 +436,28 @@ fn parse_focus(args: &Value) -> Result<u32, String> {
     Ok(minutes.round() as u32)
 }
 
+fn parse_night(args: &Value) -> Result<NightStartRequest, String> {
+    let flag = |k: &str| match args.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_bool().map(Some).ok_or_else(|| tr!("mcp_must_be_true_or_false", k = k)),
+    };
+    let until_min = match args.get("until") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_str().and_then(clock::parse_hm) {
+            Some(m) if m <= MAX_NIGHT_UNTIL_MIN => Some(m),
+            _ => return Err(tr!("mcp_until_is_hh_mm_from_00")),
+        },
+    };
+    let hold_sec = match args.get("hold_sec") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_f64() {
+            Some(s) if s.fract() == 0.0 && (1.0..=MAX_NIGHT_HOLD_SEC as f64).contains(&s) => Some(s as u32),
+            _ => return Err(tr!("mcp_hold_sec_is_a_whole_number", max = MAX_NIGHT_HOLD_SEC)),
+        },
+    };
+    Ok(NightStartRequest { enabled: flag("enabled")?, until_min, after_day_end: flag("after_day_end")?, hold_sec })
+}
+
 fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str);
     let id = msg.get("id").cloned();
@@ -429,7 +479,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — study timer", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks."
+                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings."
                 }),
             )
         }
@@ -458,6 +508,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "get_blocklist" => Ok(host.get_blocklist()),
                 "add_to_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(false, s, a)),
                 "remove_from_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(true, s, a)),
+                "set_night_start" => parse_night(&args).and_then(|r| host.set_night_start(r)),
                 "start_focus_lock" => parse_focus(&args).and_then(|m| host.start_focus_lock(m, args.get("reason").and_then(Value::as_str))),
                 _ => return Some(err(&id, -32602, &format!("Unknown tool: {name}"))),
             };
@@ -539,6 +590,10 @@ mod tests {
             self.1.borrow_mut().push(json!({ "focus": minutes, "reason": reason }));
             Ok(json!({"ok": true}))
         }
+        fn set_night_start(&self, r: NightStartRequest) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "enabled": r.enabled, "until_min": r.until_min, "after_day_end": r.after_day_end, "hold_sec": r.hold_sec }));
+            Ok(json!({"ok": true}))
+        }
     }
 
     #[test]
@@ -579,6 +634,20 @@ mod tests {
         assert!(r.contains("needs_confirmation") && r.contains("Математика"));
         let r = handle(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"finish_block","arguments":{"confirm_token":"abc"}}}"#, &h).unwrap();
         assert!(r.contains("\"isError\":false") && r.contains("abc"));
+    }
+
+    #[test]
+    fn night_start_args() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = call(&h, "set_night_start", json!({ "until": "6:30", "hold_sec": 3, "after_day_end": false }));
+        assert_eq!(r["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap(), &json!({ "enabled": null, "until_min": 390, "after_day_end": false, "hold_sec": 3 }));
+        assert_eq!(call(&h, "set_night_start", json!({}))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap()["until_min"], Value::Null);
+        assert_eq!(call(&h, "set_night_start", json!({ "until": "13:00" }))["isError"], true);
+        assert_eq!(call(&h, "set_night_start", json!({ "hold_sec": 0 }))["isError"], true);
+        assert_eq!(call(&h, "set_night_start", json!({ "hold_sec": 2.5 }))["isError"], true);
+        assert_eq!(call(&h, "set_night_start", json!({ "enabled": "yes" }))["isError"], true);
     }
 
     fn call(h: &Fake, name: &str, args: Value) -> Value {

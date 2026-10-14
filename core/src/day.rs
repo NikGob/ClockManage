@@ -760,7 +760,8 @@ impl DayState {
         }
         match self.phase {
             Phase::Work { block, .. } => Some(block),
-            Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } => Some(next),
+            // A day saved with a stale `next` (the plan got shorter) has no current block.
+            Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } => Some(next).filter(|&n| n < self.plan.len()),
             _ => None,
         }
     }
@@ -999,7 +1000,23 @@ impl DayState {
         self.phase = Phase::Work { block, dur_ms, elapsed_ms: 0, since: Some(now) };
     }
 
+    /// A start right now is a night one (`Config::night_start`: until 05:00 and after the day
+    /// end by default). One click there is most likely a miss, so only a confirmed start
+    /// (`start_day_at_night`) works.
+    pub fn night_start(&self, now: Ts, cfg: &Config) -> bool {
+        let n = &cfg.night_start;
+        n.enabled && (clock::minute_of_day(now, cfg.tz_offset_min) < n.until_min || (n.after_day_end && self.after_day_end(now, cfg)))
+    }
+
     pub fn start_day(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
+        if self.started_at.is_none() && self.night_start(now, cfg) {
+            return Err(tr!("day_its_night_the_day_starts_only"));
+        }
+        self.start_day_at_night(now, cfg)
+    }
+
+    /// The start the user confirmed: works at night too.
+    pub fn start_day_at_night(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
         if self.mode != Mode::Plan || self.started_at.is_some() {
             return Err(tr!("day_the_day_has_already_started"));
         }
@@ -1138,7 +1155,7 @@ impl DayState {
             }
             _ => return Err(tr!("day_the_next_part_cant_be_started")),
         };
-        let target = if self.mode == Mode::Plan && self.is_block_done(next) { self.first_open_block() } else { Some(next) };
+        let target = if self.mode == Mode::Plan && (self.is_block_done(next) || next >= self.plan.len()) { self.first_open_block() } else { Some(next) };
         let Some(b) = target else {
             self.phase = Phase::Done;
             return Ok(());
@@ -1401,8 +1418,11 @@ impl DayState {
 
     /// A started study block that is still open.
     fn check_closable(&self, i: usize) -> Result<(), String> {
-        let name = &self.plan[i].name;
-        if self.plan[i].is_break() {
+        let Some(b) = self.plan.get(i) else {
+            return Err(tr!("day_theres_no_current_block_right_now"));
+        };
+        let name = &b.name;
+        if b.is_break() {
             return Err(tr!("day_is_a_segment_not_a_study", name = name));
         }
         if self.is_block_done(i) {
@@ -1762,8 +1782,9 @@ impl DayState {
         if self.mode == Mode::Plan {
             let open = self.first_open_block();
             if lost_next {
-                if let (Some(n), Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. }) = (open, &mut self.phase) {
-                    *next = n;
+                // No open block left: the old index may point past the new plan, so it goes too.
+                if let Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } = &mut self.phase {
+                    *next = open.unwrap_or(0);
                 }
             }
             if started {
@@ -2108,6 +2129,32 @@ mod tests {
         assert!(d.lock_state(p + 15 * MIN, &c).blocked);
         assert_eq!(d.pauses[0].access_ms, 13 * MIN);
         assert_eq!(d.pauses[0].extensions, 1);
+    }
+
+    #[test]
+    fn night_start_needs_a_confirmation() {
+        let c = cfg();
+        // 00:05 MSK: one click does not start the day, a confirmed start does.
+        let night = t("2026-09-28T21:05:00Z");
+        let mut d = DayState::new(night, &c);
+        assert!(d.night_start(night, &c));
+        assert!(d.start_day(night, &c).is_err());
+        assert!(d.started_at.is_none());
+        d.start_day_at_night(night, &c).unwrap();
+        assert!(d.started_at.is_some());
+        // 05:00 is morning; after the day end (22:00) it is night again.
+        let d = DayState::new(start(), &c);
+        assert!(!d.night_start(t("2026-09-28T02:00:00Z"), &c));
+        assert!(!d.night_start(start(), &c));
+        assert!(d.night_start(t("2026-09-28T19:00:00Z"), &c));
+        // The settings: night until 07:00, not after the day end; or off altogether.
+        let mut c = cfg();
+        c.night_start.until_min = 7 * 60;
+        c.night_start.after_day_end = false;
+        assert!(d.night_start(t("2026-09-28T03:30:00Z"), &c));
+        assert!(!d.night_start(t("2026-09-28T19:00:00Z"), &c));
+        c.night_start.enabled = false;
+        assert!(!d.night_start(night, &c));
     }
 
     #[test]

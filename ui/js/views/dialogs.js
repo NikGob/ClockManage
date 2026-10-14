@@ -171,6 +171,23 @@ export function finishDialog(v) {
   });
 }
 
+/** A start at night: one click there is most likely a miss, so it takes a hold (2 s by default). */
+export function nightStartDialog(v) {
+  const s = v.night_hold_sec || 2;
+  return dialog(`
+    <h2>${tr('dialog_start_the_day_at_night')}</h2>
+    <p class="body-m muted">${tr('dialog_its_night_now_the_study')}</p>
+    <div class="actions">
+      <button class="btn text interactive" data-close autofocus>${tr('ui_cancel')}</button>
+      <button class="btn tonal interactive hold" data-ok><span class="fillbar"></span>${icon('play')}${tr('dialog_hold_s_start', { s })}</button>
+    </div>`, (d, close) => {
+    holdButton(d.querySelector('[data-ok]'), s * 1000, async () => {
+      const r = await run(() => call('start_day', { night: true }).then(() => true));
+      if (r) close(true);
+    });
+  });
+}
+
 /**
  * "Отрезок": pick one or several (lunch → nap); they run one after another. While a segment
  * runs, the picks go to its queue.

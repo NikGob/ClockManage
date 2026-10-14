@@ -4,7 +4,7 @@
 use clockmanage_core::config::{DayKind, EditContext};
 use clockmanage_core::day::PlanBlock;
 use clockmanage_core::i18n::{self, Lang};
-use clockmanage_core::mcp::{self, McpHost, PlanRequest};
+use clockmanage_core::mcp::{self, McpHost, NightStartRequest, PlanRequest};
 use clockmanage_core::{chrono, view, Config, DayState};
 use serde_json::{json, Value};
 
@@ -84,6 +84,9 @@ impl McpHost for NoHost {
         unreachable!()
     }
     fn start_focus_lock(&self, _: u32, _: Option<&str>) -> Result<Value, String> {
+        unreachable!()
+    }
+    fn set_night_start(&self, _: NightStartRequest) -> Result<Value, String> {
         unreachable!()
     }
 }
