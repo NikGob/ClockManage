@@ -760,7 +760,8 @@ impl DayState {
         }
         match self.phase {
             Phase::Work { block, .. } => Some(block),
-            Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } => Some(next),
+            // A day saved with a stale `next` (the plan got shorter) has no current block.
+            Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } => Some(next).filter(|&n| n < self.plan.len()),
             _ => None,
         }
     }
@@ -1154,7 +1155,7 @@ impl DayState {
             }
             _ => return Err(tr!("day_the_next_part_cant_be_started")),
         };
-        let target = if self.mode == Mode::Plan && self.is_block_done(next) { self.first_open_block() } else { Some(next) };
+        let target = if self.mode == Mode::Plan && (self.is_block_done(next) || next >= self.plan.len()) { self.first_open_block() } else { Some(next) };
         let Some(b) = target else {
             self.phase = Phase::Done;
             return Ok(());
@@ -1417,8 +1418,11 @@ impl DayState {
 
     /// A started study block that is still open.
     fn check_closable(&self, i: usize) -> Result<(), String> {
-        let name = &self.plan[i].name;
-        if self.plan[i].is_break() {
+        let Some(b) = self.plan.get(i) else {
+            return Err(tr!("day_theres_no_current_block_right_now"));
+        };
+        let name = &b.name;
+        if b.is_break() {
             return Err(tr!("day_is_a_segment_not_a_study", name = name));
         }
         if self.is_block_done(i) {
@@ -1778,8 +1782,9 @@ impl DayState {
         if self.mode == Mode::Plan {
             let open = self.first_open_block();
             if lost_next {
-                if let (Some(n), Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. }) = (open, &mut self.phase) {
-                    *next = n;
+                // No open block left: the old index may point past the new plan, so it goes too.
+                if let Phase::Break { next, .. } | Phase::Await { next, .. } | Phase::Lunch { next, .. } | Phase::Segment { next, .. } = &mut self.phase {
+                    *next = open.unwrap_or(0);
                 }
             }
             if started {

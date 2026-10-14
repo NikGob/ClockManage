@@ -409,6 +409,29 @@ mod tests {
     }
 
     #[test]
+    fn plan_cut_under_a_running_segment_leaves_no_stale_next() {
+        let mut c = cfg();
+        c.profiles.full.plan = vec![PlanBlock::new("Математика", 45), PlanBlock::brk("Обед", 40), PlanBlock::new("Экстернат", 45)];
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.tick(start() + 45 * MIN, &c);
+        assert!(matches!(d.phase, Phase::Segment { next: 2, .. }));
+        // lunch and the last block leave the plan while lunch runs: no open block is left
+        let now = start() + 50 * MIN;
+        d.set_plan(now, vec![PlanBlock::new("Математика", 45)], true).unwrap();
+        assert!(matches!(d.phase, Phase::Segment { next: 0, .. }));
+        // the screen builds (it used to index the plan with the old `next` and crash the app)
+        let v = crate::view::build(&d, &c, now);
+        assert!(!v.can.finish_block);
+        // a day saved with a stale index before the fix opens too
+        d.phase = Phase::Segment { rec: 0, next: 4 };
+        assert_eq!(d.current_block(), None);
+        crate::view::build(&d, &c, now);
+        d.end_segment(now + MIN).unwrap();
+        assert!(matches!(d.phase, Phase::Done));
+    }
+
+    #[test]
     fn planned_break_starts_when_the_block_before_closes() {
         let mut c = cfg();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 45), PlanBlock::brk("Обед", 40), PlanBlock::new("Экстернат", 45)];
