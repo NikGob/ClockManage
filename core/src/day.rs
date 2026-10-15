@@ -690,7 +690,7 @@ impl DayState {
                     expired_notified: true,
                 });
             }
-            self.log(now, "restore", tr("day_the_app_was_closed_the_timer"));
+            self.log(now, "restore", tr!("day_the_app_was_closed_for_min", min = worked_min(now - saved)));
         }
         // Access windows never survive a restart.
         if let Some(p) = &mut self.pause {
@@ -2414,6 +2414,9 @@ mod tests {
         assert!(r.pause.is_some());
         assert_eq!(r.phase_elapsed(start() + 60 * MIN), 20 * MIN);
         assert!(r.lock_state(start() + 60 * MIN, &c).blocked);
+        let ev = r.events.last().unwrap();
+        assert_eq!(ev.kind, "restore");
+        assert!(ev.text.contains("40 мин"), "{}", ev.text);
     }
 
     #[test]

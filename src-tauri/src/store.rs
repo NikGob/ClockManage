@@ -8,13 +8,46 @@ pub struct Store {
     pub dir: PathBuf,
 }
 
+fn bak_path(path: &Path) -> PathBuf {
+    path.with_extension("bak")
+}
+
+/// Survives a power cut: the new text reaches the disk (fsync) before it replaces the file,
+/// and the previous good version stays as `.bak`. Without the fsync, NTFS could keep the
+/// rename but not the data, and the day came back as an empty file.
 fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
     }
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(data.as_bytes())?;
+        f.sync_all()?;
+    }
+    // A broken file never replaces the good backup.
+    let current_ok = std::fs::read_to_string(path).is_ok_and(|s| serde_json::from_str::<serde_json::Value>(&s).is_ok());
+    if current_ok {
+        std::fs::rename(path, bak_path(path))?;
+    }
     std::fs::rename(&tmp, path)
+}
+
+/// The file, or its `.bak` when the file is missing or broken. A broken file with nothing to
+/// fall back on is moved aside (`.broken`) before the caller writes a new one over it.
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    let parse = |p: &Path| std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok());
+    if let Some(v) = parse(path) {
+        return Some(v);
+    }
+    if let Some(v) = parse(&bak_path(path)) {
+        return Some(v);
+    }
+    if path.exists() {
+        let _ = std::fs::rename(path, path.with_extension("broken"));
+    }
+    None
 }
 
 impl Store {
@@ -33,7 +66,7 @@ impl Store {
 
     /// The saved config, or the defaults (`true`) on the first run.
     pub fn load_config_or_new(&self) -> (Config, bool) {
-        let saved: Option<Config> = std::fs::read_to_string(self.config_path()).ok().and_then(|s| serde_json::from_str(&s).ok());
+        let saved: Option<Config> = read_json(&self.config_path());
         let new = saved.is_none();
         let mut cfg = saved.unwrap_or_default();
         cfg.normalize();
@@ -51,7 +84,7 @@ impl Store {
     }
 
     pub fn load_day(&self, date: &str) -> Option<DayState> {
-        std::fs::read_to_string(self.day_path(date)).ok().and_then(|s| serde_json::from_str(&s).ok())
+        read_json(&self.day_path(date))
     }
 
     pub fn save_day(&self, day: &DayState) {
@@ -94,5 +127,58 @@ impl Store {
         let path = dir.join(name);
         std::fs::write(&path, data)?;
         Ok(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cm-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn keeps_previous_version_as_bak() {
+        let p = dir("bak").join("a.json");
+        write_atomic(&p, "{\"v\":1}").unwrap();
+        write_atomic(&p, "{\"v\":2}").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "{\"v\":2}");
+        assert_eq!(std::fs::read_to_string(bak_path(&p)).unwrap(), "{\"v\":1}");
+    }
+
+    #[test]
+    fn broken_file_falls_back_to_bak() {
+        let p = dir("fallback").join("a.json");
+        write_atomic(&p, "{\"v\":1}").unwrap();
+        write_atomic(&p, "{\"v\":2}").unwrap();
+        // A power cut left zeros instead of the text.
+        std::fs::write(&p, [0u8; 16]).unwrap();
+        let v: serde_json::Value = read_json(&p).unwrap();
+        assert_eq!(v["v"], 1);
+        // Writing over the broken file keeps the good backup.
+        write_atomic(&p, "{\"v\":3}").unwrap();
+        assert_eq!(std::fs::read_to_string(bak_path(&p)).unwrap(), "{\"v\":1}");
+    }
+
+    #[test]
+    fn missing_file_reads_bak() {
+        // A cut between the two renames: only the backup is there.
+        let p = dir("between").join("a.json");
+        std::fs::write(bak_path(&p), "{\"v\":1}").unwrap();
+        let v: serde_json::Value = read_json(&p).unwrap();
+        assert_eq!(v["v"], 1);
+    }
+
+    #[test]
+    fn broken_file_without_bak_is_moved_aside() {
+        let p = dir("aside").join("a.json");
+        std::fs::write(&p, "").unwrap();
+        assert!(read_json::<serde_json::Value>(&p).is_none());
+        assert!(!p.exists());
+        assert!(p.with_extension("broken").exists());
     }
 }

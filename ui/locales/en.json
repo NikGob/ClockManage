@@ -393,7 +393,7 @@
   "day_single_timer_round_done": "Single timer: round {round} done",
   "day_single_timer_stopped": "Single timer stopped",
   "day_thats_not_later_than_the_current": "That's not later than the current day end.",
-  "day_the_app_was_closed_the_timer": "The app was closed — the timer is paused",
+  "day_the_app_was_closed_for_min": "The app was closed for {min} min — the timer is paused, that time is not counted",
   "day_the_day_end_cant_move_past": "The day end can't move past 02:00 at night.",
   "day_the_day_has_already_started": "The day has already started.",
   "day_the_lock_is_off_for_the": "{cfg} — the lock is off for the day",

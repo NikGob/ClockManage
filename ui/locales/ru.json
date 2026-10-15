@@ -393,7 +393,7 @@
   "day_single_timer_round_done": "Одиночный таймер: круг {round} закончен",
   "day_single_timer_stopped": "Одиночный таймер остановлен",
   "day_thats_not_later_than_the_current": "Это не позже текущего конца дня.",
-  "day_the_app_was_closed_the_timer": "Приложение было закрыто — таймер поставлен на паузу",
+  "day_the_app_was_closed_for_min": "Приложение было закрыто {min} мин — таймер на паузе, это время не засчитано",
   "day_the_day_end_cant_move_past": "Позже 02:00 ночи конец дня сдвинуть нельзя.",
   "day_the_day_has_already_started": "День уже начат.",
   "day_the_lock_is_off_for_the": "{cfg} — блокировка снята по времени",
