@@ -27,13 +27,6 @@ use crate::system;
 use clockmanage_core::i18n::tr;
 use clockmanage_core::tr;
 
-pub struct Captcha {
-    id: u64,
-    answers: Vec<i64>,
-    created: Ts,
-}
-
-pub const CAPTCHA_WAIT_MS: i64 = 15_000;
 /// The agent's "finish block" confirmation lives this long.
 const FINISH_TOKEN_MS: i64 = 120_000;
 
@@ -46,7 +39,6 @@ pub struct FinishToken {
 pub struct Inner {
     pub cfg: Config,
     pub day: DayState,
-    pub captcha: Option<Captcha>,
     pub force_emit: bool,
     pub last_emit_sec: i64,
     pub last_save: Ts,
@@ -69,6 +61,7 @@ pub struct Shared {
     pub blocker: Mutex<Blocker>,
     pub mcp: McpServer,
     pub phone: PhoneServer,
+    pub updates: crate::updater::Updates,
     pub app: AppHandle,
     pub admin: bool,
     pub overlay: Mutex<Option<Value>>,
@@ -90,8 +83,7 @@ pub struct Meta {
     pub blocking_applied: bool,
     pub sound: bool,
     pub overlay: bool,
-    pub pause_access: bool,
-    pub pause_access_min: u32,
+    pub break_access: bool,
     pub emergency_min: u32,
     pub lunch_min: u32,
     /// Segment types, so the "Отрезок" picker opens without a round trip.
@@ -104,6 +96,7 @@ pub struct Meta {
     pub tz_offset_min: i32,
     /// The interface language in force ("ru" | "en"): the setting, "auto" resolved.
     pub lang: &'static str,
+    pub update: crate::updater::UpdateStatus,
 }
 
 #[derive(Serialize, Clone)]
@@ -130,8 +123,7 @@ impl Shared {
                 blocking_applied: blocker.applied.active,
                 sound: g.cfg.sound,
                 overlay: g.cfg.overlay,
-                pause_access: g.cfg.pause_access,
-                pause_access_min: g.cfg.pause_access_min,
+                break_access: g.cfg.break_access,
                 emergency_min: g.cfg.emergency_min,
                 lunch_min: g.day.timing.lunch_min,
                 segments: g.cfg.segments.clone(),
@@ -142,6 +134,7 @@ impl Shared {
                 data_dir: self.store.dir.display().to_string(),
                 tz_offset_min: g.cfg.tz_offset_min,
                 lang: clockmanage_core::i18n::get().key(),
+                update: self.updates.status(),
             },
         }
     }
@@ -190,8 +183,17 @@ impl Shared {
             return;
         }
         let passive = payload.get("passive").and_then(Value::as_bool).unwrap_or(false);
-        *self.overlay.lock().unwrap() = Some(payload.clone());
         let Some(w) = self.app.get_webview_window("overlay") else { return };
+        // A passive notice ("Nope", a break) never covers a card waiting for the user: "Start
+        // part 2", "I'm up" or the block line would vanish with it.
+        {
+            let mut cur = self.overlay.lock().unwrap_or_else(|e| e.into_inner());
+            let waiting = cur.as_ref().is_some_and(|p| !p.get("passive").and_then(Value::as_bool).unwrap_or(false));
+            if passive && waiting && w.is_visible().unwrap_or(false) {
+                return;
+            }
+            *cur = Some(payload.clone());
+        }
         if let Ok(Some(m)) = w.current_monitor().or_else(|_| w.primary_monitor()) {
             let rect = (m.position().x, m.position().y, m.size().width, m.size().height);
             let mut last = self.overlay_rect.lock().unwrap_or_else(|e| e.into_inner());
@@ -311,6 +313,12 @@ impl Shared {
 
     fn react(&self, events: &[Event], snap: &Snapshot) {
         let v = &snap.view;
+        // The last block closes the day in the same tick: one card asks for its line.
+        let day_done = events.iter().any(|e| matches!(e, Event::DayCompleted { .. }));
+        let closed_block = events.iter().find_map(|e| match e {
+            Event::BlockCompleted { block, .. } => Some(*block),
+            _ => None,
+        });
         for e in events {
             match e {
                 Event::WorkEnded { block_done: false, block_name, part, parts } => {
@@ -337,6 +345,9 @@ impl Shared {
                         extra = if *pauses > 0 { format!(" ({})", fmt_dur(*pause_ms)) } else { String::new() },
                     );
                     self.notify(&tr!("app_block_closed", block_name = block_name), tr("app_what_was_boring_what_distracted_you"));
+                    if day_done {
+                        continue;
+                    }
                     self.show_overlay(json!({
                         "kind": "block", "passive": false,
                         "title": tr!("app_closed", block_name = block_name),
@@ -347,11 +358,16 @@ impl Shared {
                 Event::DayCompleted { work_ms } => {
                     let tail = if v.lock.blocked { tr("app_the_focus_lock_goes_on") } else { tr("app_the_lock_is_off") };
                     self.notify(tr("view_day_closed"), &tr!("app_of_study", work_ms = fmt_dur(*work_ms), tail = tail));
-                    self.show_overlay(json!({
+                    let mut card = json!({
                         "kind": "day", "passive": false,
                         "title": tr("view_day_closed"),
                         "text": tr!("app_of_study", work_ms = fmt_dur(*work_ms), tail = tail),
-                    }));
+                    });
+                    if let Some(b) = closed_block {
+                        card["ask_note"] = json!(true);
+                        card["block"] = json!(b);
+                    }
+                    self.show_overlay(card);
                 }
                 Event::BreakEnded { next_name, next_part, next_parts, lunch } => {
                     self.play(Sound::Alarm);
@@ -377,18 +393,6 @@ impl Shared {
                 Event::PauseReminder { paused_ms } => {
                     self.play(Sound::Ping);
                     self.notify(tr("app_youre_paused"), &tr!("app_already_the_timer_is_waiting_for", paused_ms = fmt_dur(*paused_ms)));
-                }
-                Event::PauseAccessWarning { left_ms } => {
-                    self.play(Sound::Ping);
-                    self.notify(tr("app_access_closes_soon"), &tr!("app_left_then_the_lock_comes_back", left_ms = fmt_dur(*left_ms)));
-                }
-                Event::PauseAccessExpired => {
-                    self.play(Sound::Ping);
-                    self.notify(tr("app_access_closed"), tr("app_the_lock_is_back_to_extend"));
-                    self.show_overlay(json!({
-                        "kind": "access", "passive": true, "auto_hide_ms": 4200,
-                        "title": tr("app_access_closed"), "text": tr("app_the_lock_is_back_on"),
-                    }));
                 }
                 Event::EmergencyEnded => {
                     self.play(Sound::Ping);
@@ -1443,6 +1447,19 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
     Ok(cfg)
 }
 
+/// "Check now" in Settings: the check and the download run off the UI thread.
+#[tauri::command]
+pub fn check_update(s: S) {
+    let shared = s.inner().clone();
+    std::thread::spawn(move || crate::updater::check(&shared, true));
+}
+
+/// "Restart and update" in Settings.
+#[tauri::command]
+pub fn install_update(s: S) -> Result<(), String> {
+    crate::updater::install(s.inner())
+}
+
 #[tauri::command]
 pub fn regenerate_port(s: S) -> Result<u16, String> {
     let shared = s.inner().clone();
@@ -1685,55 +1702,6 @@ pub fn emergency(s: S, phrase: String) -> Result<Ts, String> {
 #[tauri::command]
 pub fn end_access(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.end_access_early(now))
-}
-
-#[derive(Serialize)]
-pub struct CaptchaView {
-    id: u64,
-    problems: Vec<String>,
-    wait_ms: i64,
-}
-
-#[tauri::command]
-pub fn captcha_new(s: S) -> CaptchaView {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let mut problems = vec![];
-    let mut answers = vec![];
-    let a: i64 = rng.gen_range(13..=99);
-    let b: i64 = rng.gen_range(4..=9);
-    problems.push(format!("{a} × {b}"));
-    answers.push(a * b);
-    let a: i64 = rng.gen_range(120..=899);
-    let b: i64 = rng.gen_range(120..=899);
-    problems.push(format!("{a} + {b}"));
-    answers.push(a + b);
-    let a: i64 = rng.gen_range(300..=999);
-    let b: i64 = rng.gen_range(101..=299);
-    let c: i64 = rng.gen_range(3..=9);
-    problems.push(format!("{a} − {b} × {c}"));
-    answers.push(a - b * c);
-    let id = rng.gen::<u32>() as u64;
-    s.lock().captcha = Some(Captcha { id, answers, created: clock::now_ts() });
-    CaptchaView { id, problems, wait_ms: CAPTCHA_WAIT_MS }
-}
-
-#[tauri::command]
-pub fn captcha_submit(s: S, id: u64, answers: Vec<i64>) -> Result<Ts, String> {
-    s.mutate(|g, now| {
-        let c = g.captcha.take().ok_or(tr("app_the_captcha_expired_open_it_again"))?;
-        if c.id != id {
-            return Err(tr!("app_the_captcha_expired_open_it_again"));
-        }
-        if now - c.created < CAPTCHA_WAIT_MS {
-            g.captcha = Some(c);
-            return Err(tr!("app_too_fast_think_for_a_couple"));
-        }
-        if c.answers != answers {
-            return Err(tr!("app_theres_a_mistake_here_are_new"));
-        }
-        g.day.extend_pause_access(now, &g.cfg)
-    })
 }
 
 #[derive(Serialize)]

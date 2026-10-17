@@ -11,6 +11,7 @@ let STATE = q.get('state') || 'work';
 if (q.get('then')) setTimeout(() => { STATE = q.get('then'); }, Number(q.get('at') || 2000));
 const t0 = Date.now();
 const MIN = 60000;
+let update = q.get('update') || 'latest';
 
 const cfg = {
   week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
@@ -22,9 +23,9 @@ const cfg = {
   },
   timing: { work_segment_min: 45, short_break_min: 10, between_blocks_min: 20, lunch_min: 45 },
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
-  pause_access: q.get('pa') === '1', pause_access_min: 10,
+  break_access: q.get('ba') === '1',
   emergency_phrase: L('Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе', 'I am consciously interrupting my study day, I understand this goes to the log, and I will be back to work in ten minutes'),
-  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
+  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47213,
   segments: [{ name: L('Обед', 'Lunch'), minutes: 45, alarm: false, open_access: false, prep_min: 0 }, { name: L('Сон', 'Nap'), minutes: 20, alarm: true, open_access: false, prep_min: 10 }, { name: L('Прогулка', 'Walk'), minutes: 15, alarm: false, open_access: false, prep_min: 0 }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
@@ -44,7 +45,8 @@ function blocks(now) {
   ];
   if (STATE === 'work') b[1].work_ms = 45 * MIN + 13 * MIN + el;
   if (STATE === 'idle') b.forEach((x) => { x.work_ms = 0; x.parts_done = 0; x.done = false; x.current = false; x.started = false; });
-  if (STATE === 'done') b.forEach((x) => { x.work_ms = x.minutes * MIN; x.done = true; x.current = false; });
+  // A planned segment is not study: it has no work time.
+  if (STATE === 'done') b.forEach((x) => { x.work_ms = x.kind === 'break' ? 0 : x.minutes * MIN; x.done = true; x.current = false; });
   return b;
 }
 
@@ -54,7 +56,11 @@ function phase(now) {
     case 'work': { const dur = 45 * MIN, e = 13 * MIN + el; return { kind: 'work', title: L('Словацкий', 'Spanish'), subtitle: L('Часть 2 из 2', 'Part 2 of 2'), block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
     case 'paused': { const dur = 45 * MIN, e = 21 * MIN; return { kind: 'work', title: L('Словацкий', 'Spanish'), subtitle: L('Часть 2 из 2', 'Part 2 of 2'), block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: false, paused: true, waiting_ms: 0 }; }
     case 'lunch_break': { const dur = 45 * MIN, e = el; return { kind: 'lunch_break', title: L('Обед', 'Lunch'), subtitle: L('Дальше: Словацкий, часть 2 из 2', 'Next: Spanish, part 2 of 2'), block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
-    case 'break': { const dur = 10 * MIN, e = 3 * MIN + el; return { kind: 'break', title: L('Перерыв', 'Break'), subtitle: L('Дальше: Словацкий, часть 2 из 2', 'Next: Spanish, part 2 of 2'), block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
+    case 'break': {
+      // ?ba=1 shows the break between blocks (the one access in breaks opens).
+      if (cfg.break_access) { const dur = 20 * MIN, e = 13 * MIN + el; return { kind: 'break', title: L('Перерыв между блоками', 'Break between blocks'), subtitle: L('Дальше: Экстернат, часть 1 из 4', 'Next: Thesis, part 1 of 4'), block: 3, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 }; }
+      const dur = 10 * MIN, e = 3 * MIN + el; return { kind: 'break', title: L('Перерыв', 'Break'), subtitle: L('Дальше: Словацкий, часть 2 из 2', 'Next: Spanish, part 2 of 2'), block: 1, dur_ms: dur, elapsed_ms: e, remaining_ms: dur - e, running: true, paused: false, waiting_ms: 0 };
+    }
     case 'segment': {
       // ?prep=1 — getting ready for the nap; ?sw=1 — lunch without a timer.
       const prep = !!q.get('prep'), sw = !!q.get('sw');
@@ -85,13 +91,14 @@ function snapshot() {
   const p = phase(now);
   const started = STATE !== 'idle';
   const paused = STATE === 'paused';
-  const access = paused && cfg.pause_access;
+  // `?ba=1`: access in the break between blocks (state=break).
+  const access = STATE === 'break' && cfg.break_access;
   // `?focus=1`: a focus lock (start_focus_lock) runs for 95 more minutes.
   const focus_until = q.get('focus') === '1' ? t0 + 95 * MIN : null;
   const lock = focus_until && (STATE === 'idle' || STATE === 'done') ? { blocked: true, base: true, reason: 'focus', until: null, focus_until }
     : STATE === 'idle' ? { blocked: false, base: false, reason: 'not_started', until: null, focus_until }
       : STATE === 'done' ? { blocked: false, base: false, reason: 'completed', until: null, focus_until }
-        : access && !focus_until ? { blocked: false, base: true, reason: 'pause_access', until: t0 + 7 * MIN, focus_until }
+        : access && !focus_until ? { blocked: false, base: true, reason: 'break_access', until: t0 + 7 * MIN, focus_until }
           : { blocked: true, base: true, reason: 'study', until: null, focus_until };
   return {
     view: {
@@ -99,13 +106,13 @@ function snapshot() {
       day_end: `${String(Math.floor(dayEnd / 60) % 24).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
       day_end_at: dayEndAt(), day_end_next_day: dayEnd >= 1440, day_end_changed: dayEnd !== 1320, forecast: forecast(now, b),
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
-      pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN, access_enabled: cfg.pause_access, access_until: access ? t0 + 7 * MIN : null, access_left_ms: access ? t0 + 7 * MIN - now : 0, extensions: 0 } : null,
+      pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN } : null,
       emergency_count: 0, lunch_used: false, single: null, undo_until: null,
       pending_note: q.get('note') && !noteDone ? { block: 0, name: L('Математика', 'Math') } : null,
       can: {
         start_day: STATE === 'idle', night_start: STATE === 'idle' && q.has('night'), pause: ['work', 'break'].includes(STATE), resume: paused, start_next: ['await', 'break', 'lunch_break'].includes(STATE),
         lunch: ['await', 'break'].includes(STATE), single: ['idle', 'done'].includes(STATE), stop_single: false,
-        emergency: lock.base && !access, extend_access: access, end_access: access, edit_pause_access: !lock.base,
+        emergency: lock.base && !access, end_access: false, edit_break_access: !lock.base,
         extend_day_end: kind !== 'off' && STATE !== 'done' && dayEnd < 1560, lighter_kind: !lock.base, set_day_end: true,
         finish_block: ['work', 'paused', 'break', 'await'].includes(STATE),
         segment: ['break', 'await', 'segment'].includes(STATE), end_segment: STATE === 'segment',
@@ -113,17 +120,19 @@ function snapshot() {
       },
     },
     meta: {
-      admin: true, version: '0.4.9', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
+      admin: true, version: '0.5.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
       phone: { enabled: cfg.phone.enabled, running: cfg.phone.enabled, port: 47811, address: '192.168.1.42', pc_name: 'DESKTOP-PC', error: null, pin: phonePin, pin_until: phonePin ? t0 + 2 * MIN : null,
-        apk: { available: true, code: 42, name: '0.4.9 (58)', size: 812345 },
+        apk: { available: true, code: 42, name: '0.5.0 (58)', size: 812345 },
         devices: [{ id: 'a1b2c3', name: 'Pixel 8', paired_at: t0 - 86400000, last_seen: Date.now() - 2 * MIN, blocker: true }] },
-      blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, pause_access: cfg.pause_access, pause_access_min: 10,
+      blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, break_access: cfg.break_access,
       emergency_min: 10, lunch_min: 45, segments: cfg.segments, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
       mini_contrast: cfg.appearance.mini_contrast,
       data_dir: 'C:\\Users\\you\\AppData\\Roaming\\com.nikgob.clockmanage',
       tz_offset_min: cfg.tz_offset_min,
       // ?lang=en previews the English interface; "auto" follows the browser.
       lang: cfg.lang === 'auto' ? (/^(ru|uk|be)/i.test(navigator.language) ? 'ru' : 'en') : cfg.lang,
+      // ?update=ready previews a downloaded update (also checking, downloading, error).
+      update: { state: update, version: ['ready', 'downloading'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null },
     },
   };
 }
@@ -173,6 +182,8 @@ export async function invoke(cmd, args) {
         day_totals: [2.25, 5.25, 1.75, 4, 4.5, 0, 0], total: 17.75, actual_min: 1104.6 },
       tsv: L('Предмет\t28.09\n', 'Subject\t28.09\n') };
     case 'set_block_note': noteDone = true; return null;
+    case 'check_update': update = 'checking'; setTimeout(() => { update = 'latest'; }, 1500); return null;
+    case 'install_update': location.reload(); return null;
     case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
@@ -206,7 +217,6 @@ export function overlayDemo(kind) {
     prep: { kind: 'prep', passive: false, title: L('Пора ложиться', 'Time to lie down'), text: L('Подготовка окончена. Сон и будильник пойдут от «Лёг».', 'Time’s up for getting ready. The nap and the alarm start from “In bed”.'), action: L('Лёг', 'In bed') },
     ask: { kind: 'ask', passive: false, title: L('Что сейчас?', 'What now?'), text: L('Блок закрыт 10 минут назад. Запусти таймер того, чем занят:', 'A block closed 10 minutes ago. Start a timer for what you’re doing:'), types: [{ name: L('Обед', 'Lunch'), minutes: 45 }, { name: L('Сон', 'Nap'), minutes: 20 }, { name: L('Прогулка', 'Walk'), minutes: 15 }] },
     nope: { kind: 'nope', passive: true, auto_hide_ms: 600000, title: L('Не-не-не', 'Nope'), text: L('Telegram — после учёбы', 'Telegram — after studying') },
-    access: { kind: 'access', passive: true, auto_hide_ms: 600000, title: L('Доступ закрыт', 'Access closed'), text: L('Блокировка снова включена', 'The lock is back on') },
   }[kind];
   return { ...d, demo: true };
 }

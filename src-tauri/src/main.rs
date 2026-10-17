@@ -7,6 +7,7 @@ mod phone_server;
 mod sound;
 mod store;
 mod system;
+mod updater;
 mod windows;
 
 use std::sync::{Arc, Mutex};
@@ -46,6 +47,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |tauri_app| {
             let handle = tauri_app.handle().clone();
             let dir = handle.path().app_data_dir().expect("app data dir");
@@ -74,7 +76,6 @@ fn main() {
                 inner: Mutex::new(app::Inner {
                     cfg,
                     day,
-                    captcha: None,
                     force_emit: true,
                     last_emit_sec: 0,
                     last_save: now,
@@ -85,6 +86,7 @@ fn main() {
                 blocker: Mutex::new(blocker::Blocker::new(dir.join("blocker.json"))),
                 mcp: mcp_server::McpServer::default(),
                 phone: phone_server::PhoneServer::default(),
+                updates: updater::Updates::default(),
                 app: handle.clone(),
                 admin: system::is_admin(),
                 overlay: Mutex::new(None),
@@ -114,6 +116,7 @@ fn main() {
                 }
             });
             app::spawn_ticker(shared.clone());
+            updater::spawn(shared.clone());
 
             if !background {
                 windows::show_main(&handle);
@@ -139,8 +142,6 @@ fn main() {
             app::set_day_end,
             app::emergency,
             app::end_access,
-            app::captcha_new,
-            app::captcha_submit,
             app::list_days,
             app::day_stats,
             app::export_log,
@@ -164,6 +165,8 @@ fn main() {
             app::set_segment_mode,
             app::drop_queued,
             app::week_stats,
+            app::check_update,
+            app::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClockManage")

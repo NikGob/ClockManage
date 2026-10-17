@@ -323,9 +323,11 @@ pub struct Config {
     pub tz_offset_min: i32,
     pub timing: Timing,
     pub blocklist: BlockList,
-    /// Grant access to blocked things while the timer is paused.
-    pub pause_access: bool,
-    pub pause_access_min: u32,
+    /// Open blocked things during the break between blocks (until the break timer runs out;
+    /// a paused break stays blocked). Took the place of access on pause in 0.5.0, so an old
+    /// config keeps its choice.
+    #[serde(alias = "pause_access")]
+    pub break_access: bool,
     pub emergency_phrase: String,
     pub emergency_min: u32,
     /// Loud reminder period while the timer waits for "start next part".
@@ -335,6 +337,8 @@ pub struct Config {
     /// Restart a running Firefox when path rules (Shorts) start to apply.
     pub restart_firefox: bool,
     pub autostart: bool,
+    /// Check GitHub Releases for a new version, download it and install it while no day runs.
+    pub auto_update: bool,
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub appearance: Appearance,
@@ -374,8 +378,7 @@ impl Default for Config {
             tz_offset_min: 180,
             timing: Timing::default(),
             blocklist: BlockList::default(),
-            pause_access: false,
-            pause_access_min: 10,
+            break_access: false,
             emergency_phrase: default_phrase().into(),
             emergency_min: 10,
             reminder_sec: 60,
@@ -383,6 +386,7 @@ impl Default for Config {
             overlay: true,
             restart_firefox: true,
             autostart: true,
+            auto_update: true,
             mcp_enabled: true,
             mcp_port: 0,
             appearance: Appearance::default(),
@@ -444,7 +448,6 @@ impl Config {
         self.timing.short_break_min = self.timing.short_break_min.clamp(1, 120);
         self.timing.between_blocks_min = self.timing.between_blocks_min.clamp(1, 180);
         self.timing.lunch_min = self.timing.lunch_min.clamp(5, 180);
-        self.pause_access_min = self.pause_access_min.clamp(1, 60);
         self.emergency_min = self.emergency_min.clamp(1, 60);
         self.reminder_sec = self.reminder_sec.clamp(15, 600);
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
@@ -496,9 +499,9 @@ impl Config {
         if !ctx.locked {
             return Ok(());
         }
-        if new.pause_access != self.pause_access {
+        if new.break_access && !self.break_access {
             return Err(tr!(
-                "config_access_on_pause_can_only_be",
+                "config_access_during_the_break_between_blocks",
                 day_end_min = fmt_hm(self.day_end_min),
             ));
         }
@@ -546,9 +549,6 @@ impl Config {
         }
         if new.emergency_min > self.emergency_min || new.emergency_phrase != self.emergency_phrase {
             return Err(tr!("config_emergency_access_can_only_be_configured"));
-        }
-        if new.pause_access_min > self.pause_access_min {
-            return Err(tr!("config_the_access_on_pause_limit_cant"));
         }
         if !new.autostart && self.autostart {
             return Err(tr!("config_autostart_cant_be_turned_off_during"));
@@ -832,11 +832,19 @@ mod tests {
     }
 
     #[test]
-    fn pause_access_only_outside_lock() {
+    fn break_access_turns_on_only_outside_lock() {
         let cfg = Config::default();
         let mut n = cfg.clone();
-        n.pause_access = true;
+        n.break_access = true;
         assert!(cfg.check_update(&n, EditContext { locked: true }).is_err());
         assert!(cfg.check_update(&n, EditContext { locked: false }).is_ok());
+        // Turning it off only makes the lock stricter.
+        assert!(n.check_update(&cfg, EditContext { locked: true }).is_ok());
+    }
+
+    #[test]
+    fn old_pause_access_carries_over() {
+        let c: Config = serde_json::from_str(r#"{"pause_access": true, "pause_access_min": 15}"#).unwrap();
+        assert!(c.break_access);
     }
 }

@@ -65,88 +65,17 @@ export function emergencyDialog(cfg, countToday) {
   });
 }
 
-export function captchaDialog(minutes) {
-  return dialog(`
-    <h2>${tr('dialog_extend_access')}</h2>
-    <p class="body-m muted">${tr('dialog_solve_the_sums_in_your_head')}</p>
-    <div class="problems" id="c-probs"></div>
-    <p class="label-m muted" id="c-wait"></p>
-    <div class="actions">
-      <button class="btn text interactive" data-close>${tr('dialog_back_to_work')}</button>
-      <button class="btn filled interactive hold" data-ok disabled><span class="fillbar"></span>${icon('add')}${tr('dialog_hold_3_s')}${minutes} ${tr('overlay_min')}</button>
-    </div>`, async (d, close) => {
-    const probs = d.querySelector('#c-probs');
-    const ok = d.querySelector('[data-ok]');
-    const wait = d.querySelector('#c-wait');
-    const bar = ok.querySelector('.fillbar');
-    let cap = null;
-    let readyAt = 0;
-    let tick = 0;
-
-    const load = async () => {
-      cap = await call('captcha_new');
-      readyAt = Date.now() + cap.wait_ms;
-      probs.innerHTML = cap.problems.map((p, i) => `<span class="p tnum">${esc(p)} =</span>
-        <div class="field"><label class="sr-only" for="c${i}">${tr('dialog_answer')} ${i + 1}</label><input id="c${i}" type="number" inputmode="numeric" autocomplete="off"></div>`).join('');
-      probs.querySelector('input')?.focus();
-      probs.querySelectorAll('input').forEach((inp) => inp.addEventListener('paste', (e) => e.preventDefault()));
-    };
-    const filled = () => [...probs.querySelectorAll('input')].every((i) => i.value.trim() !== '');
-    const refresh = () => {
-      const left = Math.ceil((readyAt - Date.now()) / 1000);
-      wait.textContent = left > 0 ? tr('dialog_the_button_unlocks_in_s', { left }) : '';
-      ok.disabled = left > 0 || !filled();
-    };
-    tick = setInterval(refresh, 250);
-    d.addEventListener('close', () => clearInterval(tick));
-    probs.addEventListener('input', refresh);
-
-    let holdStart = 0;
-    let raf = 0;
-    const HOLD = 3000;
-    const stopHold = () => {
-      cancelAnimationFrame(raf);
-      holdStart = 0;
-      bar.style.transition = 'transform 200ms';
-      bar.style.transform = 'scaleX(0)';
-    };
-    const frame = async () => {
-      const t = Math.min(1, (Date.now() - holdStart) / HOLD);
-      bar.style.transition = 'none';
-      bar.style.transform = `scaleX(${t})`;
-      if (t < 1) { raf = requestAnimationFrame(frame); return; }
-      stopHold();
-      const answers = [...probs.querySelectorAll('input')].map((i) => Math.round(Number(i.value)));
-      try {
-        await call('captcha_submit', { id: cap.id, answers });
-        clearInterval(tick);
-        close(true);
-      } catch (e) {
-        snack(String(e));
-        await load();
-        refresh();
-      }
-    };
-    const startHold = (e) => {
-      if (ok.disabled || holdStart) return;
-      e.preventDefault();
-      holdStart = Date.now();
-      raf = requestAnimationFrame(frame);
-    };
-    ok.addEventListener('pointerdown', startHold);
-    ok.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) startHold(e); });
-    ['pointerup', 'pointerleave', 'keyup', 'blur'].forEach((ev) => ok.addEventListener(ev, () => { if (holdStart) stopHold(); }));
-    ok.addEventListener('click', (e) => e.preventDefault());
-
-    await load();
-    refresh();
-  });
-}
-
 /**
  * "Close the block now" — deliberately slow: the numbers first, then a 3-second hold.
  * A habit click or a stray Enter never closes a block.
  */
+/** What comes after closing block `i`: the end of the day, a planned segment or the break. */
+function nextAfter(v, i) {
+  if (!v.blocks.some((x, j) => j !== i && !x.done && x.kind !== 'break')) return tr('dialog_next_the_end_of_the_day');
+  const n = v.blocks.find((x, j) => j > i && !x.done);
+  return n?.kind === 'break' ? tr('dialog_next_name', { name: esc(n.name) }) : tr('dialog_next_the_break_between_blocks');
+}
+
 export function finishDialog(v) {
   const i = v.phase.block;
   const b = v.blocks[i];
@@ -159,7 +88,7 @@ export function finishDialog(v) {
   return dialog(`
     <h2>${tr('dialog_close')}${esc(b.name)}${tr('dialog_now')}</h2>
     <p class="body-l">${tr('dialog_worked')} <b>${workedTxt} ${tr('dialog_of')} ${b.minutes} ${tr('overlay_min')}</b>.</p>
-    <p class="body-m muted">${tr('dialog_the_blocks_plan_becomes_min', { to })}${cut ? ` — <b>${cut} ${tr('overlay_min')}</b> ${tr('dialog_not_worked_leave_the_plan')}` : ''}. ${tr('dialog_next_the_break_between_blocks')}${v.blocks.filter((x) => !x.done).length <= 1 ? tr('dialog_and_the_end_of_the_day') : ''}. ${tr('dialog_this_goes_to_the_log')}</p>
+    <p class="body-m muted">${tr('dialog_the_blocks_plan_becomes_min', { to })}${cut ? ` — <b>${cut} ${tr('overlay_min')}</b> ${tr('dialog_not_worked_leave_the_plan')}` : ''}. ${nextAfter(v, i)}. ${tr('dialog_this_goes_to_the_log')}</p>
     <div class="actions">
       <button class="btn text interactive" data-close autofocus>${tr('dialog_no_keep_working')}</button>
       <button class="btn tonal interactive hold" data-ok><span class="fillbar"></span>${icon('check')}${tr('dialog_hold_3_s_close')}</button>

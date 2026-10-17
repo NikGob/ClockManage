@@ -9,7 +9,12 @@
   Sleep 800
 !macroend
 
+; An update from the app itself (/UPDATE): start it again, in the tray. Started from here it
+; keeps the installer's admin rights, so no UAC prompt pops up while nobody is at the PC.
 !macro NSIS_HOOK_POSTINSTALL
+  ${If} $UpdateMode = 1
+    Exec '"$INSTDIR\clockmanage.exe" --background'
+  ${EndIf}
 !macroend
 
 ; Uninstall: stop the app, then undo everything it put into the system (hosts section,

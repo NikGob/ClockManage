@@ -178,6 +178,10 @@ impl DayState {
                 if self.completed_at.is_none() {
                     self.completed_at = Some(now);
                     self.log(now, "day_done", tr("segment_all_blocks_of_the_day_are"));
+                    // The last block was closed during the segment: the day closes now, with
+                    // the same sound and card as anywhere else.
+                    let total = self.progress.iter().map(|p| p.work_ms).sum();
+                    self.pending_events.push(Event::DayCompleted { work_ms: total });
                 }
             }
         }
@@ -429,6 +433,9 @@ mod tests {
         crate::view::build(&d, &c, now);
         d.end_segment(now + MIN).unwrap();
         assert!(matches!(d.phase, Phase::Done));
+        // The day closes with its card and sound, handed out with the next tick, once.
+        assert!(d.tick(now + MIN, &c).iter().any(|e| matches!(e, Event::DayCompleted { .. })));
+        assert!(!d.tick(now + 2 * MIN, &c).iter().any(|e| matches!(e, Event::DayCompleted { .. })));
     }
 
     #[test]

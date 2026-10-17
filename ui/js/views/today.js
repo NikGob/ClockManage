@@ -4,7 +4,7 @@ import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
 import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm, tsHm } from '../ui.js';
 import { tr } from '../i18n.js';
-import { singleDialog, emergencyDialog, captchaDialog, dayEndDialog, finishDialog, segmentDialog, nightStartDialog } from './dialogs.js';
+import { singleDialog, emergencyDialog, dayEndDialog, finishDialog, segmentDialog, nightStartDialog } from './dialogs.js';
 
 export function endLabel(v) {
   return v.day_end + (v.day_end_next_day ? NIGHT() : '');
@@ -109,13 +109,15 @@ export function mountToday(root, ctx) {
       case 'study': ic = 'lock'; text = tr('app_tray_lock_on'); when = `${endBtn(`${tr('today_until')} ${endLabel(v)}`)} ${tr('today_or_until_the_plan_is_done')}`; break;
       case 'single': ic = 'lock'; text = tr('today_locked_for_the_timer'); break;
       case 'focus': ic = 'lock'; text = tr('app_focus_lock'); when = `${tr('today_until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`; break;
-      case 'pause_access': text = tr('today_access_open_on_pause'); when = left; cls = 'open'; action = 'end'; break;
+      case 'break_access': text = tr('today_break_between_blocks_access_open'); when = left; cls = 'open'; break;
       case 'emergency': text = tr('blocking_emergency_access'); when = left; cls = 'open'; action = 'end'; break;
       case 'lunch_at_pc': text = tr('today_lunch_at_the_pc_access_open'); when = left; cls = 'open'; break;
       case 'segment_access': text = `${v.phase.title} — ${tr('today_access_open')}`; when = left; cls = 'open'; break;
       case 'not_started':
-        text = v.study_day ? tr('today_the_lock_turns_on_with_start') : offText;
-        if (v.study_day) when = `${tr('today_and_holds')} ${endBtn(`${tr('today_until')} ${endLabel(v)}`)}`;
+        // Started after the day end, a day runs without the lock.
+        if (v.study_day && v.after_day_end) text = tr('today_no_lock_after', { v: endLabel(v) });
+        else text = v.study_day ? tr('today_the_lock_turns_on_with_start') : offText;
+        if (v.study_day && !v.after_day_end) when = `${tr('today_and_holds')} ${endBtn(`${tr('today_until')} ${endLabel(v)}`)}`;
         break;
       case 'completed': text = tr('today_all_blocks_done_the_lock_is'); break;
       case 'day_end':
@@ -126,7 +128,7 @@ export function mountToday(root, ctx) {
       default: text = '';
     }
     if (lk.focus_until && (lk.reason === 'study' || lk.reason === 'single')) when += ` · ${tr('today_focus_until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`;
-    if (lk.base && !['pause_access', 'emergency'].includes(lk.reason) && v.can.emergency) action = 'emergency';
+    if (lk.base && !['emergency', 'break_access'].includes(lk.reason) && v.can.emergency) action = 'emergency';
     if (!meta.admin && lk.base) { text += tr('today_no_administrator_rights'); cls = 'open'; }
     const btn = action === 'end'
       ? `<button class="btn text interactive" data-act="end_access">${tr('today_close_access')}</button>`
@@ -304,25 +306,14 @@ export function mountToday(root, ctx) {
     const el = $('access');
     const p = v.pause;
     let html = '';
-    let warn = false;
     if (p && v.lock.base) {
-      if (meta.pause_access && !v.lock.focus_until) {
-        const open = p.access_left_ms > 0;
-        warn = !open;
-        html = `<div class="row1">${icon(open ? 'lock_open' : 'lock')}
-          <div class="grow"><div class="title-m">${open ? tr('today_access_on_pause_is_open') : tr('today_access_on_pause_is_closed')}</div>
-          <div class="body-m muted">${open ? tr('today_then_the_lock_comes_back_even') : tr('today_paused_for_extend_with_a_mini', { paused_ms: dur(p.paused_ms) })}${p.extensions ? ` · ${tr('today_extensions')}: ${p.extensions}` : ''}</div></div>
-          ${open ? `<div class="count tnum">${mmss(p.access_left_ms)}</div>` : ''}</div>
-          <div class="hstack"><button class="btn tonal interactive" data-act="extend">${icon('add')}${tr('today_extend_by_min', { pause_access_min: meta.pause_access_min })}</button></div>`;
-      } else {
-        html = `<div class="row1">${icon('pause')}<div class="grow"><div class="title-m">${tr('mini_paused')} ${dur(p.paused_ms)}</div>
-          <div class="body-m muted">${tr('today_blocked_things_stay_closed_access_on')}</div></div></div>`;
-      }
+      html = `<div class="row1">${icon('pause')}<div class="grow"><div class="title-m">${tr('mini_paused')} ${dur(p.paused_ms)}</div>
+        <div class="body-m muted">${meta.break_access && !v.lock.focus_until ? tr('today_blocked_things_stay_closed_on_a') : tr('today_blocked_things_stay_closed_during_a')}</div></div></div>`;
     }
     // Only rebuild when the structure changes; the countdown text updates in place.
     const sig = html.replace(/\d+:\d+|\d+ (ч|мин|h|min)/g, '#');
     el.hidden = !html;
-    el.classList.toggle('warn', warn);
+    el.classList.remove('warn');
     if (sig !== accessSig) { el.innerHTML = html; accessSig = sig; }
     else {
       // Same structure: refresh every live text in place (title "Пауза 12 мин", note, countdown).
@@ -546,11 +537,6 @@ export function mountToday(root, ctx) {
         const cfg = await call('get_config');
         const ok = await emergencyDialog(cfg, v.emergency_count);
         if (ok) snack(tr('blocking_emergency_access_for_min_logged', { emergency_min: cfg.emergency_min }));
-        break;
-      }
-      case 'extend': {
-        const ok = await captchaDialog(last.meta.pause_access_min);
-        if (ok) snack(tr('today_access_extended_by_min', { pause_access_min: last.meta.pause_access_min }));
         break;
       }
     }

@@ -1,8 +1,9 @@
-import { call, esc } from '../api.js';
+import { call, esc, hm as clock } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { applyTheme } from '../theme.js';
 import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
+import { NIKGOB } from '../logo.js';
 
 const SWATCHES = [
   ['#2E7D32', tr('settings_green')], ['#00796B', tr('settings_teal')], ['#1565C0', tr('settings_blue')], ['#5E35B1', tr('settings_purple')],
@@ -31,6 +32,7 @@ const TIP = {
   autostart: tr('settings_starts_when_you_sign_in_to'),
   lang: tr('settings_the_language_of_the_interface_notifications'),
   tz: tr('settings_the_day_end_dates_and_the'),
+  update: tr('settings_every_6_hours_clockmanage_looks_for'),
 };
 const MODE_TIP = { system: tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
 const VARIANT_TIP = {
@@ -148,10 +150,30 @@ export function mountSettings(root, ctx) {
       </section>`;
   }
 
+  function updateRow(u, v) {
+    const ver = esc(u.version || '');
+    const state = {
+      checking: tr('settings_checking'),
+      downloading: tr('settings_downloading', { version: ver }),
+      ready: cfg.auto_update ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
+      latest: u.checked_at ? tr('settings_latest_version_checked_at', { time: clock(u.checked_at) }) : '',
+      error: tr('settings_update_failed', { error: esc(u.error || '') }),
+    }[u.state] || (cfg.auto_update ? tr('settings_from_github_releases') : tr('settings_off_only_by_the_check'));
+    const busy = ['checking', 'downloading'].includes(u.state);
+    // The backend refuses a restart while a day or a lock runs: say so instead of a dead click.
+    const canRestart = !v.lock.base && !v.lock.blocked && ['idle', 'done'].includes(v.phase.kind);
+    return `<div class="setting"><div class="grow"><div class="t">${tr('settings_automatic_updates')}${info('update')}</div><div class="d">${state}</div></div>
+      ${u.state === 'ready'
+        ? `<button class="btn tonal interactive" id="installupdate" ${canRestart ? '' : `disabled data-tip="${esc(tr('updater_the_update_installs_after_the_study'))}"`}>${icon('download')}${tr('settings_restart_and_update')}</button>`
+        : `<button class="btn text interactive" id="checkupdate" ${busy ? 'disabled' : ''}>${icon('refresh')}${tr('settings_check')}</button>`}
+      ${sw('auto_update', cfg.auto_update, tr('settings_automatic_updates'), 'update')}</div>`;
+  }
+
   function render() {
     if (!cfg || !last) return;
     const v = last.view;
-    const locked = v.lock.base && v.started && v.lock.reason !== 'single';
+    // The same rule the backend checks: a study day, a blocking single timer or a focus lock.
+    const locked = v.lock.base;
     const m = last.meta;
     const mcpUrl = m.mcp.url || `http://127.0.0.1:${cfg.mcp_port}/mcp`;
     const cmd = `claude mcp add --transport http clockmanage ${mcpUrl}`;
@@ -165,6 +187,7 @@ export function mountSettings(root, ctx) {
 
       <section class="section">
         <h2>${tr('settings_study_day')}</h2>
+        <p class="section-d">${tr('settings_when_the_lock_lifts_how_a')}</p>
         <div class="surface">
           <div class="setting">
             <div class="grow"><div class="t">${tr('dialog_day_end')}${info('dayEnd')}</div><div class="d">${tr('settings_the_lock_lifts_at_this_time')} (${utcLabel(cfg.tz_offset_min)})${v.day_end_changed ? ` · ${tr('settings_today_until')} ${esc(v.day_end)}${v.day_end_next_day ? tr('settings_night') : ''}` : ''}</div></div>
@@ -172,17 +195,17 @@ export function mountSettings(root, ctx) {
           </div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_start_at_night')}${info('night')}</div><div class="d">${ns.enabled ? tr('app_night_start_until_hold', { until: hm(ns.until_min), after: ns.after_day_end ? tr('app_night_start_and_after_the_day_end') : '', hold: ns.hold_sec }) : tr('settings_one_click_starts_the_day_any')}</div></div>
             ${sw('night_start.enabled', ns.enabled, tr('settings_start_at_night'), 'night')}</div>
-          ${ns.enabled ? `<div class="setting"><div class="grow"><div class="t">${tr('settings_night_lasts_until')}</div></div>
+          ${ns.enabled ? `<div class="setting sub"><div class="grow"><div class="t">${tr('settings_night_lasts_until')}</div></div>
             <div class="field"><input type="time" id="nightuntil" value="${hm(ns.until_min)}" max="12:00" aria-label="${tr('settings_night_lasts_until')}"></div></div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_after_the_day_end_too')}</div></div>
+          <div class="setting sub"><div class="grow"><div class="t">${tr('settings_after_the_day_end_too')}</div></div>
             ${sw('night_start.after_day_end', ns.after_day_end, tr('settings_after_the_day_end_too'))}</div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_hold_to_start')}</div></div>
+          <div class="setting sub"><div class="grow"><div class="t">${tr('settings_hold_to_start')}</div></div>
             ${stepper('night_start.hold_sec', { min: 1, max: 10, step: 1, unit: tr('settings_s'), label: tr('settings_hold_to_start') })}</div>` : ''}
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_work_part')}${info('seg')}</div><div class="d">${tr('settings_work_part_example')}</div></div>
             ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_of_work_per_part'), disabled: locked })}</div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_break_between_parts')}${info('short')}</div></div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_break_between_parts')}${info('short')}</div><div class="d">${tr('settings_between_the_parts_of_one_block')}</div></div>
             ${stepper('timing.short_break_min', { min: 1, max: 120, step: 5, unit: tr('overlay_min'), label: tr('settings_break_minutes'), ceil: locked ? t.short_break_min : Infinity })}</div>
-          <div class="setting"><div class="grow"><div class="t">${tr('view_break_between_blocks')}${info('between')}</div></div>
+          <div class="setting"><div class="grow"><div class="t">${tr('view_break_between_blocks')}${info('between')}</div><div class="d">${cfg.break_access ? tr('settings_after_a_closed_block_blocked_things_open') : tr('settings_after_a_closed_block_blocked_things_stay')}</div></div>
             ${stepper('timing.between_blocks_min', { min: 1, max: 180, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_between_blocks'), ceil: locked ? t.between_blocks_min : Infinity })}</div>
         </div>
       </section>
@@ -250,6 +273,7 @@ export function mountSettings(root, ctx) {
 
       <section class="section">
         <h2>${tr('settings_mcp_for_claude')}</h2>
+        <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
             <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
@@ -271,10 +295,19 @@ export function mountSettings(root, ctx) {
             <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${[...new Set([...TZ_OFFSETS, cfg.tz_offset_min])].sort((x, y) => x - y).map((o) => `<option value="${o}" ${o === cfg.tz_offset_min ? 'selected' : ''}>${utcLabel(o)}</option>`).join('')}</select></div></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>${tr('settings_about_clockmanage')}</h2>
+        <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_data_and_log')}</div><div class="d ellipsis" data-tip="${esc(m.data_dir)}">${esc(m.data_dir)}</div></div><button class="btn text interactive" id="opendir">${icon('folder')}${tr('app_open')}</button></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_version')}</div><div class="d">ClockManage ${esc(m.version)}</div></div></div>
+          ${updateRow(m.update, v)}
         </div>
-      </section>`;
+      </section>
+
+      <footer class="made-by">${NIKGOB}<span>Made by NikGob</span></footer>`;
     if (pulse) {
       const el = box.querySelector(pulse);
       el?.classList.add('just');
@@ -413,6 +446,8 @@ export function mountSettings(root, ctx) {
       const port = await run(() => call('regenerate_port'), t);
       if (port) { cfg = await call('get_config'); snack(tr('settings_new_port_update_the_address_in', { port })); }
     } else if (t.id === 'opendir') call('open_data_dir');
+    else if (t.id === 'checkupdate') call('check_update');
+    else if (t.id === 'installupdate') await run(() => call('install_update'), t);
     else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
     else if (t.dataset.segdel !== undefined) {
       const i = Number(t.dataset.segdel);
@@ -443,7 +478,7 @@ export function mountSettings(root, ctx) {
       const v = s.view;
       // Phone "last seen" re-renders once a minute, not on every poll of the phone.
       const ph = { ...s.meta.phone, devices: s.meta.phone.devices.map((d) => ({ ...d, last_seen: d.last_seen && Math.floor((Date.now() - d.last_seen) / 60000) })) };
-      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}`;
+      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}|${JSON.stringify(s.meta.update)}|${v.phase.kind}|${v.lock.blocked}`;
       if (nsig !== sig) { sig = nsig; if (cfg) render(); }
     },
     show() { reload(); },

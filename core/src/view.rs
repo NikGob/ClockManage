@@ -61,10 +61,6 @@ pub struct PendingNote {
 pub struct PauseView {
     pub since: Ts,
     pub paused_ms: i64,
-    pub access_enabled: bool,
-    pub access_until: Option<Ts>,
-    pub access_left_ms: i64,
-    pub extensions: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,9 +75,9 @@ pub struct Can {
     pub single: bool,
     pub stop_single: bool,
     pub emergency: bool,
-    pub extend_access: bool,
     pub end_access: bool,
-    pub edit_pause_access: bool,
+    /// Break access can be turned on (only outside the lock; off works any time).
+    pub edit_break_access: bool,
     /// Today's day end can still move later (quick "+30 мин / +1 ч" buttons).
     pub extend_day_end: bool,
     /// Today's day end can be set to any time (later or earlier) for today.
@@ -307,21 +303,11 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         })
         .collect();
 
-    let pause = d.pause.as_ref().map(|p| {
-        let until = p.access_until();
-        PauseView {
-            since: p.since,
-            paused_ms: now - p.since,
-            access_enabled: cfg.pause_access,
-            access_until: until,
-            access_left_ms: until.map(|u| (u - now).max(0)).unwrap_or(0),
-            extensions: p.access.len().saturating_sub(1) as u32,
-        }
-    });
+    let pause = d.pause.as_ref().map(|p| PauseView { since: p.since, paused_ms: now - p.since });
 
     let running = d.phase_elapsed(now) >= 0 && matches!(d.phase, Phase::Work { since: Some(_), .. } | Phase::Break { since: Some(_), .. });
     let lunch_break = matches!(d.phase, Phase::Break { brk: BreakKind::Lunch { .. }, .. });
-    let access_open = matches!(lock.reason.as_str(), "emergency" | "pause_access");
+    let access_open = lock.reason == "emergency";
     let after_day_end = d.after_day_end(now, cfg);
     let day_end = d.day_end(cfg);
     let can = Can {
@@ -337,10 +323,10 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         lunch: d.can_lunch(),
         single: d.mode == Mode::Plan && matches!(d.phase, Phase::Idle | Phase::Done),
         stop_single: d.mode == Mode::Single,
-        emergency: lock.base && !access_open,
-        extend_access: cfg.pause_access && paused && lock.base && lock.focus_until.is_none(),
+        // Nothing to open while the break between blocks is open already.
+        emergency: lock.base && !access_open && lock.reason != "break_access",
         end_access: access_open,
-        edit_pause_access: !lock.base,
+        edit_break_access: !lock.base,
         extend_day_end: d.study_day
             && d.mode == Mode::Plan
             && d.completed_at.is_none()

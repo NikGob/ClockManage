@@ -357,8 +357,11 @@ export function tsHm(ts, tzOffsetMin) {
 /** "Математика 1,5 ч · Словацкий 1 ч" / "5 ч 30 мин" summary of a plan. */
 export function planSummary(plan) {
   if (!plan?.length) return tr('ui_no_plan');
-  const total = plan.reduce((a, b) => a + b.minutes, 0);
+  // Study time only: planned segments (lunch…) are not study, as on Today and in the stats.
+  const study = plan.filter((b) => b.type !== 'break');
+  const total = study.reduce((a, b) => a + b.minutes, 0);
   const h = Math.floor(total / 60);
   const m = total % 60;
-  return `${h ? `${h} ${tr('ui_h')}` : ''}${h && m ? ' ' : ''}${m ? `${m} ${tr('overlay_min')}` : ''} · ${plan.map((b) => b.name).join(', ')}`;
+  const time = `${h ? `${h} ${tr('ui_h')}` : ''}${h && m ? ' ' : ''}${m ? `${m} ${tr('overlay_min')}` : ''}` || `0 ${tr('overlay_min')}`;
+  return `${time} · ${plan.map((b) => b.name).join(', ')}`;
 }

@@ -78,7 +78,7 @@ Check those yourself.
 
 - **MCP tool descriptions and server instructions** in `core/src/mcp.rs`: English only, because the model reads them. MCP *results* do go through `tr`. `core/tests/english.rs` rejects Cyrillic in `tools/list` only, so keep the `initialize` instructions English yourself.
 - **User data**: block and segment names, the emergency phrase. Defaults are written once in the Windows language and are the user's data after that.
-- **Fixed strings**: config and JSON keys, the brand name, and the language names in the picker (each written in its own language).
+- **Fixed strings**: config and JSON keys, the brand name, the author's signature *Made by NikGob* at the end of Settings, and the language names in the picker (each written in its own language).
 - **`README.md` and its pictures** in `docs/media/`: English.
 
 ### Formats and traps
