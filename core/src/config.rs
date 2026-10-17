@@ -134,14 +134,29 @@ impl DayKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DayProfile {
     /// Plan a new day of this kind starts with.
     pub plan: Vec<PlanBlock>,
     /// "Начать день" turns on blocking.
     pub block: bool,
+    /// "Автоблокировка с …": the block list goes on at `autolock_min` when the day has not
+    /// started by then, and holds until "Начать день". Configs from before 0.5.1 have none: on at
+    /// 13:00. Never on a day off.
+    pub autolock: bool,
+    /// Minutes after midnight.
+    pub autolock_min: u32,
 }
+
+impl Default for DayProfile {
+    fn default() -> Self {
+        Self { plan: vec![], block: false, autolock: true, autolock_min: DEFAULT_AUTOLOCK_MIN }
+    }
+}
+
+/// "Автоблокировка с 13:00" unless the profile says otherwise.
+pub const DEFAULT_AUTOLOCK_MIN: u32 = 13 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -161,12 +176,14 @@ impl Default for Profiles {
                     PlanBlock::new(tr("config_project"), 150),
                 ],
                 block: true,
+                ..Default::default()
             },
             light: DayProfile {
                 plan: vec![PlanBlock::new(tr("config_math"), 60), PlanBlock::new(tr("config_languages"), 60)],
                 block: true,
+                ..Default::default()
             },
-            off: DayProfile { plan: vec![], block: false },
+            off: DayProfile { autolock: false, ..Default::default() },
         }
     }
 }
@@ -431,6 +448,12 @@ impl Config {
         n != self.plan_overrides.len()
     }
 
+    /// "Автоблокировка с …" of a profile, minutes after midnight; `None`: off (always on a day off).
+    pub fn autolock_min(&self, k: DayKind) -> Option<u32> {
+        let p = self.profile(k);
+        (k != DayKind::Off && p.autolock).then_some(p.autolock_min)
+    }
+
     /// The segment type called `name` (case-insensitive).
     pub fn segment_type(&self, name: &str) -> Option<&SegmentType> {
         let n = name.trim();
@@ -453,6 +476,11 @@ impl Config {
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
         self.night_start.until_min = self.night_start.until_min.min(MAX_NIGHT_UNTIL_MIN);
         self.night_start.hold_sec = self.night_start.hold_sec.clamp(1, MAX_NIGHT_HOLD_SEC);
+        for k in DayKind::ALL {
+            let p = self.profiles.get_mut(k);
+            p.autolock_min = p.autolock_min.min(24 * 60 - 1);
+        }
+        self.profiles.off.autolock = false;
         self.blocklist.sites = normalize_list(&self.blocklist.sites, normalize_site);
         self.blocklist.apps = normalize_list(&self.blocklist.apps, normalize_app);
         // Configs from before 0.3 have no segment types: start from the defaults, lunch keeps
@@ -840,6 +868,29 @@ mod tests {
         assert!(cfg.check_update(&n, EditContext { locked: false }).is_ok());
         // Turning it off only makes the lock stricter.
         assert!(n.check_update(&cfg, EditContext { locked: true }).is_ok());
+    }
+
+    #[test]
+    fn autolock_defaults_to_13_and_never_on_a_day_off() {
+        let c = Config::default();
+        assert_eq!(c.autolock_min(DayKind::Full), Some(13 * 60));
+        assert_eq!(c.autolock_min(DayKind::Light), Some(13 * 60));
+        assert_eq!(c.autolock_min(DayKind::Off), None);
+        // A config from before the setting: on at 13:00 for study profiles, off for a day off.
+        let json = r#"{"profiles":{"full":{"plan":[],"block":true},"light":{"block":true},"off":{"block":false}}}"#;
+        let mut old: Config = serde_json::from_str(json).unwrap();
+        old.normalize();
+        assert_eq!(old.autolock_min(DayKind::Full), Some(13 * 60));
+        assert_eq!(old.autolock_min(DayKind::Light), Some(13 * 60));
+        assert!(!old.profiles.off.autolock);
+        let mut c = c;
+        c.profiles.light.autolock = false;
+        c.profiles.full.autolock_min = 99 * 60;
+        c.profiles.off.autolock = true;
+        c.normalize();
+        assert_eq!(c.autolock_min(DayKind::Light), None);
+        assert_eq!(c.autolock_min(DayKind::Full), Some(24 * 60 - 1));
+        assert_eq!(c.autolock_min(DayKind::Off), None);
     }
 
     #[test]

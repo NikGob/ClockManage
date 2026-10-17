@@ -39,6 +39,8 @@ pub trait McpHost {
     fn start_focus_lock(&self, minutes: u32, reason: Option<&str>) -> Result<Value, String>;
     /// The night start guard; an empty request only reads it.
     fn set_night_start(&self, req: NightStartRequest) -> Result<Value, String>;
+    /// "Автоблокировка с …" of a study profile: minutes after midnight, `None` = off.
+    fn set_autolock(&self, profile: DayKind, min: Option<u32>) -> Result<Value, String>;
 }
 
 /// Arguments of `set_night_start`: only the given fields change.
@@ -113,7 +115,7 @@ fn tools() -> Value {
         {
             "name": "get_today_stats",
             "title": "Day stats",
-            "description": "Stats of a day. blocks[] — study blocks only: planned_min, actual_min, journal_hours (actual_min rounded down to 0.25 h), note (the user's line \"what was boring / what distracted me\"); journal_total — the sum of journal_hours. breaks[] — non-study segments (lunch, nap, walk, custom): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; they don't count towards study hours or journal_hours. For a segment with preparation (a nap) actual_min is only the nap itself from \"In bed\" (lay_at), prep_min is the preparation separately (null — there was none); ended before \"In bed\" — actual_min 0. stopwatch: true — ran untimed (stopwatch), overrun_min still from planned_min. Also: pauses (shorter than 10 s are not recorded; access on pause only on days before 0.5.0), emergency accesses, day end shifts (day_end_changes), focus locks (focus_locks: at, until, minutes, reason, by). No argument — today.",
+            "description": "Stats of a day. blocks[] — study blocks only: planned_min, actual_min, journal_hours (actual_min rounded down to 0.25 h), note (the user's line \"what was boring / what distracted me\"); journal_total — the sum of journal_hours. breaks[] — non-study segments (lunch, nap, walk, custom): {type, planned_min, actual_min, overrun_min, start, end, prep_min, prep_planned_min, lay_at, stopwatch}; they don't count towards study hours or journal_hours. For a segment with preparation (a nap) actual_min is only the nap itself from \"In bed\" (lay_at), prep_min is the preparation separately (null — there was none); ended before \"In bed\" — actual_min 0. stopwatch: true — ran untimed (stopwatch), overrun_min still from planned_min. Also: pauses (shorter than 10 s are not recorded; access on pause only on days before 0.5.0), emergency accesses, day end shifts (day_end_changes), focus locks (focus_locks: at, until, minutes, reason, by), the autolock (autolock: time — its time from the settings, at — when it went on, day_started_at, start_delay_min — the start delay: whole minutes from it going on to \"Start day\", null while the day hasn't started; autolock null — it didn't go on: the day started earlier, a day off or it's off). No argument — today.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD, today by default (in the app's time zone)" } },
@@ -135,7 +137,7 @@ fn tools() -> Value {
         {
             "name": "get_plan",
             "title": "Day plan",
-            "description": "Today's plan in order (today: study blocks and non-study segments with type: \"break\"), today's profile (profile) and its template (template), today's day end (day_end) and the one from the settings (day_end_default), segment types (segment_types: name, minutes, alarm). Also: templates — the templates of all profiles (full/light/off: plan, and blocking — whether the lock turns on); week — the profile of each weekday (mon…sun); upcoming — the next 7 days: date, weekday, profile, plan and source (\"date\" — a plan set for that date with set_plan + date, \"template\" — the profile's template). With date — also day: the plan and profile of that day.",
+            "description": "Today's plan in order (today: study blocks and non-study segments with type: \"break\"), today's profile (profile) and its template (template), today's day end (day_end) and the one from the settings (day_end_default), segment types (segment_types: name, minutes, alarm), today's autolock (autolock: time — HH:MM, at, on — it holds the lock right now, start_delay_min — whole minutes from it going on to \"Start day\"; null — none today: off for this profile, a day off, or the day started before its time). Also: templates — the templates of all profiles (full/light/off: plan, blocking — whether the lock turns on, autolock — HH:MM or null when off, see set_autolock); week — the profile of each weekday (mon…sun); upcoming — the next 7 days: date, weekday, profile, plan and source (\"date\" — a plan set for that date with set_plan + date, \"template\" — the profile's template). With date — also day: the plan and profile of that day.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD — which day to show in day (today or later)" } },
@@ -214,6 +216,21 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
         },
         {
+            "name": "set_autolock",
+            "title": "Autolock before the day starts",
+            "description": "The autolock of a study profile (full — Full, light — Light; a day off never has one): if the study day hasn't started by `time`, the whole block list goes on (sites, apps, a paired phone) as during a study block, and holds until \"Start day\" — from then on the day's own lock and rules apply — or until the day end. Five minutes before, the user gets a warning. A day started before `time` is not touched. Neither the agent nor the app can lift it early — only the user's own emergency access (a long phrase typed by hand, logged). Once it went on today it holds even if the setting changes: a change shapes the days ahead (and today, while today's has not gone on yet). Its time going on and the start delay (from it going on to \"Start day\") go to the day log and to get_today_stats → autolock; get_plan → autolock and templates[].autolock show the settings. The default is 13:00 for both profiles. Allowed at any time. The reply has autolock (the time, or null — off) and today (today's autolock: time, on, at, start_delay_min).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "string", "enum": ["full", "light"], "description": "full — Full, light — Light" },
+                    "time": { "type": "string", "pattern": "^(\\d{1,2}:\\d{2}|off)$", "description": "HH:MM in the app's time zone, e.g. 13:00; \"off\" turns the autolock off for this profile" }
+                },
+                "required": ["profile", "time"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
             "name": "set_day_end",
             "title": "Move the day end",
             "description": "Changes the end of the study day for today only (the setting stays untouched). The lock, the timers and the \"day is over\" notice follow the new time at once. Time is in the app's time zone, later than now and no later than 02:00 the next night (00:00–02:00 = the night after today). The reply has the old and the new time, how much of the plan is left and whether it fits before the new end. Every change goes to the day log.",
@@ -260,21 +277,21 @@ fn tools() -> Value {
         {
             "name": "get_blocklist",
             "title": "Block list",
-            "description": "What is blocked and whether the lock is on now. sites — domains (x.com, with its subdomains) and paths (youtube.com/shorts — browser policies only, the rest of the site stays open); apps — Windows apps by exe name (Telegram.exe): while the lock is on, running ones are closed and new ones can't start; phone_apps — phone apps (read only, picked on the phone). blocking: active — sites and apps are closed right now; day_lock — a lock is in force (a study day, a single timer with the lock, or a focus lock), maybe opened for a while by an access; reason — study | single | focus | emergency | break_access | lunch_at_pc | segment_access | not_started | not_study_day | completed | day_end; until — the end of an open access; focus_until — the end of a focus lock (start_focus_lock). can_remove — whether entries can be removed now (outside the lock only). admin — whether the app runs as administrator: without it sites are not blocked.",
+            "description": "What is blocked and whether the lock is on now. sites — domains (x.com, with its subdomains) and paths (youtube.com/shorts — browser policies only, the rest of the site stays open); apps — Windows apps by exe name (Telegram.exe): while the lock is on, running ones are closed and new ones can't start; phone_apps — phone apps (read only, picked on the phone). blocking: active — sites and apps are closed right now; day_lock — a lock is in force (a study day, a single timer with the lock, the autolock before the day starts, or a focus lock), maybe opened for a while by an access; reason — study | single | autolock | focus | emergency | break_access | lunch_at_pc | segment_access | not_started | not_study_day | completed | day_end; until — the end of an open access; focus_until — the end of a focus lock (start_focus_lock). can_remove — whether entries can be removed now (outside the lock only). admin — whether the app runs as administrator: without it sites are not blocked.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "add_to_blocklist",
             "title": "Add to the block list",
-            "description": "Adds sites and/or apps to the block list. Always allowed, including during the lock: then the new entries close at once (sites — via hosts and browser policies, an app — closed if running and kept from starting). A site: a domain (reddit.com — with subdomains) or a domain with a path (youtube.com/shorts — without a path the whole site is closed); https://, www. and a trailing / are dropped. An app: an exe name (Steam or Steam.exe; a path is dropped); system processes (explorer.exe etc.) and ClockManage itself are never blocked. The list applies while a study day with the lock, a single timer with the lock or a focus lock (start_focus_lock) runs — adding outside of that closes nothing by itself. The reply has added (what was added, as stored), unchanged (already there), invalid (not a site / a system app), the whole blocklist and blocking.",
+            "description": "Adds sites and/or apps to the block list. Always allowed, including during the lock: then the new entries close at once (sites — via hosts and browser policies, an app — closed if running and kept from starting). A site: a domain (reddit.com — with subdomains) or a domain with a path (youtube.com/shorts — without a path the whole site is closed); https://, www. and a trailing / are dropped. An app: an exe name (Steam or Steam.exe; a path is dropped); system processes (explorer.exe etc.) and ClockManage itself are never blocked. The list applies while a study day with the lock, a single timer with the lock, the autolock (set_autolock) or a focus lock (start_focus_lock) runs — adding outside of that closes nothing by itself. The reply has added (what was added, as stored), unchanged (already there), invalid (not a site / a system app), the whole blocklist and blocking.",
             "inputSchema": blocklist_schema(),
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
         },
         {
             "name": "remove_from_blocklist",
             "title": "Remove from the block list",
-            "description": "Removes sites and/or apps from the block list. Outside the lock only — before \"Start day\", after the day end or when all blocks are done, with no single timer with the lock and no focus lock (get_blocklist → can_remove). During the lock — refused: the list can only grow. Remove only when the user explicitly asks. Entries are compared case-insensitively after the same cleanup as when adding; youtube.com doesn't remove youtube.com/shorts — they are different entries. The reply has removed, unchanged (wasn't in the list), invalid, the whole blocklist.",
+            "description": "Removes sites and/or apps from the block list. Outside the lock only — before \"Start day\" (and before the autolock goes on), after the day end or when all blocks are done, with no single timer with the lock and no focus lock (get_blocklist → can_remove). During the lock — refused: the list can only grow. Remove only when the user explicitly asks. Entries are compared case-insensitively after the same cleanup as when adding; youtube.com doesn't remove youtube.com/shorts — they are different entries. The reply has removed, unchanged (wasn't in the list), invalid, the whole blocklist.",
             "inputSchema": blocklist_schema(),
             "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
         },
@@ -458,6 +475,22 @@ fn parse_night(args: &Value) -> Result<NightStartRequest, String> {
     Ok(NightStartRequest { enabled: flag("enabled")?, until_min, after_day_end: flag("after_day_end")?, hold_sec })
 }
 
+fn parse_autolock(args: &Value) -> Result<(DayKind, Option<u32>), String> {
+    let p = args.get("profile").and_then(Value::as_str).unwrap_or("");
+    let kind = match DayKind::from_key(p) {
+        Some(DayKind::Off) => return Err(tr!("mcp_a_day_off_has_no_autolock")),
+        Some(k) => k,
+        None => return Err(tr!("mcp_profile_is_full_or_light", p = p)),
+    };
+    let min = match args.get("time") {
+        Some(Value::String(s)) if s.trim().eq_ignore_ascii_case("off") => None,
+        Some(Value::Bool(false)) | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(clock::parse_hm(s).ok_or(tr("mcp_time_is_hh_mm_or_off"))?),
+        _ => return Err(tr!("mcp_time_is_hh_mm_or_off")),
+    };
+    Ok((kind, min))
+}
+
 fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str);
     let id = msg.get("id").cloned();
@@ -479,7 +512,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — study timer", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings."
+                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early."
                 }),
             )
         }
@@ -509,6 +542,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "add_to_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(false, s, a)),
                 "remove_from_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(true, s, a)),
                 "set_night_start" => parse_night(&args).and_then(|r| host.set_night_start(r)),
+                "set_autolock" => parse_autolock(&args).and_then(|(k, m)| host.set_autolock(k, m)),
                 "start_focus_lock" => parse_focus(&args).and_then(|m| host.start_focus_lock(m, args.get("reason").and_then(Value::as_str))),
                 _ => return Some(err(&id, -32602, &format!("Unknown tool: {name}"))),
             };
@@ -594,6 +628,27 @@ mod tests {
             self.1.borrow_mut().push(json!({ "enabled": r.enabled, "until_min": r.until_min, "after_day_end": r.after_day_end, "hold_sec": r.hold_sec }));
             Ok(json!({"ok": true}))
         }
+        fn set_autolock(&self, k: DayKind, min: Option<u32>) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "autolock": k, "min": min }));
+            Ok(json!({"ok": true}))
+        }
+    }
+
+    #[test]
+    fn autolock_args() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &h).unwrap();
+        assert!(r.contains("set_autolock"));
+        assert_eq!(call(&h, "set_autolock", json!({ "profile": "light", "time": "12:30" }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap(), &json!({ "autolock": "light", "min": 750 }));
+        assert_eq!(call(&h, "set_autolock", json!({ "profile": "full", "time": "off" }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap(), &json!({ "autolock": "full", "min": null }));
+        // A day off has none; the time is HH:MM or "off".
+        assert_eq!(call(&h, "set_autolock", json!({ "profile": "off", "time": "13:00" }))["isError"], true);
+        assert_eq!(call(&h, "set_autolock", json!({ "profile": "weekend", "time": "13:00" }))["isError"], true);
+        assert_eq!(call(&h, "set_autolock", json!({ "profile": "full", "time": "25:00" }))["isError"], true);
+        assert_eq!(call(&h, "set_autolock", json!({ "profile": "full" }))["isError"], true);
+        assert_eq!(h.1.borrow().len(), 2);
     }
 
     #[test]

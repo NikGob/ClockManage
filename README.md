@@ -9,7 +9,7 @@
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#install)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
-[![MCP](https://img.shields.io/badge/MCP-15%20tools-6E56CF)](#claude-runs-your-day-mcp)
+[![MCP](https://img.shields.io/badge/MCP-16%20tools-6E56CF)](#claude-runs-your-day-mcp)
 [![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
 [![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
@@ -103,6 +103,10 @@ A small always-on-top pill with the countdown and one button that does the right
 
 "Block everything for 2 hours" — any day, even on a day off or after the study day ended. It can only be extended, never lifted early (except by your own emergency access), and survives a restart.
 
+### Autolock before the day starts
+
+Most time gets lost *before* the first block: one more video, one more chat. So on Full and Light days the block list goes on by itself at **13:00** if you haven't pressed **Start day** yet — sites, apps and the paired phone, as during a block. Five minutes before, a notice warns you. It holds until **Start day** (then the day's usual rules take over) or the day end; only emergency access opens it early. Start before 13:00 and nothing happens. The day log records when it went on and how many minutes later the day started — the *start delay*. A restart or a power cut doesn't drop it. The time, or off, is set per profile in *Settings → Study day → Autolock before the start*, or ask Claude (`set_autolock`); a day off never has one.
+
 ## Claude runs your day (MCP)
 
 ClockManage runs a local MCP server (`127.0.0.1` only). The exact address and a ready-to-paste command are in **Settings → MCP for Claude**:
@@ -118,17 +122,19 @@ Then just talk:
 > - *"Block Reddit and Steam and lock everything until 18:00."*
 > - *"Close the current block, I'm done with math for today."*
 > - *"I get up at 7 — make it night until 7 and hold for 3 seconds."*
+> - *"On Light days lock everything at 11:30 if I haven't started yet."*
 
 | Tool | What it does |
 |---|---|
 | `get_session_state` | what's running now: block, part, break or segment, time left, whether the lock is on |
-| `get_today_stats` | actual time per block, journal hours, pauses, segments, notes — today or any `date` |
+| `get_today_stats` | actual time per block, journal hours, pauses, segments, notes, the autolock and the start delay — today or any `date` |
 | `get_week_stats` | journal hours for a week by subject and day, with a ready TSV |
-| `get_plan` | today's plan, all templates, the weekday schedule and the next 7 days |
+| `get_plan` | today's plan, all templates (with their autolock time), the weekday schedule, the next 7 days and today's autolock |
 | `set_plan` | replace today's plan or set one for a future date; reorder anything, close a started block "as is" |
 | `set_template` · `set_week_schedule` | edit the Full / Light / Day off templates and which weekday gets which |
 | `set_day_end` | move today's day end once, with a reason for the log |
 | `set_night_start` | the night start guard: until when it's night, whether after the day end too, how long to hold — or off |
+| `set_autolock` | the autolock of the Full or Light profile: a time like 13:00, or off |
 | `set_block_note` | save your line about a block |
 | `finish_block` | close the current block at the time worked — two steps, needs your explicit "yes" |
 | `get_blocklist` · `add_to_blocklist` · `remove_from_blocklist` | read and edit the block list (removing only outside the lock) |
@@ -161,6 +167,7 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
+- **Autolock**: on Full and Light days the block list goes on at 13:00 when the day hasn't started — see [Autolock before the day starts](#autolock-before-the-day-starts). Once it is on today, changing the setting only affects the days ahead. A phone that has lost the PC learns about it on the next sync.
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
 - Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The phone talks to the PC over your local network only, and the only request to the internet is the update check on GitHub.
 
@@ -172,7 +179,7 @@ npx @tauri-apps/cli@2 dev                    # run on Windows (from an administr
 npx @tauri-apps/cli@2 build                  # NSIS installer
 ```
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`.
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`.
 
 | Folder | What's inside |
 |---|---|

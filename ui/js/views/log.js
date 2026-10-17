@@ -86,6 +86,7 @@ export function mountLog(root, ctx) {
       ${st.emergencies.length ? `<div><h3 class="title-m" style="margin-bottom:8px">${tr('log_emergency_accesses_title')}</h3><table class="t"><thead><tr><th>${tr('log_time')}</th><th class="r">${tr('log_duration')}</th></tr></thead><tbody>${em}</tbody></table></div>` : ''}
       ${brk ? `<div><h3 class="title-m" style="margin-bottom:8px">${tr('log_segments')}</h3><table class="t"><thead><tr><th>${tr('log_what')}</th><th>${tr('log_time')}</th><th class="r">${tr('main_plan')}</th><th class="r">${tr('log_actual')}</th><th class="r">${tr('log_over')}</th></tr></thead><tbody>${brk}</tbody></table></div>` : ''}
       ${st.single_timer_min ? `<p class="body-m"><b>${tr('log_single_timer')}</b> ${fmtMin(st.single_timer_min)}</p>` : ''}
+      ${st.autolock ? `<p class="body-m"><b>${tr('log_autolock')}</b> ${tr('log_on_at', { at: hmOf(st.autolock.at) })} · ${st.autolock.start_delay_min != null ? tr('log_start_delay_min', { min: st.autolock.start_delay_min }) : tr('log_day_not_started')}</p>` : ''}
       <p class="body-s muted">${tr('log_started')} ${hmOf(st.started_at)} ${tr('log_closed')} ${hmOf(st.completed_at)}</p>`;
   }
 

@@ -44,6 +44,18 @@ fn timer_view_and_refusals() {
     assert_eq!(err, "While the lock is on, sites can only be added.");
 }
 
+#[test]
+fn autolock_log_is_english() {
+    en();
+    let mut c = Config::default();
+    c.profiles.full.plan = vec![PlanBlock::new("Math", 45)];
+    let mut d = DayState::new(start() - 3_600_000, &c);
+    d.tick(start(), &c);
+    d.start_day(start() + 12 * 60_000, &c).unwrap();
+    let log: Vec<&str> = d.events.iter().filter(|e| e.kind == "autolock").map(|e| e.text.as_str()).collect();
+    assert_eq!(log, ["Autolock from 13:00: the day hasn’t started — the block list is closed until “Start day”", "The day started 12 min after the autolock (start delay)"]);
+}
+
 struct NoHost;
 
 impl McpHost for NoHost {
@@ -87,6 +99,9 @@ impl McpHost for NoHost {
         unreachable!()
     }
     fn set_night_start(&self, _: NightStartRequest) -> Result<Value, String> {
+        unreachable!()
+    }
+    fn set_autolock(&self, _: DayKind, _: Option<u32>) -> Result<Value, String> {
         unreachable!()
     }
 }

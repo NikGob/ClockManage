@@ -17,9 +17,9 @@ const cfg = {
   week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
   night_start: { enabled: true, until_min: 300, after_day_end: true, hold_sec: 2 }, lang: q.get('lang') || 'auto',
   profiles: {
-    full: { plan: [{ name: L('Математика', 'Math'), minutes: 90 }, { name: L('Словацкий', 'Spanish'), minutes: 90 }, { name: L('Экстернат', 'Thesis'), minutes: 150 }], block: true },
-    light: { plan: [{ name: L('Математика', 'Math'), minutes: 60 }, { name: L('Словацкий', 'Spanish'), minutes: 60 }], block: true },
-    off: { plan: [], block: false },
+    full: { plan: [{ name: L('Математика', 'Math'), minutes: 90 }, { name: L('Словацкий', 'Spanish'), minutes: 90 }, { name: L('Экстернат', 'Thesis'), minutes: 150 }], block: true, autolock: true, autolock_min: 780 },
+    light: { plan: [{ name: L('Математика', 'Math'), minutes: 60 }, { name: L('Словацкий', 'Spanish'), minutes: 60 }], block: true, autolock: true, autolock_min: 780 },
+    off: { plan: [], block: false, autolock: false, autolock_min: 780 },
   },
   timing: { work_segment_min: 45, short_break_min: 10, between_blocks_min: 20, lunch_min: 45 },
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
@@ -95,7 +95,14 @@ function snapshot() {
   const access = STATE === 'break' && cfg.break_access;
   // `?focus=1`: a focus lock (start_focus_lock) runs for 95 more minutes.
   const focus_until = q.get('focus') === '1' ? t0 + 95 * MIN : null;
+  // `?autolock=1` (state=idle): the day hasn't started by 13:00, the autolock holds the list.
+  const autolockOn = STATE === 'idle' && q.get('autolock') === '1' && kind !== 'off';
+  const prof = cfg.profiles[kind];
+  const autolock = autolockOn ? { time: '13:00', at: t0 - 25 * MIN, on: true, start_delay_min: null }
+    : STATE === 'idle' && kind !== 'off' && prof.autolock ? { time: `${String(Math.floor(prof.autolock_min / 60)).padStart(2, '0')}:${String(prof.autolock_min % 60).padStart(2, '0')}`, at: midnight.getTime() + prof.autolock_min * MIN, on: false, start_delay_min: null }
+      : null;
   const lock = focus_until && (STATE === 'idle' || STATE === 'done') ? { blocked: true, base: true, reason: 'focus', until: null, focus_until }
+    : autolockOn ? { blocked: true, base: true, reason: 'autolock', until: null, focus_until }
     : STATE === 'idle' ? { blocked: false, base: false, reason: 'not_started', until: null, focus_until }
       : STATE === 'done' ? { blocked: false, base: false, reason: 'completed', until: null, focus_until }
         : access && !focus_until ? { blocked: false, base: true, reason: 'break_access', until: t0 + 7 * MIN, focus_until }
@@ -105,7 +112,7 @@ function snapshot() {
       now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, night_hold_sec: cfg.night_start.hold_sec, mode: 'plan',
       day_end: `${String(Math.floor(dayEnd / 60) % 24).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
       day_end_at: dayEndAt(), day_end_next_day: dayEnd >= 1440, day_end_changed: dayEnd !== 1320, forecast: forecast(now, b),
-      phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock,
+      phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock, autolock,
       pause: paused ? { since: t0 - 4 * MIN, paused_ms: now - t0 + 4 * MIN } : null,
       emergency_count: 0, lunch_used: false, single: null, undo_until: null,
       pending_note: q.get('note') && !noteDone ? { block: 0, name: L('Математика', 'Math') } : null,
@@ -200,7 +207,8 @@ export async function invoke(cmd, args) {
         { start: '2026-09-28T13:40:00+03:00', end: '2026-09-28T13:46:00+03:00', minutes: 6, during: 'work', block: L('Математика', 'Math'), access_min: 0, extensions: 0 },
         { start: '2026-09-28T15:02:00+03:00', end: '2026-09-28T15:07:00+03:00', minutes: 5, during: 'break', block: L('Словацкий', 'Spanish'), access_min: 0, extensions: 0 },
       ],
-      pause_access_min: 0, pause_access_extensions: 0, emergency_count: 0, emergencies: [], breaks: [{ type: L('Обед', 'Lunch'), planned_min: 45, actual_min: 52, overrun_min: 7, start: '2026-09-28T14:40:00+03:00', end: '2026-09-28T15:32:00+03:00' }, { type: L('Сон', 'Nap'), planned_min: 20, actual_min: 20.5, overrun_min: 0.5, start: '2026-09-28T15:32:00+03:00', end: '2026-09-28T15:52:30+03:00' }], single_timer_min: 0,
+      pause_access_min: 0, pause_access_extensions: 0, emergency_count: 0, emergencies: [], autolock: { time: '13:00', at: '2026-09-28T13:00:00+03:00', day_started_at: '2026-09-28T13:12:00+03:00', start_delay_min: 12 },
+      breaks: [{ type: L('Обед', 'Lunch'), planned_min: 45, actual_min: 52, overrun_min: 7, start: '2026-09-28T14:40:00+03:00', end: '2026-09-28T15:32:00+03:00' }, { type: L('Сон', 'Nap'), planned_min: 20, actual_min: 20.5, overrun_min: 0.5, start: '2026-09-28T15:32:00+03:00', end: '2026-09-28T15:52:30+03:00' }], single_timer_min: 0,
     };
     default: console.log('[mock]', cmd, args); return null;
   }

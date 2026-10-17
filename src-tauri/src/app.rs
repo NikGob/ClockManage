@@ -300,6 +300,8 @@ impl Shared {
         let _ = items.quit.set_enabled(!v.lock.base);
         let quit = if !v.lock.base {
             tr("app_quit")
+        } else if v.lock.reason == "autolock" {
+            tr("app_quit_is_unavailable_during_the_autolock")
         } else if v.lock.focus_until.is_some() && v.lock.reason != "study" {
             tr("app_quit_is_unavailable_until_the_focus")
         } else {
@@ -454,6 +456,16 @@ impl Shared {
                 Event::SegmentLong { name, elapsed_ms } => {
                     // A stopwatch segment: no alarm, just a quiet word that it is still on.
                     self.notify(&tr!("app_has_run_for", elapsed_ms = fmt_dur(*elapsed_ms), name = name), tr("app_untimed_press_done_when_youre_back"));
+                }
+                Event::AutoLockSoon { left_ms, at } => {
+                    self.play(Sound::Ping);
+                    let min = (left_ms + MIN - 1) / MIN;
+                    let time = clock::hm(*at, snap.meta.tz_offset_min);
+                    self.notify(&tr!("app_lock_in_min", min = min), &tr!("app_at_the_block_list_goes_on_unless", time = time));
+                }
+                Event::AutoLockOn { .. } => {
+                    self.play(Sound::Ping);
+                    self.notify(tr("app_autolock_on"), tr("app_the_day_hasnt_started_the_block_list"));
                 }
                 Event::AskWhatNow => {
                     self.play(Sound::Ping);
@@ -693,6 +705,7 @@ fn ticker(shared: Arc<Shared>) {
                     g.last_kill_note = now;
                     drop(g);
                     let (title, until) = match snap.view.lock.focus_until {
+                        _ if snap.view.lock.reason == "autolock" => (tr("app_autolock_on"), tr!("app_locked_until_start_day")),
                         Some(u) if snap.view.lock.reason != "study" => {
                             (tr("app_focus_lock"), tr!("app_locked_until", clock = clock::hm(u, snap.meta.tz_offset_min)))
                         }
@@ -856,6 +869,7 @@ impl McpHost for McpBridge {
             "templates": templates_json(&g.cfg),
             "week": week_json(&g.cfg),
             "upcoming": (1..=7).map(|n| day_ahead_json(&g.cfg, today + chrono::Days::new(n))).collect::<Vec<_>>(),
+            "autolock": autolock_json(&g.day, &g.cfg, clock::now_ts()),
         });
         if let Some(d) = date {
             let d = parse_plan_date(d)?;
@@ -1029,6 +1043,35 @@ impl McpHost for McpBridge {
         }))
     }
 
+    fn set_autolock(&self, profile: DayKind, min: Option<u32>) -> Result<Value, String> {
+        let mut next = self.0.lock().cfg.clone();
+        let p = next.profiles.get_mut(profile);
+        p.autolock = min.is_some();
+        if let Some(m) = min {
+            p.autolock_min = m;
+        }
+        let changed = next.autolock_min(profile) != self.0.lock().cfg.autolock_min(profile);
+        let saved = if changed { apply_config(&self.0, next)? } else { self.0.lock().cfg.clone() };
+        let time = saved.autolock_min(profile).map(clockmanage_core::config::fmt_hm);
+        let (today, held) = {
+            let g = self.0.lock();
+            let now = clock::now_ts();
+            (autolock_json(&g.day, &g.cfg, now), g.day.kind == profile && g.day.autolock_on(now, &g.cfg))
+        };
+        if changed {
+            let text = match &time {
+                Some(t) => tr!("app_autolock_from", profile = profile.label(), time = t),
+                None => tr!("app_autolock_off", profile = profile.label()),
+            };
+            self.0.notice(tr("app_the_agent_changed_the_autolock"), &text);
+        }
+        let mut res = json!({ "ok": true, "changed": changed, "profile": profile, "autolock": time, "today": today });
+        if changed && held {
+            res["note"] = json!(tr("app_todays_autolock_is_already_on"));
+        }
+        Ok(res)
+    }
+
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
         let now = clock::now_ts();
         let Some(typed) = confirm_token else {
@@ -1143,9 +1186,27 @@ fn forecast_json(f: &Forecast, tz: i32) -> Value {
 fn templates_json(cfg: &Config) -> Value {
     let mut v = json!({});
     for k in DayKind::ALL {
-        v[k.key()] = json!({ "label": k.label(), "plan": cfg.profile(k).plan, "blocking": cfg.profile(k).block });
+        v[k.key()] = json!({
+            "label": k.label(),
+            "plan": cfg.profile(k).plan,
+            "blocking": cfg.profile(k).block,
+            "autolock": cfg.autolock_min(k).map(clockmanage_core::config::fmt_hm),
+        });
     }
     v
+}
+
+/// Today's autolock for the agent: still ahead, holding, or handed over to the day.
+fn autolock_json(d: &DayState, cfg: &Config, now: Ts) -> Value {
+    match view::AutoLockView::of(d, cfg, now) {
+        Some(a) => json!({
+            "time": a.time,
+            "at": clock::hm(a.at, cfg.tz_offset_min),
+            "on": a.on,
+            "start_delay_min": a.start_delay_min,
+        }),
+        None => Value::Null,
+    }
 }
 
 fn week_json(cfg: &Config) -> Value {
