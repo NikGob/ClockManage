@@ -76,7 +76,6 @@ fn main() {
                 inner: Mutex::new(app::Inner {
                     cfg,
                     day,
-                    captcha: None,
                     force_emit: true,
                     last_emit_sec: 0,
                     last_save: now,
@@ -143,8 +142,6 @@ fn main() {
             app::set_day_end,
             app::emergency,
             app::end_access,
-            app::captcha_new,
-            app::captcha_submit,
             app::list_days,
             app::day_stats,
             app::export_log,

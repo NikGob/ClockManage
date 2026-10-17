@@ -61,6 +61,23 @@ pub fn set_autostart(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Milliseconds since the last keyboard or mouse input in this session.
+#[cfg(windows)]
+pub fn idle_ms() -> u64 {
+    use windows_sys::Win32::System::SystemInformation::GetTickCount;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    let mut li = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+    if unsafe { GetLastInputInfo(&mut li) } == 0 {
+        return 0;
+    }
+    unsafe { GetTickCount() }.wrapping_sub(li.dwTime) as u64
+}
+
+#[cfg(not(windows))]
+pub fn idle_ms() -> u64 {
+    u64::MAX
+}
+
 pub fn open_path(path: &Path) {
     #[cfg(windows)]
     {

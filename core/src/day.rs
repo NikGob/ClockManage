@@ -14,7 +14,6 @@ use crate::tr;
 /// A remainder shorter than this is merged into the previous work segment (50 min -> one part).
 const MERGE_TAIL_MS: i64 = 15 * MIN;
 const PAUSE_REMINDER_MS: i64 = 5 * MIN;
-const ACCESS_WARNING_MS: i64 = 2 * MIN;
 const MAX_PLAN_BLOCKS: usize = 16;
 /// A skipped break can be taken back this long (misclick protection).
 pub const SKIP_UNDO_MS: i64 = 10 * crate::clock::SEC;
@@ -173,19 +172,10 @@ pub struct ActivePause {
     pub since: Ts,
     pub what: String,
     pub block: Option<usize>,
+    /// Access on pause windows (before 0.5.0): still counted into the pause record.
+    #[serde(default)]
     pub access: Vec<AccessWindow>,
     pub reminded_at: Ts,
-    pub warned: bool,
-    pub expired_notified: bool,
-}
-
-impl ActivePause {
-    pub fn access_until(&self) -> Option<Ts> {
-        self.access.last().map(|w| w.until)
-    }
-    pub fn access_active(&self, now: Ts) -> bool {
-        self.access_until().is_some_and(|u| now < u)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -443,8 +433,6 @@ pub enum Event {
     BreakEnded { next_name: String, next_part: u32, next_parts: u32, lunch: bool },
     AwaitReminder { waiting_ms: i64, next_name: String, next_part: u32, next_parts: u32 },
     PauseReminder { paused_ms: i64 },
-    PauseAccessWarning { left_ms: i64 },
-    PauseAccessExpired,
     EmergencyEnded,
     FocusEnded,
     DayEndReached,
@@ -514,6 +502,9 @@ pub struct DayState {
     /// Focus locks started (or carried over from the day before) on this day.
     #[serde(default)]
     pub focus: Vec<FocusLock>,
+    /// Events raised by a command (not by the clock), handed out with the next tick.
+    #[serde(skip)]
+    pub pending_events: Vec<Event>,
 }
 
 pub fn next_segment_ms(total_ms: i64, done_ms: i64, seg_ms: i64) -> i64 {
@@ -641,6 +632,7 @@ impl DayState {
             segment_queue: vec![],
             what_now_for: None,
             focus: vec![],
+            pending_events: vec![],
         }
     }
 
@@ -686,13 +678,11 @@ impl DayState {
                     block: self.current_block(),
                     access: vec![],
                     reminded_at: now,
-                    warned: false,
-                    expired_notified: true,
                 });
             }
             self.log(now, "restore", tr!("day_the_app_was_closed_for_min", min = worked_min(now - saved)));
         }
-        // Access windows never survive a restart.
+        // An access window left by an older version never survives a restart.
         if let Some(p) = &mut self.pause {
             if let Some(w) = p.access.last_mut() {
                 w.until = w.until.min(now);
@@ -909,7 +899,7 @@ impl DayState {
         }
     }
 
-    /// The study-day lock (before exemptions like pause access or emergency).
+    /// The study-day lock (before exemptions like break access or emergency).
     pub fn plan_lock(&self, now: Ts, cfg: &Config) -> bool {
         self.study_day && self.started_at.is_some() && self.completed_at.is_none() && !self.after_day_end(now, cfg)
     }
@@ -949,12 +939,20 @@ impl DayState {
         if let Some(e) = self.emergencies.iter().rev().find(|e| now < e.until) {
             return LockState { blocked: false, base: true, reason: "emergency".into(), until: Some(e.until), focus_until };
         }
-        // A focus lock is opened by emergency access only: pause access, lunch at the PC and
+        // A focus lock is opened by emergency access only: break access, lunch at the PC and
         // segment access are study-day exemptions.
         if focus_until.is_none() {
-            if let Some(p) = &self.pause {
-                if p.access_active(now) {
-                    return LockState { blocked: false, base: true, reason: "pause_access".into(), until: p.access_until(), focus_until };
+            // The break between blocks while its timer runs: a paused break stays blocked, and
+            // once the timer runs out (waiting for "start") the lock is back.
+            if let Phase::Break { brk: BreakKind::Between, dur_ms, elapsed_ms, since: Some(s), .. } = self.phase {
+                if cfg.break_access && self.pause.is_none() {
+                    return LockState {
+                        blocked: false,
+                        base: true,
+                        reason: "break_access".into(),
+                        until: Some(s + (dur_ms - elapsed_ms)),
+                        focus_until,
+                    };
                 }
             }
             if let Phase::Break { brk: BreakKind::Lunch { at_pc: true }, dur_ms, elapsed_ms, since: Some(s), .. } = self.phase {
@@ -1036,7 +1034,7 @@ impl DayState {
         Ok(())
     }
 
-    pub fn pause(&mut self, now: Ts, cfg: &Config) -> Result<(), String> {
+    pub fn pause(&mut self, now: Ts, _cfg: &Config) -> Result<(), String> {
         if self.pause.is_some() {
             return Err(tr!("day_already_paused"));
         }
@@ -1048,25 +1046,8 @@ impl DayState {
             }
             _ => return Err(tr!("day_nothing_to_pause_right_now")),
         }
-        let mut access = vec![];
-        if cfg.pause_access && self.base_lock(now, cfg) && self.focus_until(now).is_none() {
-            access.push(AccessWindow { from: now, until: now + cfg.pause_access_min as i64 * MIN });
-        }
-        let granted = !access.is_empty();
-        self.pause = Some(ActivePause {
-            since: now,
-            what,
-            block: self.current_block(),
-            access,
-            reminded_at: now,
-            warned: false,
-            expired_notified: false,
-        });
-        self.log(
-            now,
-            "pause",
-            if granted { tr!("day_paused_access_open_for_min", pause_access_min = cfg.pause_access_min) } else { tr!("day_pause") },
-        );
+        self.pause = Some(ActivePause { since: now, what, block: self.current_block(), access: vec![], reminded_at: now });
+        self.log(now, "pause", tr!("day_pause"));
         Ok(())
     }
 
@@ -1106,28 +1087,6 @@ impl DayState {
             extensions: p.access.len().saturating_sub(1) as u32,
         });
         true
-    }
-
-    /// Extend pause access (the app checks the captcha before calling this).
-    pub fn extend_pause_access(&mut self, now: Ts, cfg: &Config) -> Result<Ts, String> {
-        if !cfg.pause_access {
-            return Err(tr!("day_access_on_pause_is_turned_off"));
-        }
-        if !self.base_lock(now, cfg) {
-            return Err(tr!("day_the_lock_isnt_active_right_now"));
-        }
-        if self.focus_until(now).is_some() {
-            return Err(tr!("day_during_a_focus_lock_pausing_doesnt"));
-        }
-        let p = self.pause.as_mut().ok_or(tr("day_you_can_only_extend_it_during"))?;
-        let from = p.access_until().map(|u| u.max(now)).unwrap_or(now);
-        let until = from + cfg.pause_access_min as i64 * MIN;
-        p.access.push(AccessWindow { from, until });
-        p.warned = false;
-        p.expired_notified = false;
-        let n = p.access.len() - 1;
-        self.log(now, "pause_extend", tr!("day_access_on_pause_extended_until", clock = clock::hm(until, cfg.tz_offset_min), n = n));
-        Ok(until)
     }
 
     /// Start the next part from a break / waiting / lunch state.
@@ -1287,18 +1246,6 @@ impl DayState {
                 self.log(now, "focus", tr!("day_focus_lock_extended", cur = hm(cur), until = hm(until), note = note));
             }
             None => {
-                // Pause access does not open a focus lock: close a window still running.
-                if let Some(p) = &mut self.pause {
-                    if p.access_active(now) {
-                        for w in &mut p.access {
-                            if w.until > now {
-                                w.until = now.max(w.from);
-                            }
-                        }
-                        p.warned = true;
-                        p.expired_notified = true;
-                    }
-                }
                 self.focus.push(FocusLock { at: now, until, by: by.into(), reason, notified: false });
                 self.log(now, "focus", tr!("day_focus_lock_until_min", until = hm(until), minutes = minutes, note = note));
             }
@@ -1313,15 +1260,6 @@ impl DayState {
             e.ended_early = true;
             e.notified = true;
             any = true;
-        }
-        if let Some(p) = &mut self.pause {
-            if let Some(w) = p.access.last_mut() {
-                if now < w.until {
-                    w.until = now;
-                    p.expired_notified = true;
-                    any = true;
-                }
-            }
         }
         if any {
             self.log(now, "access_end", tr("day_access_closed_manually"));
@@ -1869,7 +1807,7 @@ impl DayState {
     // ---------- time ----------
 
     pub fn tick(&mut self, now: Ts, cfg: &Config) -> Vec<Event> {
-        let mut ev = vec![];
+        let mut ev = std::mem::take(&mut self.pending_events);
         for _ in 0..64 {
             if !self.advance(now, cfg, &mut ev) {
                 break;
@@ -1885,17 +1823,6 @@ impl DayState {
             }
         }
         if let Some(p) = &mut self.pause {
-            if let Some(until) = p.access_until() {
-                if now < until && until - now <= ACCESS_WARNING_MS && !p.warned {
-                    p.warned = true;
-                    ev.push(Event::PauseAccessWarning { left_ms: until - now });
-                }
-                if now >= until && !p.expired_notified {
-                    p.expired_notified = true;
-                    p.reminded_at = now;
-                    ev.push(Event::PauseAccessExpired);
-                }
-            }
             if !quiet && now - p.reminded_at >= PAUSE_REMINDER_MS {
                 p.reminded_at = now;
                 ev.push(Event::PauseReminder { paused_ms: now - p.since });
@@ -2112,23 +2039,48 @@ mod tests {
     }
 
     #[test]
-    fn pause_access_expires_and_extends() {
+    fn break_access_opens_only_the_break_between_blocks() {
         let mut c = cfg();
-        c.pause_access = true;
+        c.break_access = true;
         let mut d = DayState::new(start(), &c);
         d.start_day(start(), &c).unwrap();
-        let p = start() + 5 * MIN;
-        d.pause(p, &c).unwrap();
-        assert!(!d.lock_state(p + MIN, &c).blocked);
-        let ev = d.tick(p + 10 * MIN, &c);
-        assert!(ev.contains(&Event::PauseAccessExpired));
-        assert!(d.lock_state(p + 10 * MIN, &c).blocked);
-        d.extend_pause_access(p + 12 * MIN, &c).unwrap();
-        assert!(!d.lock_state(p + 13 * MIN, &c).blocked);
-        d.resume(p + 15 * MIN).unwrap();
-        assert!(d.lock_state(p + 15 * MIN, &c).blocked);
-        assert_eq!(d.pauses[0].access_ms, 13 * MIN);
-        assert_eq!(d.pauses[0].extensions, 1);
+        // A pause opens nothing.
+        d.pause(start() + 5 * MIN, &c).unwrap();
+        assert_eq!(d.lock_state(start() + 6 * MIN, &c).reason, "study");
+        d.resume(start() + 10 * MIN).unwrap();
+        // Neither does the short break between the parts of one block.
+        d.tick(start() + 50 * MIN, &c);
+        assert!(matches!(d.phase, Phase::Break { brk: BreakKind::Short, .. }));
+        assert!(d.lock_state(start() + 51 * MIN, &c).blocked);
+        d.tick(start() + 60 * MIN, &c);
+        d.start_next(start() + 60 * MIN).unwrap();
+        // The block is done: the break between blocks is open until its timer runs out.
+        d.tick(start() + 105 * MIN, &c);
+        assert!(matches!(d.phase, Phase::Break { brk: BreakKind::Between, .. }));
+        let l = d.lock_state(start() + 106 * MIN, &c);
+        assert!(!l.blocked);
+        assert_eq!(l.reason, "break_access");
+        assert_eq!(l.until, Some(start() + 125 * MIN));
+        // A paused break is blocked, and the access goes on after resume.
+        d.pause(start() + 110 * MIN, &c).unwrap();
+        assert!(d.lock_state(start() + 111 * MIN, &c).blocked);
+        d.resume(start() + 112 * MIN).unwrap();
+        assert_eq!(d.lock_state(start() + 113 * MIN, &c).until, Some(start() + 127 * MIN));
+        // The break is over: waiting for "start" is blocked again.
+        d.tick(start() + 127 * MIN, &c);
+        assert!(matches!(d.phase, Phase::Await { .. }));
+        assert!(d.lock_state(start() + 128 * MIN, &c).blocked);
+
+        // Turned off: the break between blocks stays blocked.
+        c.break_access = false;
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        d.tick(start() + 45 * MIN, &c);
+        d.tick(start() + 55 * MIN, &c);
+        d.start_next(start() + 55 * MIN).unwrap();
+        d.tick(start() + 100 * MIN, &c);
+        assert!(matches!(d.phase, Phase::Break { brk: BreakKind::Between, .. }));
+        assert!(d.lock_state(start() + 101 * MIN, &c).blocked);
     }
 
     #[test]
@@ -2794,22 +2746,19 @@ mod tests {
     #[test]
     fn focus_lock_is_opened_by_emergency_only() {
         let mut c = cfg();
-        c.pause_access = true;
+        c.break_access = true;
+        c.profiles.full.plan = vec![PlanBlock::new("Математика", 45), PlanBlock::new("Экстернат", 150)];
         let mut d = DayState::new(start(), &c);
         d.start_day(start(), &c).unwrap();
-        let p = start() + 5 * MIN;
-        d.pause(p, &c).unwrap();
-        assert_eq!(d.lock_state(p + MIN, &c).reason, "pause_access");
-        d.start_focus(p + MIN, &c, 60, None, "mcp").unwrap();
-        // The pause access window is closed, not left running under the focus lock.
-        assert_eq!(d.pause.as_ref().unwrap().access_until(), Some(p + MIN));
-        let ev = d.tick(p + 10 * MIN, &c);
-        assert!(!ev.contains(&Event::PauseAccessExpired) && !ev.iter().any(|e| matches!(e, Event::PauseAccessWarning { .. })));
-        assert!(d.extend_pause_access(p + 10 * MIN, &c).is_err());
-        let l = d.lock_state(p + 2 * MIN, &c);
+        d.tick(start() + 45 * MIN, &c);
+        let p = start() + 46 * MIN;
+        assert_eq!(d.lock_state(p, &c).reason, "break_access");
+        d.start_focus(p, &c, 60, None, "mcp").unwrap();
+        // Break access does not open a focus lock.
+        let l = d.lock_state(p + MIN, &c);
         assert!(l.blocked);
         assert_eq!(l.reason, "study");
-        assert_eq!(l.focus_until, Some(p + 61 * MIN));
+        assert_eq!(l.focus_until, Some(p + 60 * MIN));
 
         d.emergency(p + 3 * MIN, &c, &c.emergency_phrase).unwrap();
         let l = d.lock_state(p + 4 * MIN, &c);

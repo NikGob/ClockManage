@@ -1,5 +1,5 @@
 // Interface language. Texts live in one flat JSON file per language, ui/locales/<lang>.json,
-// shared with the Rust side and the phone app: tr('app_quit'), tr('today_extend_by_min', { pause_access_min: 10 }).
+// shared with the Rust side and the phone app: tr('app_quit'), tr('settings_downloading', { version: '0.5.0' }).
 // The backend decides the language (Settings → System → Language, "auto" = Windows); every
 // window starts with the last one it saw and reloads once when the state says otherwise.
 

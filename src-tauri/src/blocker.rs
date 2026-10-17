@@ -167,16 +167,14 @@ pub fn firefox_rules(sites: &[String]) -> Vec<String> {
 
 impl Blocker {
     pub fn new(state_file: PathBuf) -> Self {
-        let applied = std::fs::read_to_string(&state_file)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        // What we changed in the system: losing it would leave policies nobody removes.
+        let applied = crate::store::read_json(&state_file).unwrap_or_default();
         Self { state_file, applied, last_error: None, firefox_restart_pending: false }
     }
 
     fn persist(&self) {
         if let Ok(s) = serde_json::to_string_pretty(&self.applied) {
-            let _ = std::fs::write(&self.state_file, s);
+            let _ = crate::store::write_atomic(&self.state_file, &s);
         }
     }
 

@@ -94,7 +94,8 @@ function render(s) {
       break;
     case 'done':
       setTime(tr('art_done'));
-      label = tr('mini_min_of_study_lock_off', { v: Math.round(v.work_ms / 60000) });
+      // Minutes rounded down, as everywhere; a focus lock may still hold after the day.
+      label = v.lock.blocked ? tr('mini_min_of_study_lock_on', { v: Math.floor(v.work_ms / 60000) }) : tr('mini_min_of_study_lock_off', { v: Math.floor(v.work_ms / 60000) });
       break;
     default:
       {

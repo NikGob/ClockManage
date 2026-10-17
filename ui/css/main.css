@@ -357,6 +357,12 @@ table.t tr:last-child td { border-bottom: 0; }
 .setting .t .info .icon, .setting .d .info .icon { width: 16px; height: 16px; }
 .setting .t .info:hover { opacity: 1; }
 .setting.off { opacity: .6; }
+/* What a section is about, under its heading. */
+.section-d { margin: -4px 0 4px; font: 400 14px/20px var(--font); color: var(--md-sys-color-on-surface-variant); }
+/* Options of the switch above: indented, with a guide line, so they read as its details. */
+.setting.sub { padding-left: 36px; position: relative; }
+.setting.sub::before { content: ""; position: absolute; left: 20px; top: 0; bottom: 0; width: 2px; background: var(--md-sys-color-outline-variant); }
+.setting.sub .t { font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
 /* The author's mark at the end of Settings. */
 .made-by { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px 0 32px; color: var(--md-sys-color-on-surface-variant); font: 500 14px/20px var(--font); letter-spacing: .1px; }
 .made-by .nikgob { width: 72px; height: 72px; }

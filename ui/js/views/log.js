@@ -62,9 +62,11 @@ export function mountLog(root, ctx) {
     const blocks = st.blocks.map((b) => `<tr><td>${esc(b.name)}${b.done ? ' ' + icon('check', 's18') : ''}${b.note ? `<div class="body-s muted">${esc(b.note)}</div>` : ''}</td>
         <td class="r tnum">${fmtMin(b.planned_min)}</td><td class="r tnum">${fmtMin(b.actual_min)}</td><td class="r tnum">${dec(b.journal_hours ?? 0)}</td>
         <td class="r tnum">${b.pauses ? `${b.pauses} · ${fmtMin(b.pause_min)}` : '—'}</td></tr>`).join('');
+    // Access on pause is gone since 0.5.0: its column and fact show up for older days only.
+    const pauseAccess = st.pauses.some((p) => p.access_min);
     const pauses = st.pauses.map((p) => `<tr><td class="tnum">${hmOf(p.start)}–${p.end === 'идёт' || p.end === 'running' ? tr('stats_running') : hmOf(p.end)}</td>
         <td>${esc(p.block || '—')} · ${{ work: tr('log_work'), break: tr('log_break'), lunch: tr('log_lunch') }[p.during] || p.during}</td>
-        <td class="r tnum">${fmtMin(p.minutes)}</td><td class="r tnum">${p.access_min ? fmtMin(p.access_min) + (p.extensions ? ` · +${p.extensions}` : '') : '—'}</td></tr>`).join('');
+        <td class="r tnum">${fmtMin(p.minutes)}</td>${pauseAccess ? `<td class="r tnum">${p.access_min ? fmtMin(p.access_min) + (p.extensions ? ` · +${p.extensions}` : '') : '—'}</td>` : ''}</tr>`).join('');
     const brk = (st.breaks || []).map((b) => `<tr><td>${esc(b.type)}</td><td class="tnum">${hmOf(b.start)}–${b.end ? hmOf(b.end) : tr('stats_running')}</td>
         <td class="r tnum">${fmtMin(b.planned_min)}</td><td class="r tnum">${fmtMin(b.actual_min)}</td><td class="r tnum">${b.overrun_min >= 1 ? '+' + fmtMin(b.overrun_min) : '—'}</td></tr>`).join('');
     const em = st.emergencies.map((e) => `<tr><td class="tnum">${hmOf(e.at)}–${hmOf(e.until)}</td><td class="r tnum">${fmtMin(e.minutes)}${e.ended_early ? tr('log_closed_early') : ''}</td></tr>`).join('');
@@ -75,12 +77,12 @@ export function mountLog(root, ctx) {
       <div class="facts">
         <div class="fact"><div class="v tnum">${fmtMin(st.actual_min)}</div><div class="k">${tr('log_actual_of')} ${fmtMin(st.planned_min).toUpperCase()}</div></div>
         <div class="fact"><div class="v tnum">${st.pauses_count}</div><div class="k">${tr('log_fact_pauses')} ${fmtMin(st.pauses_min).toUpperCase()}</div></div>
-        <div class="fact"><div class="v tnum">${fmtMin(st.pause_access_min)}</div><div class="k">${tr('log_access_on_pause')}${st.pause_access_extensions ? ` · +${st.pause_access_extensions}` : ''}</div></div>
+        ${st.pause_access_min ? `<div class="fact"><div class="v tnum">${fmtMin(st.pause_access_min)}</div><div class="k">${tr('log_access_on_pause')}${st.pause_access_extensions ? ` · +${st.pause_access_extensions}` : ''}</div></div>` : ''}
         <div class="fact ${st.emergency_count ? 'alert' : ''}"><div class="v tnum">${st.emergency_count}</div><div class="k">${tr('log_emergency_accesses')}</div></div>
       </div>
       ${st.blocks.length ? `<table class="t"><caption class="sr-only">${tr('log_blocks_caption')}</caption><thead><tr><th>${tr('day_block')}</th><th class="r">${tr('main_plan')}</th><th class="r">${tr('log_actual')}</th><th class="r" title="${tr('log_journal_rounding_hint')}">${tr('log_journal')}</th><th class="r">${tr('log_pauses_title')}</th></tr></thead><tbody>${blocks}</tbody>
         <tfoot><tr><td>${tr('log_journal_total')}</td><td></td><td></td><td class="r tnum"><b>${dec(st.journal_total ?? 0)}</b></td><td></td></tr></tfoot></table>` : ''}
-      ${st.pauses.length ? `<div><h3 class="title-m" style="margin-bottom:8px">${tr('log_pauses_title')}</h3><table class="t"><thead><tr><th>${tr('log_time')}</th><th>${tr('log_where')}</th><th class="r">${tr('log_lasted')}</th><th class="r">${tr('log_access')}</th></tr></thead><tbody>${pauses}</tbody></table></div>` : ''}
+      ${st.pauses.length ? `<div><h3 class="title-m" style="margin-bottom:8px">${tr('log_pauses_title')}</h3><table class="t"><thead><tr><th>${tr('log_time')}</th><th>${tr('log_where')}</th><th class="r">${tr('log_lasted')}</th>${pauseAccess ? `<th class="r">${tr('log_access')}</th>` : ''}</tr></thead><tbody>${pauses}</tbody></table></div>` : ''}
       ${st.emergencies.length ? `<div><h3 class="title-m" style="margin-bottom:8px">${tr('log_emergency_accesses_title')}</h3><table class="t"><thead><tr><th>${tr('log_time')}</th><th class="r">${tr('log_duration')}</th></tr></thead><tbody>${em}</tbody></table></div>` : ''}
       ${brk ? `<div><h3 class="title-m" style="margin-bottom:8px">${tr('log_segments')}</h3><table class="t"><thead><tr><th>${tr('log_what')}</th><th>${tr('log_time')}</th><th class="r">${tr('main_plan')}</th><th class="r">${tr('log_actual')}</th><th class="r">${tr('log_over')}</th></tr></thead><tbody>${brk}</tbody></table></div>` : ''}
       ${st.single_timer_min ? `<p class="body-m"><b>${tr('log_single_timer')}</b> ${fmtMin(st.single_timer_min)}</p>` : ''}

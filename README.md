@@ -56,7 +56,7 @@ When a break ends the timer **doesn't** quietly carry on: a hand-drawn alarm pop
 | Paths — `youtube.com/shorts` | browser policies only, so the rest of YouTube keeps working |
 | Apps — `Telegram.exe`, `Discord.exe` | can't start (a tiny guard runs instead and says *Nope*); already running ones are closed within a second |
 
-During a study day the block list **can only grow**, the app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler brings it back within 5 minutes. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
+During a study day the block list **can only grow**, the app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler brings it back within 5 minutes. Want the break between blocks free? **Blocking → Access in breaks** opens everything while that break's timer runs; a pause and the short breaks between the parts of a block stay locked. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
 
 <div align="center">
   <img src="docs/media/blocking.png" alt="Blocking screen" width="62%">
@@ -156,7 +156,7 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 
 ## Good to know
 
-- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running and the window is closed. The app restarts on its own. *Settings → System → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs a downloaded version at once (outside a study day). The installers are signed, and the app installs nothing else.
+- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs a downloaded version at once (outside a study day). The installers are signed, and the app installs nothing else.
 - **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
@@ -172,7 +172,7 @@ npx @tauri-apps/cli@2 dev                    # run on Windows (from an administr
 npx @tauri-apps/cli@2 build                  # NSIS installer
 ```
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`.
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`.
 
 | Folder | What's inside |
 |---|---|
@@ -185,4 +185,4 @@ A `v*` tag builds the release. With the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_S
 
 The pictures and GIFs above are recorded from the UI on the mock backend by `scripts/media` (headless Chrome + ffmpeg) — rerun it after UI changes.
 
-All texts live in one flat JSON file per language — [`ui/locales/en.json`](ui/locales/en.json) and [`ui/locales/ru.json`](ui/locales/ru.json) — shared by the Rust core, the app, the UI and the Android app: `tr("app_quit")`, `tr!("view_part_of", part = 2, parts = 3)` in Rust, `tr('today_extend_by_min', { pause_access_min })` in JS, `tr("android_main_find_pc")` in Kotlin. Placeholders are named (`{min}`), so a translation may reorder them. `core/tests/locales.rs` keeps the files and the code in step: the same keys and placeholders in every language, every call names an existing key with exactly its arguments, no unused keys. To add a language, copy `en.json` and translate the values.
+All texts live in one flat JSON file per language — [`ui/locales/en.json`](ui/locales/en.json) and [`ui/locales/ru.json`](ui/locales/ru.json) — shared by the Rust core, the app, the UI and the Android app: `tr("app_quit")`, `tr!("view_part_of", part = 2, parts = 3)` in Rust, `tr('settings_downloading', { version })` in JS, `tr("android_main_find_pc")` in Kotlin. Placeholders are named (`{min}`), so a translation may reorder them. `core/tests/locales.rs` keeps the files and the code in step: the same keys and placeholders in every language, every call names an existing key with exactly its arguments, no unused keys. A new language takes more than a new file: see *Adding a language* in [AGENTS.md](AGENTS.md).

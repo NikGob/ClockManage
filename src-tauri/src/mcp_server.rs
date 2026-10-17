@@ -41,8 +41,9 @@ fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid header")
 }
 
+/// No `null`: a sandboxed iframe or a data: page sends that, so it is any web page.
 fn allowed_origin(origin: &str, port: u16) -> bool {
-    origin == "null" || origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}")
+    origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}")
 }
 
 impl McpServer {
@@ -119,6 +120,17 @@ impl McpServer {
                         let _ = req.respond(
                             Response::from_string("Method not allowed").with_status_code(405).with_header(header("Allow", "POST")),
                         );
+                        continue;
+                    }
+                    // MCP clients always send JSON. A page can only POST text/plain or a form
+                    // without a preflight, and the preflight (OPTIONS) gets 405 above.
+                    let json_body = req
+                        .headers()
+                        .iter()
+                        .find(|h| h.field.equiv("Content-Type"))
+                        .is_some_and(|h| h.value.as_str().to_ascii_lowercase().starts_with("application/json"));
+                    if !json_body {
+                        let _ = req.respond(Response::from_string("Unsupported media type").with_status_code(415));
                         continue;
                     }
                     let mut body = String::new();

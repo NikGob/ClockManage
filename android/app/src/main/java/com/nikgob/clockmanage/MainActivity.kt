@@ -393,7 +393,7 @@ class MainActivity : Activity() {
             if (focusUntil != null && (s.lockReason != "study" || focusUntil >= minOf(s.dayEndAt, s.doneAt ?: s.dayEndAt))) tr("android_main_focus_lock_until", "focus_until" to hm.format(Date(focusUntil - store.offset)))
             else tr("android_main_lock_on_until_or_until_the", "day_end" to s.dayEnd)
         } else when (s.lockReason) {
-            "pause_access" -> tr("today_access_on_pause_is_open")
+            "break_access" -> tr("blocking_access_in_the_break")
             "emergency" -> tr("blocking_emergency_access")
             "completed" -> tr("android_main_all_blocks_done_no_lock")
             "day_end" -> tr("android_main_no_lock_after", "day_end" to s.dayEnd)

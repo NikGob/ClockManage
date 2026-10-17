@@ -1,7 +1,8 @@
 //! Self-update from GitHub Releases, no server of our own: the app reads `latest.json` of the
 //! latest release (CI uploads it next to the signed installer), downloads the new installer in
 //! the background and runs it when no study day or lock is running. The installer closes the
-//! app, installs over it and starts it again (tauri-plugin-updater, NSIS `/UPDATE`).
+//! app, installs over it and starts it again: our NSIS hook does that (`installer-hooks.nsh`),
+//! because the plugin's own restart runs it without admin rights and so asks for UAC.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,6 +19,8 @@ use crate::app::Shared;
 /// First check this long after the start (the app has settled, the network is up).
 const FIRST_CHECK: Duration = Duration::from_secs(60);
 const CHECK_EVERY_MS: Ts = 6 * 3600 * 1000;
+/// An automatic install waits for this long without keyboard or mouse input.
+const AWAY_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Serialize, Clone, Default)]
 pub struct UpdateStatus {
@@ -55,11 +58,20 @@ fn safe_to_restart(shared: &Shared) -> bool {
     !v.lock.base && !v.lock.blocked && matches!(v.phase.kind.as_str(), "idle" | "done")
 }
 
-fn main_visible(shared: &Shared) -> bool {
+fn visible(shared: &Shared, label: &str) -> bool {
     shared
         .app
-        .get_webview_window("main")
+        .get_webview_window(label)
         .is_some_and(|w| w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false))
+}
+
+/// Nobody is in the middle of something: the window and the cards are closed, no end-of-block
+/// line is waiting, and the user has been away from the keyboard for a while.
+fn user_away(shared: &Shared) -> bool {
+    !visible(shared, "main")
+        && !visible(shared, "overlay")
+        && shared.snapshot().view.pending_note.is_none()
+        && crate::system::idle_ms() >= AWAY_MS
 }
 
 pub fn spawn(shared: Arc<Shared>) {
@@ -79,7 +91,7 @@ pub fn spawn(shared: Arc<Shared>) {
                 // and never during a study day (a restart would pause the running timer).
                 if auto && shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()).is_some()
                     && safe_to_restart(&shared)
-                    && !main_visible(&shared)
+                    && user_away(&shared)
                 {
                     let _ = install(&shared);
                 }
@@ -114,9 +126,10 @@ pub fn check(shared: &Arc<Shared>, manual: bool) {
                 s.checked_at = Some(now);
             });
             if !safe_to_restart(shared) || manual {
+                let auto = shared.lock().cfg.auto_update;
                 shared.notice(
                     &tr!("updater_clockmanage_is_ready", version = version),
-                    tr("updater_it_installs_by_itself_when_no"),
+                    if auto { tr("updater_it_installs_by_itself_when_no") } else { tr("updater_press_restart_and_update_in_settings") },
                 );
             }
         }
@@ -144,6 +157,7 @@ async fn fetch(shared: &Arc<Shared>) -> Result<Option<(Update, Vec<u8>)>, String
         .app
         .updater_builder()
         .on_before_exit(move || app.cleanup_before_exit())
+        .restart_after_install(false)
         .build()
         .map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
@@ -169,12 +183,10 @@ pub fn install(shared: &Arc<Shared>) -> Result<(), String> {
     };
     // Exits the process on success.
     if let Err(e) = update.install(&bytes) {
-        let msg = e.to_string();
-        shared.updates.set(shared, |s| {
-            s.state = "error";
-            s.error = Some(msg.clone());
-        });
-        return Err(msg);
+        eprintln!("update install: {e}");
+        // The tray icon is gone and the windows are hidden by now (on_before_exit): start
+        // over clean; the next check downloads the update again.
+        shared.app.restart();
     }
     Ok(())
 }

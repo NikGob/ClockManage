@@ -15,7 +15,7 @@ fn bak_path(path: &Path) -> PathBuf {
 /// Survives a power cut: the new text reaches the disk (fsync) before it replaces the file,
 /// and the previous good version stays as `.bak`. Without the fsync, NTFS could keep the
 /// rename but not the data, and the day came back as an empty file.
-fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
+pub fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
     use std::io::Write;
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
@@ -36,7 +36,7 @@ fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
 
 /// The file, or its `.bak` when the file is missing or broken. A broken file with nothing to
 /// fall back on is moved aside (`.broken`) before the caller writes a new one over it.
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     let parse = |p: &Path| std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok());
     if let Some(v) = parse(path) {
         return Some(v);

@@ -55,16 +55,12 @@ export function mountBlock(root, ctx) {
       </section>
 
       <section class="section">
-        <h2>${tr('blocking_pause_and_access')}</h2>
+        <h2>${tr('blocking_access_in_breaks')}</h2>
         <div class="surface">
           <div class="setting">
-            <div class="grow"><div class="t">${tr('blocking_open_blocked_things_while_paused')}</div>
-              <div class="d" id="pa-d"></div></div>
-            <input type="checkbox" class="switch" role="switch" id="pa" aria-describedby="pa-d">
-          </div>
-          <div class="setting">
-            <div class="grow"><div class="t">${tr('blocking_access_on_pause_min')}</div><div class="d">${tr('blocking_then_the_lock_comes_back_even')}</div></div>
-            <div class="field num"><input type="number" id="pa-min" min="1" max="60" aria-label="${tr('blocking_minutes_of_access_on_pause')}"></div>
+            <div class="grow"><div class="t">${tr('blocking_open_blocked_things_in_the_break')}</div>
+              <div class="d" id="ba-d"></div></div>
+            <input type="checkbox" class="switch" role="switch" id="ba" aria-describedby="ba-d">
           </div>
         </div>
       </section>
@@ -103,15 +99,12 @@ export function mountBlock(root, ctx) {
     $('sites').innerHTML = chips(cfg.blocklist.sites, 'sites', !locked);
     $('apps').innerHTML = chips(cfg.blocklist.apps, 'apps', !locked);
     $('phone-apps').innerHTML = chips(cfg.phone.apps, 'phone', !locked);
-    const pa = $('pa');
-    pa.checked = cfg.pause_access;
-    pa.disabled = !last.view.can.edit_pause_access;
-    $('pa-d').textContent = last.view.can.edit_pause_access
-      ? tr('blocking_changes_before_the_study_day_starts', { day_end: last.view.day_end })
-      : `${tr('blocking_doesnt_change_during_study_now')} ${cfg.pause_access ? tr('blocking_on') : tr('blocking_off')}.`;
-    $('pa-min').value = cfg.pause_access_min;
+    // Off makes the lock stricter, so it works any time; on only outside the lock.
+    const ba = $('ba');
+    ba.checked = cfg.break_access;
+    ba.disabled = !cfg.break_access && !last.view.can.edit_break_access;
+    $('ba-d').textContent = `${tr('blocking_while_the_break_timer_runs_breaks')}${ba.disabled ? ` ${tr('blocking_turns_on_before_the_study_day', { day_end: last.view.day_end })}` : ''}`;
     $('ff').checked = cfg.restart_firefox;
-    $('pa-min').disabled = locked;
     $('em-min').textContent = cfg.emergency_min;
   }
 
@@ -129,11 +122,11 @@ export function mountBlock(root, ctx) {
       if (focusEnd && lk.reason !== 'focus') p += tr('blocking_focus_lock_until', { focus_end: focusEnd });
     } else if (lk.base) {
       cls = 'open';
-      h = { pause_access: tr('blocking_access_on_pause'), emergency: tr('blocking_emergency_access'), lunch_at_pc: tr('view_lunch_at_the_pc') }[lk.reason] || tr('blocking_access_open');
+      h = { break_access: tr('blocking_access_in_the_break'), emergency: tr('blocking_emergency_access'), lunch_at_pc: tr('view_lunch_at_the_pc') }[lk.reason] || tr('blocking_access_open');
       p = lk.until ? tr('blocking_the_lock_comes_back_in', { lk: mmss(lk.until - v.now) }) : '';
     } else {
       h = tr('blocking_no_lock_right_now');
-      p = { not_started: v.study_day ? tr('blocking_turns_on_with_start_day') : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
+      p = { not_started: v.study_day ? (v.after_day_end ? tr('blocking_no_lock_after', { day_end: v.day_end }) : tr('blocking_turns_on_with_start_day')) : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
     }
     if (!last.meta.admin) p += tr('blocking_warning_the_app_runs_without_administrator');
     if (last.meta.blocker_error) p += ` ${tr('blocking_error')}: ${last.meta.blocker_error}`;
@@ -177,6 +170,7 @@ export function mountBlock(root, ctx) {
       if (okText) snack(okText);
     }
     renderCfg();
+    return saved;
   }
 
   const listOf = (c, kind) => (kind === 'phone' ? c.phone.apps : c.blocklist[kind]);
@@ -185,7 +179,15 @@ export function mountBlock(root, ctx) {
     const inp = $(inputId);
     const val = inp.value.trim();
     if (!val) return;
-    save((c) => listOf(c, kind).push(val), `${tr('blocking_added')}: ${val}`).then(() => { inp.value = ''; inp.focus(); });
+    const before = listOf(cfg, kind).length;
+    save((c) => listOf(c, kind).push(val)).then((saved) => {
+      if (!saved) return; // refused: the text stays for a fix
+      // The backend drops what isn't a site or an app name, a duplicate and system apps.
+      if (listOf(saved, kind).length > before) snack(`${tr('blocking_added')}: ${listOf(saved, kind).at(-1)}`);
+      else snack(tr('blocking_not_added_not_a_site_or', { val }));
+      inp.value = '';
+      inp.focus();
+    });
   }
 
   $('site-add').addEventListener('click', () => addFrom('site-in', 'sites'));
@@ -211,8 +213,7 @@ export function mountBlock(root, ctx) {
     if (ok) snack(tr('blocking_firefox_restarted_your_tabs_will_be'));
   });
   $('ff').addEventListener('change', (e) => save((c) => { c.restart_firefox = e.target.checked; }));
-  $('pa').addEventListener('change', (e) => save((c) => { c.pause_access = e.target.checked; }));
-  $('pa-min').addEventListener('change', (e) => save((c) => { c.pause_access_min = Math.round(Number(e.target.value) || 10); }));
+  $('ba').addEventListener('change', (e) => save((c) => { c.break_access = e.target.checked; }));
   $('em').addEventListener('click', async () => {
     const ok = await emergencyDialog(cfg, last.view.emergency_count);
     if (ok) snack(tr('blocking_emergency_access_for_min_logged', { emergency_min: cfg.emergency_min }));
@@ -228,7 +229,7 @@ export function mountBlock(root, ctx) {
       last = s;
       renderHero();
       // Re-render editable parts only when the lock rules change (keeps focus while typing).
-      const sig = `${s.view.lock.base}|${s.view.lock.reason}|${s.view.can.edit_pause_access}`;
+      const sig = `${s.view.lock.base}|${s.view.lock.reason}|${s.view.can.edit_break_access}`;
       if (sig !== cfgSig) { cfgSig = sig; renderCfg(); }
     },
     show() { reload(); },
