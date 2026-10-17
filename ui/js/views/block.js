@@ -118,7 +118,8 @@ export function mountBlock(root, ctx) {
       const focusEnd = lk.focus_until ? tsHm(lk.focus_until, last.meta.tz_offset_min) : '';
       p = lk.reason === 'single' ? tr('blocking_for_the_single_timer')
         : lk.reason === 'focus' ? tr('blocking_focus_lock_until_only_emergency_access', { focus_end: focusEnd })
-          : tr('blocking_lifts_when_all_blocks_are_done', { day_end: v.day_end });
+          : lk.reason === 'autolock' ? tr('blocking_autolock_holds_until_start_day', { day_end: v.day_end })
+            : tr('blocking_lifts_when_all_blocks_are_done', { day_end: v.day_end });
       if (focusEnd && lk.reason !== 'focus') p += tr('blocking_focus_lock_until', { focus_end: focusEnd });
     } else if (lk.base) {
       cls = 'open';
@@ -126,7 +127,8 @@ export function mountBlock(root, ctx) {
       p = lk.until ? tr('blocking_the_lock_comes_back_in', { lk: mmss(lk.until - v.now) }) : '';
     } else {
       h = tr('blocking_no_lock_right_now');
-      p = { not_started: v.study_day ? (v.after_day_end ? tr('blocking_no_lock_after', { day_end: v.day_end }) : tr('blocking_turns_on_with_start_day')) : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
+      const startText = v.autolock && !v.autolock.on ? tr('blocking_turns_on_at_or_with_start_day', { time: v.autolock.time }) : tr('blocking_turns_on_with_start_day');
+      p = { not_started: v.study_day ? (v.after_day_end ? tr('blocking_no_lock_after', { day_end: v.day_end }) : startText) : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
     }
     if (!last.meta.admin) p += tr('blocking_warning_the_app_runs_without_administrator');
     if (last.meta.blocker_error) p += ` ${tr('blocking_error')}: ${last.meta.blocker_error}`;

@@ -371,6 +371,31 @@ pub struct FocusLock {
     pub notified: bool,
 }
 
+/// "Автоблокировка с 13:00": the block list went on because the study day had not started by
+/// then. Kept here from the moment it fires, so a restart, a power cut or a settings change never
+/// lifts it: it holds until "Начать день" (then the day's own lock), the day end or the date
+/// change. Only emergency access opens it for a while.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutoLock {
+    /// The time from the profile, minutes after the day's midnight.
+    pub planned_min: u32,
+    /// When it went on: the planned time, or later when the app was not running then.
+    pub at: Ts,
+    /// "Начать день" took over.
+    #[serde(default)]
+    pub started_at: Option<Ts>,
+}
+
+impl AutoLock {
+    /// "Задержка старта": from the autolock going on to "Начать день".
+    pub fn start_delay_ms(&self) -> Option<i64> {
+        self.started_at.map(|s| (s - self.at).max(0))
+    }
+}
+
+/// Warn this long before the autolock goes on.
+pub const AUTOLOCK_WARN_MS: i64 = 5 * MIN;
+
 /// What `start_focus` did.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FocusChange {
@@ -449,6 +474,10 @@ pub enum Event {
     SegmentLong { name: String, elapsed_ms: i64 },
     /// A block closed 10 minutes ago and nothing started since: "что сейчас?"
     AskWhatNow,
+    /// The autolock goes on in `left_ms` (five minutes before, once) unless the day starts.
+    AutoLockSoon { left_ms: i64, at: Ts },
+    /// The autolock went on: the day had not started by its time.
+    AutoLockOn { at: Ts },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -502,6 +531,12 @@ pub struct DayState {
     /// Focus locks started (or carried over from the day before) on this day.
     #[serde(default)]
     pub focus: Vec<FocusLock>,
+    /// The autolock of this day, once it went on.
+    #[serde(default)]
+    pub autolock: Option<AutoLock>,
+    /// The "lock in 5 minutes" warning was given for the autolock due at this time.
+    #[serde(default)]
+    pub autolock_warned_for: Option<Ts>,
     /// Events raised by a command (not by the clock), handed out with the next tick.
     #[serde(skip)]
     pub pending_events: Vec<Event>,
@@ -632,6 +667,8 @@ impl DayState {
             segment_queue: vec![],
             what_now_for: None,
             focus: vec![],
+            autolock: None,
+            autolock_warned_for: None,
             pending_events: vec![],
         }
     }
@@ -911,7 +948,46 @@ impl DayState {
     }
 
     pub fn base_lock(&self, now: Ts, cfg: &Config) -> bool {
-        self.plan_lock(now, cfg) || self.single_lock() || self.focus_until(now).is_some()
+        self.plan_lock(now, cfg) || self.single_lock() || self.focus_until(now).is_some() || self.autolock_on(now, cfg)
+    }
+
+    /// When today's autolock goes on, while it still can: the profile has one, the day blocks,
+    /// has a block to start and has not started, it is before the day end, and it is not on yet.
+    pub fn autolock_due(&self, now: Ts, cfg: &Config) -> Option<Ts> {
+        if self.autolock.is_some() || self.started_at.is_some() || self.completed_at.is_some() || !self.study_day {
+            return None;
+        }
+        let at = clock::date_minute(self.date, cfg.tz_offset_min, cfg.autolock_min(self.kind)?);
+        let end = self.day_end_at(cfg);
+        (at < end && now < end && self.first_open_block().is_some()).then_some(at)
+    }
+
+    /// The autolock holds the block list right now: it went on and the day has not started.
+    /// Only the record counts, not today's settings: changing them never lifts it.
+    pub fn autolock_on(&self, now: Ts, cfg: &Config) -> bool {
+        self.autolock.is_some() && self.started_at.is_none() && self.completed_at.is_none() && !self.after_day_end(now, cfg)
+    }
+
+    /// Five minutes before the autolock: a warning; at its time: on (and at once to the log).
+    fn autolock_tick(&mut self, now: Ts, cfg: &Config) -> Option<Event> {
+        let at = self.autolock_due(now, cfg)?;
+        if now >= at {
+            let planned_min = cfg.autolock_min(self.kind).unwrap_or_default();
+            self.autolock = Some(AutoLock { planned_min, at: now, started_at: None });
+            let text = if now - at < MIN {
+                tr!("day_autolock_on", time = fmt_hm(planned_min))
+            } else {
+                // The app was not running at its time.
+                tr!("day_autolock_on_late", time = fmt_hm(planned_min), clock = clock::hm(now, cfg.tz_offset_min))
+            };
+            self.log(now, "autolock", text);
+            return Some(Event::AutoLockOn { at: now });
+        }
+        if now >= at - AUTOLOCK_WARN_MS && self.autolock_warned_for != Some(at) {
+            self.autolock_warned_for = Some(at);
+            return Some(Event::AutoLockSoon { left_ms: at - now, at });
+        }
+        None
     }
 
     /// End of the focus lock running at `now`.
@@ -976,6 +1052,8 @@ impl DayState {
             "single"
         } else if self.plan_lock(now, cfg) {
             "study"
+        } else if self.autolock_on(now, cfg) {
+            "autolock"
         } else {
             "focus"
         };
@@ -1031,6 +1109,12 @@ impl DayState {
         }
         let msg = if self.plan_lock(now, cfg) { tr("day_day_started_the_lock_is_on") } else { tr("day_day_started_no_lock") };
         self.log(now, "day_start", msg);
+        // The autolock hands over to the day's lock; the wait goes to the log ("задержка старта").
+        if let Some(a) = self.autolock.as_mut().filter(|a| a.started_at.is_none()) {
+            a.started_at = Some(now);
+            let min = worked_min(now - a.at);
+            self.log(now, "autolock", tr!("day_the_day_started_min_after_the_autolock", min = min));
+        }
         Ok(())
     }
 
@@ -1212,7 +1296,12 @@ impl DayState {
         let until = now + cfg.emergency_min as i64 * MIN;
         self.emergencies.push(Emergency { at: now, until, ended_early: false, notified: false });
         let n = self.emergencies.len();
-        self.log(now, "emergency", tr!("day_emergency_access_for_min", emergency_min = cfg.emergency_min, n = n));
+        let text = if self.autolock_on(now, cfg) {
+            tr!("day_emergency_access_during_the_autolock", emergency_min = cfg.emergency_min, n = n)
+        } else {
+            tr!("day_emergency_access_for_min", emergency_min = cfg.emergency_min, n = n)
+        };
+        self.log(now, "emergency", text);
         Ok(until)
     }
 
@@ -1521,6 +1610,8 @@ impl DayState {
         if kind == self.kind {
             return Ok(());
         }
+        // The autolock is a lock too: no lighter day to slip out of it.
+        let locked = locked || self.autolock_on(now, cfg);
         if locked && kind < self.kind {
             return Err(tr!("day_during_the_study_day_the_day", kind = kind.label()));
         }
@@ -1844,6 +1935,7 @@ impl DayState {
                 ev.push(Event::FocusEnded);
             }
         }
+        ev.extend(self.autolock_tick(now, cfg));
         if !self.day_end_notified && self.started_at.is_some() && self.completed_at.is_none() && self.study_day && self.after_day_end(now, cfg) {
             self.day_end_notified = true;
             let text = match self.focus_until(now) {
@@ -1957,8 +2049,8 @@ pub struct LockState {
     pub blocked: bool,
     /// The day/single lock is in force (possibly suspended by an access window).
     pub base: bool,
-    /// study | single | focus | emergency | pause_access | lunch_at_pc | segment_access |
-    /// not_study_day | not_started | completed | day_end
+    /// study | single | autolock | focus | emergency | break_access | lunch_at_pc |
+    /// segment_access | not_study_day | not_started | completed | day_end
     pub reason: String,
     /// End of the current access window: blocked again after it.
     pub until: Option<Ts>,
@@ -2373,7 +2465,9 @@ mod tests {
 
     #[test]
     fn single_timer() {
-        let c = cfg();
+        let mut c = cfg();
+        // 13:00 on a day not started: the autolock would hold the list (see `autolock_tests`).
+        c.profiles.full.autolock = false;
         let mut d = DayState::new(start(), &c);
         d.start_single(start(), SingleCfg { work_min: 25, break_min: 5, block: true }).unwrap();
         assert!(d.lock_state(start(), &c).blocked);
@@ -2849,5 +2943,200 @@ mod lunch_tests {
                 assert_eq!(v.phase.kind, "lunch");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod autolock_tests {
+    use super::*;
+    use chrono::DateTime;
+
+    fn t(s: &str) -> Ts {
+        DateTime::parse_from_rfc3339(s).unwrap().timestamp_millis()
+    }
+
+    // Monday 2026-09-28: 13:00 at UTC+3 is 10:00Z.
+    fn at(hm: &str) -> Ts {
+        t(&format!("2026-09-28T{hm}:00+03:00"))
+    }
+
+    fn cfg() -> Config {
+        let mut c = Config::default();
+        c.profiles.full.plan = vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 150)];
+        c
+    }
+
+    fn autolock_events(ev: &[Event]) -> Vec<&Event> {
+        ev.iter().filter(|e| matches!(e, Event::AutoLockSoon { .. } | Event::AutoLockOn { .. })).collect()
+    }
+
+    #[test]
+    fn a_start_before_its_time_leaves_no_trace() {
+        let c = cfg();
+        let mut d = DayState::new(at("09:00"), &c);
+        assert!(!d.lock_state(at("09:00"), &c).blocked);
+        assert_eq!(crate::view::build(&d, &c, at("09:00")).autolock.unwrap().time, "13:00");
+        d.start_day(at("12:10"), &c).unwrap();
+        for hm in ["12:55", "13:00", "14:00"] {
+            assert!(autolock_events(&d.tick(at(hm), &c)).is_empty(), "{hm}");
+        }
+        assert!(d.autolock.is_none());
+        assert_eq!(d.lock_state(at("13:30"), &c).reason, "study");
+        assert!(!d.events.iter().any(|e| e.kind == "autolock"));
+        assert!(crate::stats::day_stats(&d, c.tz_offset_min, at("14:00")).autolock.is_none());
+        assert!(crate::view::build(&d, &c, at("13:30")).autolock.is_none());
+    }
+
+    #[test]
+    fn a_late_start_holds_the_lock_and_logs_the_delay() {
+        let c = cfg();
+        let mut d = DayState::new(at("09:00"), &c);
+        assert!(autolock_events(&d.tick(at("12:54"), &c)).is_empty());
+        // Five minutes before: one warning.
+        let ev = d.tick(at("12:55"), &c);
+        assert_eq!(autolock_events(&ev), [&Event::AutoLockSoon { left_ms: 5 * MIN, at: at("13:00") }]);
+        assert!(autolock_events(&d.tick(at("12:57"), &c)).is_empty());
+        assert!(!d.lock_state(at("12:59"), &c).blocked);
+
+        let ev = d.tick(at("13:00"), &c);
+        assert_eq!(autolock_events(&ev), [&Event::AutoLockOn { at: at("13:00") }]);
+        assert!(autolock_events(&d.tick(at("13:01"), &c)).is_empty());
+        let l = d.lock_state(at("13:20"), &c);
+        assert!(l.blocked && l.base);
+        assert_eq!((l.reason.as_str(), l.until), ("autolock", None));
+        let log = d.events.iter().find(|e| e.kind == "autolock").unwrap();
+        assert_eq!(log.ts, at("13:00"));
+        assert!(log.text.contains("13:00"), "{}", log.text);
+
+        // The lock rules hold: the list only grows, no lighter day to slip out.
+        let mut fewer = c.clone();
+        fewer.blocklist.sites.clear();
+        assert!(c.check_update(&fewer, crate::config::EditContext { locked: d.base_lock(at("13:20"), &c) }).is_err());
+        assert!(d.set_kind(at("13:20"), &c, DayKind::Off, false).is_err());
+        assert!(!crate::view::build(&d, &c, at("13:20")).can.lighter_kind);
+        // The plan of a day not started can still be reshaped.
+        d.set_plan(at("13:25"), vec![PlanBlock::new("Математика", 45)], false).unwrap();
+
+        // "Начать день" 47 minutes later: the day's own lock takes over, the delay is logged.
+        d.start_day(at("13:47"), &c).unwrap();
+        assert_eq!(d.lock_state(at("13:48"), &c).reason, "study");
+        assert!(!d.autolock_on(at("13:48"), &c));
+        let log = d.events.iter().rev().find(|e| e.kind == "autolock").unwrap();
+        assert!(log.text.contains("47 мин"), "{}", log.text);
+        let v = crate::view::build(&d, &c, at("13:48")).autolock.unwrap();
+        assert_eq!((v.on, v.start_delay_min, v.at), (false, Some(47), at("13:00")));
+        let s = crate::stats::day_stats(&d, c.tz_offset_min, at("13:48")).autolock.unwrap();
+        assert_eq!((s.time.as_str(), s.start_delay_min), ("13:00", Some(47)));
+
+        // Once the plan is done, the lock is off as on any day.
+        d.tick(at("14:32"), &c);
+        assert!(d.completed_at.is_some());
+        assert!(!d.lock_state(at("14:33"), &c).base);
+    }
+
+    #[test]
+    fn never_on_a_day_off_or_when_off() {
+        let c = cfg();
+        let sunday = t("2026-10-04T13:30:00+03:00");
+        let mut d = DayState::new(t("2026-10-04T09:00:00+03:00"), &c);
+        d.set_plan(sunday, vec![PlanBlock::new("Чтение", 30)], false).unwrap();
+        assert_eq!(d.kind, DayKind::Off);
+        assert!(autolock_events(&d.tick(sunday, &c)).is_empty());
+        assert!(!d.lock_state(sunday, &c).base);
+        assert!(crate::view::build(&d, &c, sunday).autolock.is_none());
+
+        // Turned off for the profile; or a profile without the lock at all.
+        let offs: [fn(&mut Config); 2] = [|c| c.profiles.full.autolock = false, |c| c.profiles.full.block = false];
+        for off in offs {
+            let mut c = cfg();
+            off(&mut c);
+            let mut d = DayState::new(at("09:00"), &c);
+            assert!(autolock_events(&d.tick(at("12:55"), &c)).is_empty());
+            assert!(autolock_events(&d.tick(at("13:00"), &c)).is_empty());
+            assert!(!d.lock_state(at("13:30"), &c).blocked);
+        }
+
+        // An empty plan has nothing to start: no lock to wait in.
+        let mut d = DayState::new(at("09:00"), &cfg());
+        d.plan.clear();
+        d.progress.clear();
+        assert!(autolock_events(&d.tick(at("13:00"), &cfg())).is_empty());
+    }
+
+    #[test]
+    fn a_restart_or_a_settings_change_keeps_it() {
+        let c = cfg();
+        let mut d = DayState::new(at("09:00"), &c);
+        d.tick(at("13:00"), &c);
+        d.saved_at = at("13:00");
+        // Power cut: the saved day comes back with the lock.
+        let json = serde_json::to_string(&d).unwrap();
+        let mut r: DayState = serde_json::from_str(&json).unwrap();
+        r.restore(at("13:40"), &c);
+        assert!(autolock_events(&r.tick(at("13:40"), &c)).is_empty());
+        assert_eq!(r.lock_state(at("13:40"), &c).reason, "autolock");
+        // Turning it off (or the lock of the profile) only shapes the days ahead.
+        let mut off = c.clone();
+        off.profiles.full.autolock = false;
+        off.profiles.full.block = false;
+        r.restore(at("13:41"), &off);
+        assert!(r.lock_state(at("13:41"), &off).blocked);
+
+        // The app was not running at 13:00: on as soon as it is, and the log says when.
+        let mut d = DayState::new(at("09:00"), &c);
+        d.tick(at("12:00"), &c);
+        let mut r: DayState = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+        r.restore(at("15:10"), &c);
+        assert_eq!(autolock_events(&r.tick(at("15:10"), &c)), [&Event::AutoLockOn { at: at("15:10") }]);
+        let log = r.events.iter().find(|e| e.kind == "autolock").unwrap();
+        assert!(log.text.contains("13:00") && log.text.contains("15:10"), "{}", log.text);
+
+        // Too late: after the day end it never goes on.
+        let mut d = DayState::new(at("09:00"), &c);
+        assert!(autolock_events(&d.tick(at("22:30"), &c)).is_empty());
+        assert!(!d.lock_state(at("22:30"), &c).blocked);
+
+        // Days saved before the autolock existed still load.
+        let mut v = serde_json::to_value(&r).unwrap();
+        v.as_object_mut().unwrap().remove("autolock");
+        v.as_object_mut().unwrap().remove("autolock_warned_for");
+        let old: DayState = serde_json::from_value(v).unwrap();
+        assert!(old.autolock.is_none());
+    }
+
+    #[test]
+    fn only_emergency_access_opens_it_and_the_day_end_lifts_it() {
+        let c = cfg();
+        let mut d = DayState::new(at("09:00"), &c);
+        d.tick(at("13:00"), &c);
+        let until = d.emergency(at("13:30"), &c, &c.emergency_phrase).unwrap();
+        let l = d.lock_state(at("13:31"), &c);
+        assert!(!l.blocked && l.base);
+        assert_eq!(l.reason, "emergency");
+        let log = d.events.iter().rev().find(|e| e.kind == "emergency").unwrap();
+        assert!(log.text.contains("автоблокировк"), "{}", log.text);
+        assert!(d.tick(until, &c).contains(&Event::EmergencyEnded));
+        assert_eq!(d.lock_state(until, &c).reason, "autolock");
+        // The phone holds it too, offline as well.
+        let p = crate::phone::snapshot(&d, &c, until);
+        assert!(p.lock.blocked && p.lock.day_lock);
+
+        // Never started: the day end lifts it.
+        let ten_pm = at("22:00");
+        assert!(d.lock_state(ten_pm - 1, &c).blocked);
+        let l = d.lock_state(ten_pm, &c);
+        assert!(!l.base);
+        assert_eq!(l.reason, "not_started");
+    }
+
+    #[test]
+    fn a_new_time_gets_its_own_warning() {
+        let mut c = cfg();
+        let mut d = DayState::new(at("09:00"), &c);
+        assert!(!autolock_events(&d.tick(at("12:56"), &c)).is_empty());
+        c.profiles.full.autolock_min = 14 * 60;
+        assert!(autolock_events(&d.tick(at("13:00"), &c)).is_empty());
+        assert_eq!(autolock_events(&d.tick(at("13:55"), &c)), [&Event::AutoLockSoon { left_ms: 5 * MIN, at: at("14:00") }]);
+        assert!(autolock_events(&d.tick(at("13:56"), &c)).is_empty());
     }
 }

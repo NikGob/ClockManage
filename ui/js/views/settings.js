@@ -16,6 +16,7 @@ const TIP = {
   plan: tr('settings_every_such_day_starts_with_this'),
   dayEnd: tr('settings_when_the_lock_lifts_by_itself'),
   night: tr('settings_at_night_start_day_works_only'),
+  autolock: tr('settings_sites_apps_and_the_phone_are'),
   seg: tr('settings_a_block_is_cut_into_parts'),
   short: tr('settings_rest_between_the_parts_of_one'),
   between: tr('settings_rest_after_a_closed_block_before'),
@@ -201,6 +202,15 @@ export function mountSettings(root, ctx) {
             ${sw('night_start.after_day_end', ns.after_day_end, tr('settings_after_the_day_end_too'))}</div>
           <div class="setting sub"><div class="grow"><div class="t">${tr('settings_hold_to_start')}</div></div>
             ${stepper('night_start.hold_sec', { min: 1, max: 10, step: 1, unit: tr('settings_s'), label: tr('settings_hold_to_start') })}</div>` : ''}
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_autolock_before_the_start')}${info('autolock')}</div><div class="d">${tr('settings_if_the_day_hasnt_started_by')}</div></div></div>
+          ${['full', 'light'].map((id) => {
+            const k = KINDS.find((x) => x.id === id);
+            const p = cfg.profiles[id];
+            const label = `${tr('settings_autolock_before_the_start')}: ${k.label}`;
+            return `<div class="setting sub"><div class="grow"><div class="t">${k.label}</div>${p.block ? '' : `<div class="d">${tr('settings_no_lock_on_such_a_day')}</div>`}</div>
+              ${p.autolock ? `<div class="field"><input type="time" data-autolock="${id}" value="${hm(p.autolock_min)}" aria-label="${esc(label)}"></div>` : ''}
+              ${sw(`profiles.${id}.autolock`, p.autolock, label, 'autolock')}</div>`;
+          }).join('')}
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_work_part')}${info('seg')}</div><div class="d">${tr('settings_work_part_example')}</div></div>
             ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_of_work_per_part'), disabled: locked })}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_break_between_parts')}${info('short')}</div><div class="d">${tr('settings_between_the_parts_of_one_block')}</div></div>
@@ -276,7 +286,7 @@ export function mountSettings(root, ctx) {
         <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -326,6 +336,7 @@ export function mountSettings(root, ctx) {
     if (d.sw) return `[data-sw="${d.sw}"]`;
     if (d.seed) return `[data-seed="${d.seed}"]`;
     if (d.tpl) return `[data-tpl="${d.tpl}"]`;
+    if (d.autolock) return `[data-autolock="${d.autolock}"]`;
     if (d.v && el.closest('[data-seg]')) return `[data-seg="${el.closest('[data-seg]').dataset.seg}"] [data-v="${d.v}"]`;
     return el.id ? `#${el.id}` : null;
   }
@@ -400,6 +411,10 @@ export function mountSettings(root, ctx) {
     } else if (t.id === 'dayend') {
       const [h, mm] = t.value.split(':').map(Number);
       if (Number.isFinite(h)) save((c) => { c.day_end_min = h * 60 + (mm || 0); });
+    } else if (t.dataset.autolock) {
+      const id = t.dataset.autolock;
+      const [h, mm] = t.value.split(':').map(Number);
+      if (Number.isFinite(h)) save((c) => { c.profiles[id].autolock_min = h * 60 + (mm || 0); });
     } else if (t.id === 'nightuntil') {
       const [h, mm] = t.value.split(':').map(Number);
       // The backend caps the night at 12:00.
