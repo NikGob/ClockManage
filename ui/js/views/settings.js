@@ -1,8 +1,9 @@
-import { call, esc } from '../api.js';
+import { call, esc, hm as clock } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { applyTheme } from '../theme.js';
 import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
+import { NIKGOB } from '../logo.js';
 
 const SWATCHES = [
   ['#2E7D32', tr('settings_green')], ['#00796B', tr('settings_teal')], ['#1565C0', tr('settings_blue')], ['#5E35B1', tr('settings_purple')],
@@ -31,6 +32,7 @@ const TIP = {
   autostart: tr('settings_starts_when_you_sign_in_to'),
   lang: tr('settings_the_language_of_the_interface_notifications'),
   tz: tr('settings_the_day_end_dates_and_the'),
+  update: tr('settings_every_6_hours_clockmanage_looks_for'),
 };
 const MODE_TIP = { system: tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
 const VARIANT_TIP = {
@@ -146,6 +148,23 @@ export function mountSettings(root, ctx) {
             <button class="btn tonal interactive" id="phone-pin">${icon('add')}${tr('settings_pair_a_phone')}</button></div>` : ''}
         </div>
       </section>`;
+  }
+
+  function updateRow(u) {
+    const ver = esc(u.version || '');
+    const state = {
+      checking: tr('settings_checking'),
+      downloading: tr('settings_downloading', { version: ver }),
+      ready: tr('settings_version_is_downloaded_it_installs', { version: ver }),
+      latest: u.checked_at ? tr('settings_latest_version_checked_at', { time: clock(u.checked_at) }) : '',
+      error: tr('settings_couldnt_check', { error: esc(u.error || '') }),
+    }[u.state] || (cfg.auto_update ? tr('settings_from_github_releases') : tr('settings_off_only_by_the_check'));
+    const busy = ['checking', 'downloading'].includes(u.state);
+    return `<div class="setting"><div class="grow"><div class="t">${tr('settings_automatic_updates')}${info('update')}</div><div class="d">${state}</div></div>
+      ${u.state === 'ready'
+        ? `<button class="btn tonal interactive" id="installupdate">${icon('download')}${tr('settings_restart_and_update')}</button>`
+        : `<button class="btn text interactive" id="checkupdate" ${busy ? 'disabled' : ''}>${icon('refresh')}${tr('settings_check')}</button>`}
+      ${sw('auto_update', cfg.auto_update, tr('settings_automatic_updates'), 'update')}</div>`;
   }
 
   function render() {
@@ -273,8 +292,11 @@ export function mountSettings(root, ctx) {
           <div class="setting"><div class="grow"><div class="t">${tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_data_and_log')}</div><div class="d ellipsis" data-tip="${esc(m.data_dir)}">${esc(m.data_dir)}</div></div><button class="btn text interactive" id="opendir">${icon('folder')}${tr('app_open')}</button></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_version')}</div><div class="d">ClockManage ${esc(m.version)}</div></div></div>
+          ${updateRow(m.update)}
         </div>
-      </section>`;
+      </section>
+
+      <footer class="made-by">${NIKGOB}<span>Made by NikGob</span></footer>`;
     if (pulse) {
       const el = box.querySelector(pulse);
       el?.classList.add('just');
@@ -413,6 +435,8 @@ export function mountSettings(root, ctx) {
       const port = await run(() => call('regenerate_port'), t);
       if (port) { cfg = await call('get_config'); snack(tr('settings_new_port_update_the_address_in', { port })); }
     } else if (t.id === 'opendir') call('open_data_dir');
+    else if (t.id === 'checkupdate') call('check_update');
+    else if (t.id === 'installupdate') await run(() => call('install_update'), t);
     else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
     else if (t.dataset.segdel !== undefined) {
       const i = Number(t.dataset.segdel);
@@ -443,7 +467,7 @@ export function mountSettings(root, ctx) {
       const v = s.view;
       // Phone "last seen" re-renders once a minute, not on every poll of the phone.
       const ph = { ...s.meta.phone, devices: s.meta.phone.devices.map((d) => ({ ...d, last_seen: d.last_seen && Math.floor((Date.now() - d.last_seen) / 60000) })) };
-      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}`;
+      const nsig = `${v.lock.base}|${v.started}|${v.day_end}|${v.kind}|${JSON.stringify(s.meta.mcp)}|${s.meta.admin}|${JSON.stringify(ph)}|${JSON.stringify(s.meta.update)}`;
       if (nsig !== sig) { sig = nsig; if (cfg) render(); }
     },
     show() { reload(); },

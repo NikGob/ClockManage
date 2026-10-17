@@ -69,6 +69,7 @@ pub struct Shared {
     pub blocker: Mutex<Blocker>,
     pub mcp: McpServer,
     pub phone: PhoneServer,
+    pub updates: crate::updater::Updates,
     pub app: AppHandle,
     pub admin: bool,
     pub overlay: Mutex<Option<Value>>,
@@ -104,6 +105,7 @@ pub struct Meta {
     pub tz_offset_min: i32,
     /// The interface language in force ("ru" | "en"): the setting, "auto" resolved.
     pub lang: &'static str,
+    pub update: crate::updater::UpdateStatus,
 }
 
 #[derive(Serialize, Clone)]
@@ -142,6 +144,7 @@ impl Shared {
                 data_dir: self.store.dir.display().to_string(),
                 tz_offset_min: g.cfg.tz_offset_min,
                 lang: clockmanage_core::i18n::get().key(),
+                update: self.updates.status(),
             },
         }
     }
@@ -1441,6 +1444,19 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
     let _ = shared.app.emit("state", shared.snapshot());
     let cfg = shared.lock().cfg.clone();
     Ok(cfg)
+}
+
+/// "Check now" in Settings: the check and the download run off the UI thread.
+#[tauri::command]
+pub fn check_update(s: S) {
+    let shared = s.inner().clone();
+    std::thread::spawn(move || crate::updater::check(&shared, true));
+}
+
+/// "Restart and update" in Settings.
+#[tauri::command]
+pub fn install_update(s: S) -> Result<(), String> {
+    crate::updater::install(s.inner())
 }
 
 #[tauri::command]

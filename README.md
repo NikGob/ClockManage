@@ -143,7 +143,7 @@ A native app under a megabyte. Pair it on the same Wi-Fi: **Settings → Phone �
 ## Install
 
 1. Download `ClockManage_<version>_x64-setup.exe` from [Releases](https://github.com/NikGob/ClockManage/releases) or from the latest run in [Actions → build](https://github.com/NikGob/ClockManage/actions/workflows/build.yml) (artifact `ClockManage-<version>-setup`; the Android APK is next to it).
-2. Run it. A new version installs over the old one — settings and the log are kept.
+2. Run it. A new version installs over the old one — settings and the log are kept. From 0.5.0 on the app updates itself from Releases (see [Good to know](#good-to-know)).
 3. ClockManage asks for **administrator rights**: without them it can't write `hosts` and browser policies or close blocked apps. On first start it registers itself in Task Scheduler, so it starts at sign-in without a UAC prompt.
 
 Uninstalling from *Apps & features* rolls back everything ClockManage wrote to the system.
@@ -156,12 +156,13 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 
 ## Good to know
 
+- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running and the window is closed. The app restarts on its own. *Settings → System → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs a downloaded version at once (outside a study day). The installers are signed, and the app installs nothing else.
 - **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
-- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The phone talks to the PC over your local network only.
+- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The phone talks to the PC over your local network only, and the only request to the internet is the update check on GitHub.
 
 ## Development
 
@@ -171,7 +172,7 @@ npx @tauri-apps/cli@2 dev                    # run on Windows (from an administr
 npx @tauri-apps/cli@2 build                  # NSIS installer
 ```
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; add `&lang=en` or `&lang=ru`.
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`.
 
 | Folder | What's inside |
 |---|---|
@@ -179,6 +180,8 @@ UI preview in a normal browser with a mock backend: `cd ui && python -m http.ser
 | `src-tauri/` | the Windows app: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
 | `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler; `ui/locales/` — the texts of every part |
 | `android/` | the phone app, Kotlin with no dependencies: `cd android && gradle assembleRelease` |
+
+A `v*` tag builds the release. With the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, CI signs the installer and uploads `latest.json` next to it; installed apps read `releases/latest/download/latest.json` and check the signature against the public key in `src-tauri/tauri.conf.json`. Without the secrets the installer is built unsigned and apps don't see the release. Keep the private key: without it no update can be signed for the apps already installed.
 
 The pictures and GIFs above are recorded from the UI on the mock backend by `scripts/media` (headless Chrome + ffmpeg) — rerun it after UI changes.
 

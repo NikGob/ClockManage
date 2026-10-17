@@ -11,6 +11,7 @@ let STATE = q.get('state') || 'work';
 if (q.get('then')) setTimeout(() => { STATE = q.get('then'); }, Number(q.get('at') || 2000));
 const t0 = Date.now();
 const MIN = 60000;
+let update = q.get('update') || 'latest';
 
 const cfg = {
   week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
@@ -24,7 +25,7 @@ const cfg = {
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
   pause_access: q.get('pa') === '1', pause_access_min: 10,
   emergency_phrase: L('Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе', 'I am consciously interrupting my study day, I understand this goes to the log, and I will be back to work in ten minutes'),
-  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, mcp_enabled: true, mcp_port: 47213,
+  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47213,
   segments: [{ name: L('Обед', 'Lunch'), minutes: 45, alarm: false, open_access: false, prep_min: 0 }, { name: L('Сон', 'Nap'), minutes: 20, alarm: true, open_access: false, prep_min: 10 }, { name: L('Прогулка', 'Walk'), minutes: 15, alarm: false, open_access: false, prep_min: 0 }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
@@ -124,6 +125,8 @@ function snapshot() {
       tz_offset_min: cfg.tz_offset_min,
       // ?lang=en previews the English interface; "auto" follows the browser.
       lang: cfg.lang === 'auto' ? (/^(ru|uk|be)/i.test(navigator.language) ? 'ru' : 'en') : cfg.lang,
+      // ?update=ready previews a downloaded update (also checking, downloading, error).
+      update: { state: update, version: ['ready', 'downloading'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null },
     },
   };
 }
@@ -173,6 +176,8 @@ export async function invoke(cmd, args) {
         day_totals: [2.25, 5.25, 1.75, 4, 4.5, 0, 0], total: 17.75, actual_min: 1104.6 },
       tsv: L('Предмет\t28.09\n', 'Subject\t28.09\n') };
     case 'set_block_note': noteDone = true; return null;
+    case 'check_update': update = 'checking'; setTimeout(() => { update = 'latest'; }, 1500); return null;
+    case 'install_update': location.reload(); return null;
     case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };

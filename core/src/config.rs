@@ -335,6 +335,8 @@ pub struct Config {
     /// Restart a running Firefox when path rules (Shorts) start to apply.
     pub restart_firefox: bool,
     pub autostart: bool,
+    /// Check GitHub Releases for a new version, download it and install it while no day runs.
+    pub auto_update: bool,
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub appearance: Appearance,
@@ -383,6 +385,7 @@ impl Default for Config {
             overlay: true,
             restart_firefox: true,
             autostart: true,
+            auto_update: true,
             mcp_enabled: true,
             mcp_port: 0,
             appearance: Appearance::default(),
