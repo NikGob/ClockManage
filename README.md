@@ -20,7 +20,7 @@
 
 ---
 
-Plan your day as study blocks, press **Start day**, and ClockManage does the rest: it runs each block in focused parts with breaks, rings when a break is over, and keeps Telegram, Discord, Shorts and whatever else you listed **closed until the work is done**. No browser extension to switch off, no "just five minutes": blocked sites are cut off in `hosts` and browser policies, and blocked apps simply can't start.
+Plan your day as study blocks, press **Start day**, and ClockManage does the rest: it runs each block in focused parts with breaks, rings when a break is over, and keeps Telegram, Discord, Shorts and whatever else you listed **closed until the work is done**. No browser extension to switch off, no "just five minutes": blocked sites are cut off in `hosts` and browser policies, and blocked apps simply can't start (on Linux they are closed within a second).
 
 And because it speaks [MCP](https://modelcontextprotocol.io), Claude can see where you are, rearrange the rest of the day, add a site to the block list or lock everything for two hours — when you ask it to.
 
@@ -84,7 +84,7 @@ Every day is logged: actual time per block, pauses, segments, emergency accesses
 
 ### Looks good doing it
 
-Material 3 with your own colour: pick a swatch and the whole scheme is rebuilt from it, spreading across the window from where you clicked. Light, dark or follow Windows. Hand-drawn illustrations "boil" like a cartoon while they move. Springy navigation, a cascade of content on every screen.
+Material 3 with your own colour: pick a swatch and the whole scheme is rebuilt from it, spreading across the window from where you clicked. Light, dark or follow the system. Hand-drawn illustrations "boil" like a cartoon while they move. Springy navigation, a cascade of content on every screen.
 
 <div align="center">
   <img src="docs/media/theme.gif" alt="Changing the colour and the theme" width="49%">
@@ -151,11 +151,11 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 
 ### Linux
 
-1. Download `ClockManage_<version>_amd64.deb` (Ubuntu, Debian, Mint…) or `ClockManage_<version>_amd64.AppImage` (any distribution) from [Releases](https://github.com/NikGob/ClockManage/releases), or from the artifact `ClockManage-<version>-linux` of the latest run in [Actions → build](https://github.com/NikGob/ClockManage/actions/workflows/build.yml).
+1. Download `ClockManage_<version>_amd64.deb` (Ubuntu 22.04, Debian 12, Mint 21 or newer) or `ClockManage_<version>_amd64.AppImage` (other distributions with glibc 2.35 or newer) from [Releases](https://github.com/NikGob/ClockManage/releases), or from the artifact `ClockManage-<version>-linux` of the latest run in [Actions → build](https://github.com/NikGob/ClockManage/actions/workflows/build.yml).
 2. Install the .deb with `sudo apt install ./ClockManage_<version>_amd64.deb` and start ClockManage from the app menu. For the AppImage: `chmod +x` it and run it.
 3. The app runs as you. Only `hosts` and the browser policies belong to root: for them the .deb installs a polkit rule that lets the signed-in user run one root step (`clockmanage --block-sites`, through `pkexec`) without a password. **The AppImage has no install step, so it closes blocked apps but doesn't block sites.**
 
-ClockManage starts with your desktop session through a systemd user service (`~/.config/systemd/user/clockmanage.service`) that brings it back within 5 minutes if it is killed. `sudo apt remove clock-manage` takes the `hosts` section and the browser policies out.
+ClockManage starts when you sign in (an entry in `~/.config/autostart`), and a systemd user service (`~/.config/systemd/user/clockmanage.service`) brings it back within 5 minutes if it is killed. `sudo apt remove clock-manage` takes the `hosts` section and the browser policies out.
 
 What works differently from Windows:
 

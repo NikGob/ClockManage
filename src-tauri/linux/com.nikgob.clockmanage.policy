@@ -9,7 +9,9 @@
   <vendor>ClockManage</vendor>
   <action id="com.nikgob.clockmanage.block-sites">
     <description>Block distracting sites during study time</description>
+    <description xml:lang="ru">Блокировка отвлекающих сайтов во время учёбы</description>
     <message>ClockManage needs to change hosts and browser policies</message>
+    <message xml:lang="ru">ClockManage нужно изменить hosts и политики браузеров</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

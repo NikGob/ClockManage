@@ -1455,10 +1455,11 @@ pub fn check_update(s: S) {
     std::thread::spawn(move || crate::updater::check(&shared, true));
 }
 
-/// "Restart and update" in Settings.
+/// "Restart and update" in Settings. Off the UI thread: on Linux a .deb waits for the password.
 #[tauri::command]
-pub fn install_update(s: S) -> Result<(), String> {
-    crate::updater::install(s.inner())
+pub async fn install_update(s: State<'_, Arc<Shared>>) -> Result<(), String> {
+    let shared = s.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::updater::install(&shared)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

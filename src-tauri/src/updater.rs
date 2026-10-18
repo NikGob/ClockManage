@@ -181,16 +181,20 @@ pub fn install(shared: &Arc<Shared>) -> Result<(), String> {
         return Err(tr("updater_no_downloaded_update").into());
     };
     // Windows: exits the process on success. Linux: the new AppImage or package is in place.
-    let res = update.install(&bytes);
-    if let Err(e) = &res {
-        eprintln!("update install: {e}");
+    match update.install(&bytes) {
+        Ok(()) => shared.app.restart(),
+        Err(e) => {
+            eprintln!("update install: {e}");
+            // Windows: the tray icon is gone and the windows are hidden by now (on_before_exit):
+            // start over clean; the next check downloads the update again.
+            if cfg!(windows) {
+                shared.app.restart();
+            }
+            // Linux (the password prompt cancelled, a folder not writable): keep the update.
+            *shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()) = Some((update, bytes));
+            Err(tr!("settings_update_failed", error = e))
+        }
     }
-    // A failed install starts over clean: the tray icon is gone and the windows are hidden by now
-    // (on_before_exit); the next check downloads the update again. Linux starts the new version.
-    if res.is_err() || cfg!(target_os = "linux") {
-        shared.app.restart();
-    }
-    Ok(())
 }
 
 /// Windows installs by itself while nobody is at the PC. On Linux a .deb asks for the password

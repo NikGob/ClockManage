@@ -25,7 +25,7 @@ test -x /usr/bin/clockmanage || fail "no /usr/bin/clockmanage"
 action() { [[ $(pkaction --action-id com.nikgob.clockmanage.block-sites --verbose 2>/dev/null) == *'exec.path -> /usr/bin/clockmanage'* ]]; }
 for _ in $(seq 20); do action && break; sleep 0.5; done
 action || fail "polkit doesn't know the root step"
-test -f /usr/share/applications/ClockManage.desktop || fail "no desktop entry"
+grep -q "^Comment\[ru\]=" /usr/share/applications/ClockManage.desktop || fail "no menu entry with a Russian comment"
 
 echo "== the root step by hand"
 $sudo clockmanage --block-sites x.com youtube.com/shorts
@@ -36,6 +36,8 @@ $sudo clockmanage --block-sites
 blocked x.com && fail "x.com is still blocked"
 test -e /etc/opt/chrome/policies/managed/clockmanage.json && fail "the Chrome policy was left behind"
 if $sudo clockmanage --block-sites 'x.com 0.0.0.0'; then fail "an invalid site was accepted"; fi
+# Under pkexec the binary runs nothing but the root step (polkit may refuse first, so test it here).
+if $sudo env PKEXEC_UID=1000 clockmanage --cleanup; then fail "the binary ran --cleanup under pkexec"; fi
 
 if [ -n "$sudo" ]; then
   echo "== the root step through pkexec"
@@ -68,7 +70,9 @@ mcp() { curl -sf -H 'Content-Type: application/json' -d "$1" "http://127.0.0.1:$
 call() { mcp "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}"; }
 mcp '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name] | index("start_focus_lock")' >/dev/null ||
   fail "tools/list has no start_focus_lock"
-test -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/clockmanage.service" || fail "no autostart service"
+config=${XDG_CONFIG_HOME:-$HOME/.config}
+grep -q '^Exec="/usr/bin/clockmanage" --background$' "$config/autostart/clockmanage.desktop" || fail "no autostart entry"
+grep -q '^Restart=always$' "$config/systemd/user/clockmanage.service" || fail "no watchdog service"
 
 target=$(mktemp -d)/cm-smoke-target
 cp /bin/sleep "$target"

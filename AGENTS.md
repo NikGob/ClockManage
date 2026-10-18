@@ -80,6 +80,7 @@ Check those yourself.
 ### Outside `ui/locales`, still in every language
 
 - **Android texts the system reads** (manifest labels, the accessibility service and widget descriptions) cannot use `tr`. Add them to `android/app/src/main/res/values/strings.xml` (English, the default) **and** to `values-<lang>/strings.xml` for every other language (today `values-ru`).
+- **Linux texts the system shows** cannot use `tr` either: the polkit action in `src-tauri/linux/com.nikgob.clockmanage.policy` (`<description xml:lang="ru">`, `<message xml:lang="ru">`) and the menu entry's `Comment[ru]` in `src-tauri/linux/clockmanage.desktop`. Add a variant for every other language.
 - **Mock preview data** in `ui/js/mock.js` keeps its texts inline, one per language: today `L(ru, en)` pairs. A new `Config` setting also needs its default in the mock `cfg` there, or the preview and the README pictures show it unset.
 - **Static tray items**: set them in `src-tauri/src/windows.rs` and again in the `TRAY_LANG` block of `src-tauri/src/app.rs`. Otherwise they keep the old language after a switch.
 
@@ -112,6 +113,7 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 - `src-tauri/src/system.rs`: map the Windows UI language id to the new `Lang`.
 - `ui/js/i18n.js`: the accepted codes, the `navigator.language` check, `LOCALE`, `dec()` and `followLang`.
 - `android/.../I18n.kt`, plus `res/values-<lang>/strings.xml`.
+- `src-tauri/linux/`: the polkit action's description and message, and the `.desktop` comment.
 - `core/tests/locales.rs`: compare every locale file, not only `ru` and `en`.
 - `ui/js/views/settings.js`: the language picker.
 - `src-tauri/tauri.conf.json`: the NSIS installer `languages`.

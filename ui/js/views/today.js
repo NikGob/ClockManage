@@ -1,4 +1,4 @@
-import { call, mmss, dur, esc } from '../api.js';
+import { call, mmss, dur, esc, LINUX } from '../api.js';
 import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
@@ -129,7 +129,7 @@ export function mountToday(root, ctx) {
     }
     if (lk.focus_until && (lk.reason === 'study' || lk.reason === 'single')) when += ` · ${tr('today_focus_until')} ${tsHm(lk.focus_until, meta.tz_offset_min)}`;
     if (lk.base && !['emergency', 'break_access'].includes(lk.reason) && v.can.emergency) action = 'emergency';
-    if (!meta.admin && lk.base) { text += tr('today_no_administrator_rights'); cls = 'open'; }
+    if (!meta.admin && lk.base) { text += LINUX ? tr('today_sites_are_not_blocked') : tr('today_no_administrator_rights'); cls = 'open'; }
     const btn = action === 'end'
       ? `<button class="btn text interactive" data-act="end_access">${tr('today_close_access')}</button>`
       : action === 'emergency' ? `<button class="sos interactive" data-act="emergency" aria-label="${tr('blocking_emergency_access')}">${icon('warning')}<span class="lbl">${tr('today_emergency')}</span></button>` : '';

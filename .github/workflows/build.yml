@@ -163,13 +163,18 @@ jobs:
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
+      # One flat folder: with two paths upload-artifact would keep deb/ and appimage/, and the
+      # release job looks for the packages and their signatures at the top.
+      - name: Release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir linux-release
+          cp target/release/bundle/deb/*.deb* target/release/bundle/appimage/*.AppImage* linux-release/
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: linux-release
-          path: |
-            target/release/bundle/deb/*.deb*
-            target/release/bundle/appimage/*.AppImage*
+          path: linux-release/
           if-no-files-found: error
 
   # One release with every file at once: installed apps read releases/latest, and a release

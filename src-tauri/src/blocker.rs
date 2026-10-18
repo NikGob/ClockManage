@@ -703,10 +703,11 @@ mod platform {
 }
 
 /// Whether the lock can change hosts and browser policies: root, or the .deb's polkit rule
-/// for the root step. The AppImage has no install step, so it closes apps only.
+/// for the root step. The AppImage has no install step, so it closes apps only (also on a
+/// machine that has the .deb: pkexec runs only the installed binary).
 #[cfg(target_os = "linux")]
 pub fn can_block_sites() -> bool {
-    platform::is_root() || std::path::Path::new(platform::POLKIT_POLICY).exists()
+    platform::is_root() || platform::helper_installed()
 }
 
 /// `clockmanage --block-sites [site…]`, the root step (through pkexec, or the package's remove
@@ -721,6 +722,8 @@ pub fn helper_main() -> Option<i32> {
     if !platform::is_root() {
         return Some(2);
     }
+    // pkexec keeps the caller's umask: folders root creates must stay readable for browsers.
+    unsafe { libc::umask(0o022) };
     let mut sites = vec![];
     for a in &args[1..] {
         match clockmanage_core::config::normalize_site(a) {
@@ -748,7 +751,9 @@ mod platform {
     use serde_json::{json, Value};
     use std::path::Path;
 
-    pub const POLKIT_POLICY: &str = "/usr/share/polkit-1/actions/com.nikgob.clockmanage.policy";
+    const POLKIT_POLICY: &str = "/usr/share/polkit-1/actions/com.nikgob.clockmanage.policy";
+    /// The binary the polkit rule names (`exec.path`): pkexec runs only this one.
+    const HELPER: &str = "/usr/bin/clockmanage";
     pub const HELPER_ARG: &str = "--block-sites";
     /// Chrome, Chromium (Debian and Ubuntu), Edge, Brave, Yandex: our own file in each, read live.
     const CHROMIUM_DIRS: [&str; 6] = [
@@ -765,6 +770,10 @@ mod platform {
 
     pub fn is_root() -> bool {
         unsafe { libc::geteuid() == 0 }
+    }
+
+    pub fn helper_installed() -> bool {
+        std::env::var_os("APPIMAGE").is_none() && Path::new(POLKIT_POLICY).exists() && Path::new(HELPER).exists()
     }
 
     fn read_json(p: &Path) -> Option<Value> {
@@ -866,12 +875,17 @@ mod platform {
     pub fn write_system(root: &Path, sites: &[String]) -> Result<(), String> {
         let mut problems = vec![];
         let hosts = root.join("etc/hosts");
-        let content = std::fs::read_to_string(&hosts).unwrap_or_default();
-        let new = if sites.is_empty() { strip_section(&content) } else { with_section(&content, sites).replace("\r\n", "\n") };
-        if new != content {
-            if let Err(e) = write_file(&hosts, &new) {
-                problems.push(tr!("blocker_couldnt_write_hosts", e = e));
-            }
+        // Only a missing file counts as empty: an unreadable one must never be replaced.
+        let content = match std::fs::read_to_string(&hosts) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            r => r,
+        };
+        let written = content.and_then(|content| {
+            let new = if sites.is_empty() { strip_section(&content) } else { with_section(&content, sites).replace("\r\n", "\n") };
+            if new == content { Ok(()) } else { write_file(&hosts, &new) }
+        });
+        if let Err(e) = written {
+            problems.push(tr!("blocker_couldnt_write_hosts", e = e));
         }
         let mut errors = vec![];
         let chromium = serde_json::to_string_pretty(&json!({ "URLBlocklist": chromium_rules(sites) })).unwrap_or_default();
@@ -909,22 +923,23 @@ mod platform {
         if is_root() {
             return write_system(root, sites);
         }
-        if !Path::new(POLKIT_POLICY).exists() {
+        if !helper_installed() {
             return Ok(());
         }
-        let exe = std::env::current_exe().map_err(|e| tr!("blocker_pkexec_failed", e = e))?;
+        // pkexec keeps LANGUAGE: the root step's errors come in the app's language.
         let out = std::process::Command::new("pkexec")
-            .arg(exe)
+            .arg(HELPER)
             .arg(HELPER_ARG)
             .args(sites)
+            .env("LANGUAGE", clockmanage_core::i18n::get().key())
             .stdin(std::process::Stdio::null())
             .output()
-            .map_err(|e| tr!("blocker_pkexec_failed", e = e))?;
+            .map_err(|e| tr!("blocker_pkexec_didnt_run_the_site", e = e))?;
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         match out.status.code() {
             Some(0) => Ok(()),
             // pkexec's own: not authorized, dismissed, or no such program.
-            Some(126 | 127) | None => Err(tr!("blocker_pkexec_failed", e = if err.is_empty() { out.status.to_string() } else { err })),
+            Some(126 | 127) | None => Err(tr!("blocker_pkexec_didnt_run_the_site", e = if err.is_empty() { out.status.to_string() } else { err })),
             Some(_) => Err(err),
         }
     }
@@ -932,7 +947,8 @@ mod platform {
     pub fn apply(a: &mut Applied, sites: &[String]) -> Result<(), String> {
         let res = privileged(sites);
         let ff = firefox_rules(sites);
-        if res.is_ok() && a.ff_rules != ff {
+        // Without the root step nothing was written: no Firefox restart for rules it doesn't have.
+        if res.is_ok() && a.ff_rules != ff && firefox_in_place(Path::new("/"), &ff) {
             a.ff_rules = ff;
             a.ff_rules_at = now_ms();
         }
@@ -960,10 +976,12 @@ mod platform {
         Ok(())
     }
 
-    /// Every process with the names it goes by: the exe's file name and the first word of its
-    /// command line (`Game.exe` under Wine, a script's interpreter otherwise).
+    /// This user's processes with the names they go by: the exe's file name and the first word of
+    /// the command line (`Game.exe` under Wine, a script's interpreter otherwise). Other users'
+    /// processes (fast user switching) are neither killed nor counted as this user's Firefox.
     fn processes() -> Vec<(i32, Vec<String>)> {
-        let me = std::process::id() as i32;
+        use std::os::unix::fs::MetadataExt;
+        let (me, uid) = (std::process::id() as i32, unsafe { libc::getuid() });
         let base = |s: &str| s.rsplit(['/', '\\']).next().unwrap_or(s).trim_end_matches(" (deleted)").to_string();
         std::fs::read_dir("/proc")
             .into_iter()
@@ -971,6 +989,9 @@ mod platform {
             .flatten()
             .filter_map(|e| {
                 let pid: i32 = e.file_name().to_str()?.parse().ok()?;
+                if e.metadata().ok()?.uid() != uid {
+                    return None;
+                }
                 let mut names = vec![];
                 if let Ok(exe) = std::fs::read_link(e.path().join("exe")) {
                     names.push(base(&exe.to_string_lossy()));
@@ -1203,6 +1224,17 @@ mod tests {
         std::fs::write(dir.join("policies.json"), "{ not json").unwrap();
         assert!(platform::write_system(&root, &["x.com".to_string()]).is_err());
         assert_eq!(std::fs::read_to_string(dir.join("policies.json")).unwrap(), "{ not json");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_never_replaces_an_unreadable_hosts() {
+        let root = temp_root("badhosts");
+        let hosts = b"127.0.0.1 localhost # caf\xe9 in Latin-1\n".to_vec();
+        std::fs::write(root.join("etc/hosts"), &hosts).unwrap();
+        assert!(platform::write_system(&root, &["x.com".to_string()]).is_err());
+        assert!(platform::write_system(&root, &[]).is_err());
+        assert_eq!(std::fs::read(root.join("etc/hosts")).unwrap(), hosts);
     }
 
     #[cfg(target_os = "linux")]

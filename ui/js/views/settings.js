@@ -29,7 +29,7 @@ const TIP = {
   contrast: tr('settings_inverted_colours_a_dark_pill_in'),
   phone: tr('settings_the_clockmanage_android_app_sees_the'),
   mcp: tr('settings_a_local_server_for_claude_it'),
-  autostart: LINUX ? tr('settings_starts_when_you_sign_in_a_systemd') : tr('settings_starts_when_you_sign_in_to'),
+  autostart: LINUX ? tr('settings_starts_when_you_sign_in_and_a') : tr('settings_starts_when_you_sign_in_to'),
   lang: LINUX ? tr('settings_auto_follows_the_system_the_language') : tr('settings_the_language_of_the_interface_notifications'),
   tz: tr('settings_the_day_end_dates_and_the'),
   update: LINUX ? tr('settings_clockmanage_looks_for_a_new_version') : tr('settings_every_6_hours_clockmanage_looks_for'),
@@ -294,7 +294,7 @@ export function mountSettings(root, ctx) {
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
             <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${[...new Set([...TZ_OFFSETS, cfg.tz_offset_min])].sort((x, y) => x - y).map((o) => `<option value="${o}" ${o === cfg.tz_offset_min ? 'selected' : ''}>${utcLabel(o)}</option>`).join('')}</select></div></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${LINUX ? tr('settings_starts_when_you_sign_in_comes_back') : tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : LINUX ? tr('settings_no_hosts_and_browser_policies_need') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
+          <div class="setting"><div class="grow"><div class="t">${LINUX ? tr('settings_site_blocking') : tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : LINUX ? tr('settings_no_hosts_and_browser_policies_need') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
         </div>
       </section>
 

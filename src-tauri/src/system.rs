@@ -67,35 +67,52 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 const UNIT: &str = "clockmanage.service";
 
-/// A systemd user service started with the graphical session. Like the Windows watchdog it comes
-/// back every 5 minutes after the process is gone (a running instance ignores `--background`),
-/// and it does nothing once the binary is removed.
+/// The watchdog: a systemd user service the app starts itself (`set_autostart`), so it needs no
+/// session target. Like the Windows task it starts the app every 5 minutes; a running instance
+/// ignores `--background`, so it only matters once the process is gone. It does nothing once
+/// the binary is removed.
 #[cfg(target_os = "linux")]
-fn autostart_unit(exe: &Path) -> String {
-    let exe = exe.display().to_string().replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%").replace('$', "$$");
+fn watchdog_unit(exe: &Path) -> String {
+    let path = exe.display().to_string();
+    // Exec lines unquote and expand `$`; other lines expand only `%` specifiers.
+    let exec = path.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%").replace('$', "$$");
+    let cond = path.replace('%', "%%");
     format!(
-        "[Unit]\nDescription=ClockManage\nConditionPathExists={exe}\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n\
-         [Service]\nExecStart=\"{exe}\" --background\nRestart=always\nRestartSec=300\n\
-         # Firefox and players the app starts live on when the app is restarted.\nKillMode=process\n\n\
-         [Install]\nWantedBy=graphical-session.target\n"
+        "[Unit]\nDescription=ClockManage\nConditionPathExists={cond}\nPartOf=graphical-session.target\n\n\
+         [Service]\nExecStart=\"{exec}\" --background\nRestart=always\nRestartSec=300\n\
+         # Firefox and players the app starts live on when the app is restarted.\nKillMode=process\n"
     )
 }
 
-/// What `systemctl --user enable/disable` does, by hand: works without a running user manager.
+/// The start at sign-in: an XDG autostart entry, which every desktop runs.
+#[cfg(target_os = "linux")]
+fn autostart_entry(exe: &Path) -> String {
+    let path = exe.display().to_string();
+    // Inside quotes `\`, `"`, `` ` `` and `$` take a backslash, and the value's own escaping
+    // doubles every backslash once more; `%` starts a field code.
+    let exec = path.replace('\\', "\\\\\\\\").replace('"', "\\\\\"").replace('`', "\\\\`").replace('$', "\\\\$").replace('%', "%%");
+    let try_exec = path.replace('\\', "\\\\");
+    format!("[Desktop Entry]\nType=Application\nName=ClockManage\nTryExec={try_exec}\nExec=\"{exec}\" --background\nIcon=clockmanage\nTerminal=false\n")
+}
+
+/// Writes (Some) or removes (None) the autostart entry and the watchdog unit.
 #[cfg(target_os = "linux")]
 fn write_autostart(config: &Path, exe: Option<&Path>) -> std::io::Result<()> {
-    let dir = config.join("systemd/user");
-    let (unit, link) = (dir.join(UNIT), dir.join("graphical-session.target.wants").join(UNIT));
-    let _ = std::fs::remove_file(&link);
-    let Some(exe) = exe else {
-        return match std::fs::remove_file(&unit) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        };
-    };
-    std::fs::create_dir_all(link.parent().unwrap_or(&dir))?;
-    std::fs::write(&unit, autostart_unit(exe))?;
-    std::os::unix::fs::symlink(format!("../{UNIT}"), &link)
+    let files: [(std::path::PathBuf, fn(&Path) -> String); 2] =
+        [(config.join("autostart/clockmanage.desktop"), autostart_entry), (config.join("systemd/user").join(UNIT), watchdog_unit)];
+    for (path, text) in files {
+        match exe {
+            Some(exe) => {
+                std::fs::create_dir_all(path.parent().unwrap_or(config))?;
+                std::fs::write(&path, text(exe))?;
+            }
+            None => match std::fs::remove_file(&path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            },
+        }
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -103,15 +120,28 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let config = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| home.map(|h| h.join(".config")));
     let config = config.ok_or_else(|| tr!("system_couldnt_set_up_autostart", e = "HOME"))?;
-    // An AppImage runs from a temporary mount: the service must start the file itself.
+    // An AppImage runs from a temporary mount: start the file itself.
     let exe = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok());
     let exe = if enabled { Some(exe.ok_or_else(|| tr!("system_couldnt_set_up_autostart", e = "current_exe"))?) } else { None };
     write_autostart(&config, exe.as_deref()).map_err(|e| tr!("system_couldnt_set_up_autostart", e = e))?;
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let systemctl = |args: &[&str]| {
+        let _ = std::process::Command::new("systemctl")
+            .arg("--user")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    };
+    systemctl(&["daemon-reload"]);
+    if enabled {
+        // The watchdog starts the app in this session: desktops without systemd integration
+        // don't hand the display to the user manager.
+        systemctl(&["import-environment", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"]);
+        systemctl(&["start", "--no-block", UNIT]);
+    } else if !std::fs::read_to_string("/proc/self/cgroup").is_ok_and(|c| c.contains(&format!("/{UNIT}"))) {
+        // Not when this process is the service itself: stopping it would quit the app.
+        systemctl(&["stop", "--no-block", UNIT]);
+    }
     Ok(())
 }
 
@@ -254,8 +284,12 @@ pub fn ui_lang() -> Lang {
 
 #[cfg(not(windows))]
 pub fn ui_lang() -> Lang {
-    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()));
-    Lang::from_locale(&locale.unwrap_or_default())
+    let var = |v: &str| std::env::var(v).ok().filter(|s| !s.is_empty());
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| var(v)).unwrap_or_default();
+    // Like gettext: LANGUAGE (KDE keeps the interface language there) wins unless the locale is C.
+    let c = locale == "C" || locale == "POSIX" || locale.starts_with("C.");
+    let language = var("LANGUAGE").filter(|_| !c).and_then(|l| l.split(':').next().map(str::to_string));
+    Lang::from_locale(&language.unwrap_or(locale))
 }
 
 /// The interface language from the setting ("auto" = the Windows language), applied process-wide.
@@ -305,19 +339,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn autostart_service_on_and_off() {
+    fn autostart_entry_and_watchdog_on_and_off() {
         let config = std::env::temp_dir().join(format!("cm-autostart-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&config);
+        let (entry, unit) = (config.join("autostart/clockmanage.desktop"), config.join("systemd/user/clockmanage.service"));
         write_autostart(&config, Some(Path::new("/opt/Clock Manage/clockmanage"))).unwrap();
-        let unit = std::fs::read_to_string(config.join("systemd/user/clockmanage.service")).unwrap();
-        assert!(unit.contains("ExecStart=\"/opt/Clock Manage/clockmanage\" --background\n"));
-        assert!(unit.contains("Restart=always\nRestartSec=300\n") && unit.contains("WantedBy=graphical-session.target"));
-        let link = config.join("systemd/user/graphical-session.target.wants/clockmanage.service");
-        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("../clockmanage.service"));
-        // Enabling again replaces the entry; turning it off removes both files.
+        let desktop = std::fs::read_to_string(&entry).unwrap();
+        assert!(desktop.contains("Exec=\"/opt/Clock Manage/clockmanage\" --background\n") && desktop.contains("TryExec=/opt/Clock Manage/clockmanage\n"));
+        let service = std::fs::read_to_string(&unit).unwrap();
+        assert!(service.contains("ExecStart=\"/opt/Clock Manage/clockmanage\" --background\n"));
+        assert!(service.contains("Restart=always\nRestartSec=300\n") && !service.contains("[Install]"));
+        // Enabling again replaces both; turning it off removes both.
         write_autostart(&config, Some(Path::new("/usr/bin/clockmanage"))).unwrap();
         write_autostart(&config, None).unwrap();
-        assert!(!config.join("systemd/user/clockmanage.service").exists() && std::fs::symlink_metadata(&link).is_err());
-        assert_eq!(autostart_unit(Path::new("/a/100%$x")).lines().find(|l| l.starts_with("ExecStart")), Some("ExecStart=\"/a/100%%$$x\" --background"));
+        assert!(!entry.exists() && !unit.exists());
+        // Each line escapes the path its own way.
+        let odd = Path::new("/a/100%$x\\y");
+        let line = |text: String, key: &str| text.lines().find(|l| l.starts_with(key)).map(str::to_string);
+        assert_eq!(line(watchdog_unit(odd), "ExecStart="), Some("ExecStart=\"/a/100%%$$x\\\\y\" --background".into()));
+        assert_eq!(line(watchdog_unit(odd), "ConditionPathExists="), Some("ConditionPathExists=/a/100%%$x\\y".into()));
+        assert_eq!(line(autostart_entry(odd), "Exec="), Some("Exec=\"/a/100%%\\\\$x\\\\\\\\y\" --background".into()));
     }
 }
