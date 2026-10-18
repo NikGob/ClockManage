@@ -6,6 +6,7 @@
 //! again: our NSIS hook does that (`installer-hooks.nsh`), because the plugin's own restart runs
 //! it without admin rights and so asks for UAC.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,7 +33,8 @@ pub struct UpdateStatus {
     pub version: Option<String>,
     pub checked_at: Option<Ts>,
     pub error: Option<String>,
-    /// With automatic updates on, the update installs by itself (Windows, the AppImage).
+    /// With automatic updates on, the update installs by itself (Windows; the AppImage on a
+    /// desktop that tells how long nobody has touched the PC).
     pub by_itself: bool,
 }
 
@@ -43,12 +45,15 @@ pub struct Updates {
     /// tauri.conf.json. Linux: without it, until `install` (an AppImage is about 80 MB).
     ready: Mutex<Option<(Update, Option<Vec<u8>>)>>,
     busy: Mutex<bool>,
+    /// `by_itself()`, refreshed by the updater thread: on Linux it asks the desktop for the idle
+    /// time, too slow for every snapshot.
+    by_itself: AtomicBool,
 }
 
 impl Updates {
     pub fn status(&self) -> UpdateStatus {
         let s = self.status.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        UpdateStatus { state: if s.state.is_empty() { "idle" } else { s.state }, by_itself: by_itself(), ..s }
+        UpdateStatus { state: if s.state.is_empty() { "idle" } else { s.state }, by_itself: self.by_itself.load(Ordering::Relaxed), ..s }
     }
 
     fn set(&self, shared: &Shared, f: impl FnOnce(&mut UpdateStatus)) {
@@ -76,19 +81,28 @@ fn user_away(shared: &Shared) -> bool {
     !visible(shared, "main")
         && !visible(shared, "overlay")
         && shared.snapshot().view.pending_note.is_none()
-        && crate::system::idle_ms() >= AWAY_MS
+        && crate::system::idle_ms().is_some_and(|ms| ms >= AWAY_MS)
+}
+
+fn refresh(shared: &Shared) {
+    let now = by_itself();
+    if shared.updates.by_itself.swap(now, Ordering::Relaxed) != now {
+        let _ = shared.app.emit("state", shared.snapshot());
+    }
 }
 
 pub fn spawn(shared: Arc<Shared>) {
     std::thread::Builder::new()
         .name("updater".into())
         .spawn(move || {
+            refresh(&shared);
             std::thread::sleep(FIRST_CHECK);
             let mut last_check: Ts = 0;
             // The check after which the install was last tried: a failed one (no network, a bad
             // package, a folder not writable) waits for the next check instead of every minute.
             let mut tried: Ts = 0;
             loop {
+                refresh(&shared);
                 let now = clock::now_ts();
                 let auto = shared.lock().cfg.auto_update;
                 if auto && now - last_check >= CHECK_EVERY_MS {
@@ -135,14 +149,13 @@ pub fn check(shared: &Arc<Shared>, manual: bool) {
                 s.version = Some(version.clone());
                 s.checked_at = Some(now);
             });
+            // The first answer on Wayland comes a moment after the start: ask again before choosing
+            // the notice.
+            refresh(shared);
             if !safe_to_restart(shared) || manual || !installs_by_itself(shared) {
                 shared.notice(
                     &tr!("updater_clockmanage_is_ready", version = version),
-                    match (installs_by_itself(shared), cfg!(windows)) {
-                        (true, true) => tr("updater_it_installs_by_itself_when_no"),
-                        (true, false) => tr("updater_the_appimage_installs_the_update_by"),
-                        (false, _) => tr("updater_press_restart_and_update_in_settings"),
-                    },
+                    if installs_by_itself(shared) { tr("updater_it_installs_by_itself_when_no") } else { tr("updater_press_restart_and_update_in_settings") },
                 );
             }
         }
@@ -266,19 +279,23 @@ fn restart_in_tray(shared: &Shared) -> ! {
 }
 
 fn installs_by_itself(shared: &Shared) -> bool {
-    shared.lock().cfg.auto_update && by_itself()
+    shared.lock().cfg.auto_update && shared.updates.by_itself.load(Ordering::Relaxed)
 }
 
 /// Windows installs by itself while nobody is at the PC, and so does the AppImage, which replaces
-/// its own file. A .deb asks for the password (pkexec dpkg), so the user installs with "Restart
-/// and update". Linux can't tell how long the PC has been idle, so there "nobody" means the window
-/// is closed.
+/// its own file, where the desktop tells how long nobody has touched the PC. A .deb asks for the
+/// password (pkexec dpkg), so the user installs with "Restart and update"; so does the AppImage
+/// on a desktop that doesn't tell (a Wayland compositor without ext-idle-notify).
 fn by_itself() -> bool {
+    by_itself_if(|| crate::system::idle_ms().is_some())
+}
+
+fn by_itself_if(idle_known: impl FnOnce() -> bool) -> bool {
     #[cfg(target_os = "linux")]
     let appimage = crate::system::own_appimage().is_some();
     #[cfg(not(target_os = "linux"))]
     let appimage = false;
-    cfg!(windows) || appimage
+    cfg!(windows) || (appimage && idle_known())
 }
 
 #[cfg(test)]
@@ -334,21 +351,23 @@ mod tests {
     }
 
     /// Windows and the AppImage install by themselves; a .deb waits for "Restart and update",
-    /// because pkexec asks for the password.
+    /// because pkexec asks for the password, and so does the AppImage where the desktop doesn't
+    /// tell the idle time.
     #[test]
     fn a_deb_never_installs_by_itself() {
         if cfg!(windows) {
-            assert!(by_itself());
+            assert!(by_itself_if(|| false));
             return;
         }
-        assert!(!by_itself(), "a .deb installs by itself");
+        assert!(!by_itself_if(|| true), "a .deb installs by itself");
         let mount = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
         std::env::set_var("APPIMAGE", "/home/you/ClockManage.AppImage");
         std::env::set_var("APPDIR", &mount);
-        assert!(by_itself(), "the AppImage waits for Restart and update");
+        assert!(by_itself_if(|| true), "the AppImage waits for Restart and update");
+        assert!(!by_itself_if(|| false), "the AppImage installs by itself with the idle time unknown");
         // The .deb app started from an AppImage app's terminal inherits both variables.
         std::env::set_var("APPDIR", "/tmp/.mount_other");
-        assert!(!by_itself(), "a .deb started from an AppImage installs by itself");
+        assert!(!by_itself_if(|| true), "a .deb started from an AppImage installs by itself");
         std::env::remove_var("APPIMAGE");
         std::env::remove_var("APPDIR");
     }
