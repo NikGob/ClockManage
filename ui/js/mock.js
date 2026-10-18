@@ -132,7 +132,7 @@ function snapshot() {
       // ?lang=en previews the English interface; "auto" follows the browser.
       lang: cfg.lang === 'auto' ? (/^(ru|uk|be)/i.test(navigator.language) ? 'ru' : 'en') : cfg.lang,
       // ?update=ready previews a downloaded update (also available, checking, downloading, error).
-      update: { state: update, version: ['available', 'downloading', 'ready'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null },
+      update: { state: update, version: ['available', 'downloading', 'ready'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null, by_itself: q.get('os') !== 'linux' || q.get('admin') === '0' },
     },
   };
 }

@@ -1459,7 +1459,7 @@ pub fn check_update(s: S) {
 #[tauri::command]
 pub async fn install_update(s: State<'_, Arc<Shared>>) -> Result<(), String> {
     let shared = s.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || crate::updater::install(&shared)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || crate::updater::install(&shared, false)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

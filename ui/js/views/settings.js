@@ -154,7 +154,7 @@ export function mountSettings(root, ctx) {
     const ver = esc(u.version || '');
     const state = {
       checking: tr('settings_checking'),
-      available: tr('settings_version_is_available', { version: ver }),
+      available: cfg.auto_update && u.by_itself ? tr('settings_version_is_available_the_appimage_installs', { version: ver }) : tr('settings_version_is_available', { version: ver }),
       downloading: tr('settings_downloading', { version: ver }),
       ready: cfg.auto_update && !LINUX ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
       latest: u.checked_at ? tr('settings_latest_version_checked_at', { time: clock(u.checked_at) }) : '',

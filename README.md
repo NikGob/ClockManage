@@ -163,7 +163,7 @@ What works differently from Windows:
 - A blocked app can start and is closed within a second: Linux has no way to stop it before it starts. A browser tab showing a blocked site gets no *Nope* (other apps' window titles can't be read on Wayland).
 - Sites: `hosts`, a policy file of Chrome, Chromium, Edge, Brave and Yandex in `/etc/…/policies/managed/` (read at once) and rules in `/etc/firefox/policies/policies.json`. Flatpak browsers read neither.
 - The tray icon opens its menu on a click; there is no click-to-open. The mini timer and the alarm stay on top on X11; under Wayland the compositor may not keep them on top or where they were.
-- The app finds updates by itself, but downloads and installs them only when you press **Restart and update**: a .deb asks for your password.
+- Updates: the AppImage downloads and installs a new version by itself when no study day or lock is running and the window is closed (Linux can't tell whether anybody is at the PC); it needs to be able to write to its folder. A .deb only finds the update and installs it when you press **Restart and update**, because it asks for your password.
 
 ### Quick start
 
@@ -173,7 +173,7 @@ What works differently from Windows:
 
 ## Good to know
 
-- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. On Linux the app only finds the update by itself (see [Linux](#linux)). *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs the new version at once (outside a study day). The installers are signed, and the app installs nothing else.
+- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. On Linux the AppImage does the same but can't tell whether anybody is at the PC, and a .deb only finds the update (see [Linux](#linux)). *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs the new version at once (outside a study day). The installers are signed, and the app installs nothing else.
 - **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows the system language. The time zone is there too (a new install takes the system's).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
@@ -191,7 +191,7 @@ npx @tauri-apps/cli@2 build                  # NSIS installer on Windows; .deb a
 
 On Linux the app needs WebKitGTK: `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf` (Ubuntu 22.04 or newer), then `cargo test --workspace` runs the app's tests too. `src-tauri/tauri.linux.conf.json` is merged over `tauri.conf.json` on Linux: no launch guard; the .deb's polkit rule and remove script and the menu entry (also used by the AppImage) from `src-tauri/linux/`. `scripts/linux-smoke.sh <deb>` installs a built package and drives the running app over MCP — it changes `/etc/hosts`, so CI runs it on a throwaway runner.
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites.
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage).
 
 | Folder | What's inside |
 |---|---|
