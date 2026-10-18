@@ -67,6 +67,15 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 const UNIT: &str = "clockmanage.service";
 
+/// The AppImage file this process runs from. APPIMAGE alone doesn't tell: the AppImage runtime
+/// hands it to every child, so the .deb app started from an AppImage app's terminal has it too.
+#[cfg(target_os = "linux")]
+pub fn own_appimage() -> Option<std::path::PathBuf> {
+    let mount = std::env::var_os("APPDIR")?;
+    let ours = std::env::current_exe().ok()?.starts_with(mount);
+    ours.then(|| std::env::var_os("APPIMAGE").map(std::path::PathBuf::from)).flatten()
+}
+
 /// The watchdog: a systemd user service the app starts itself (`set_autostart`), so it needs no
 /// session target. Like the Windows task it starts the app every 5 minutes; a running instance
 /// ignores `--background`, so it only matters once the process is gone. It does nothing once
@@ -121,7 +130,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| home.map(|h| h.join(".config")));
     let config = config.ok_or_else(|| tr!("system_couldnt_set_up_autostart", e = "HOME"))?;
     // An AppImage runs from a temporary mount: start the file itself.
-    let exe = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok());
+    let exe = own_appimage().or_else(|| std::env::current_exe().ok());
     let exe = if enabled { Some(exe.ok_or_else(|| tr!("system_couldnt_set_up_autostart", e = "current_exe"))?) } else { None };
     write_autostart(&config, exe.as_deref()).map_err(|e| tr!("system_couldnt_set_up_autostart", e = e))?;
     let systemctl = |args: &[&str]| {

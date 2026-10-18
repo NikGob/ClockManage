@@ -731,7 +731,10 @@ pub fn helper_main() -> Option<i32> {
             _ => return Some(2),
         }
     }
-    clockmanage_core::i18n::set(crate::system::ui_lang());
+    // The app hands its language over in LANGUAGE (a C locale must not cancel it here).
+    let lang = std::env::var("LANGUAGE").ok().filter(|l| !l.is_empty());
+    let lang = lang.map(|l| clockmanage_core::i18n::Lang::from_locale(l.split(':').next().unwrap_or_default()));
+    clockmanage_core::i18n::set(lang.unwrap_or_else(crate::system::ui_lang));
     match platform::write_system(std::path::Path::new("/"), &sites) {
         Ok(()) => Some(0),
         Err(e) => {
@@ -773,7 +776,7 @@ mod platform {
     }
 
     pub fn helper_installed() -> bool {
-        std::env::var_os("APPIMAGE").is_none() && Path::new(POLKIT_POLICY).exists() && Path::new(HELPER).exists()
+        crate::system::own_appimage().is_none() && Path::new(POLKIT_POLICY).exists() && Path::new(HELPER).exists()
     }
 
     fn read_json(p: &Path) -> Option<Value> {
@@ -947,8 +950,9 @@ mod platform {
     pub fn apply(a: &mut Applied, sites: &[String]) -> Result<(), String> {
         let res = privileged(sites);
         let ff = firefox_rules(sites);
-        // Without the root step nothing was written: no Firefox restart for rules it doesn't have.
-        if res.is_ok() && a.ff_rules != ff && firefox_in_place(Path::new("/"), &ff) {
+        // Only rules really in place count: without the root step nothing was written (no Firefox
+        // restart for rules it doesn't have), and a failing hosts still leaves the policies written.
+        if a.ff_rules != ff && firefox_in_place(Path::new("/"), &ff) {
             a.ff_rules = ff;
             a.ff_rules_at = now_ms();
         }
@@ -960,12 +964,12 @@ mod platform {
     pub fn verify(a: &mut Applied) -> Result<(), String> {
         let ff = firefox_rules(&a.sites);
         let ff_lost = !firefox_in_place(Path::new("/"), &ff);
-        privileged(&a.sites)?;
+        let res = privileged(&a.sites);
         if ff_lost && firefox_in_place(Path::new("/"), &ff) {
             a.ff_rules = ff;
             a.ff_rules_at = now_ms();
         }
-        Ok(())
+        res
     }
 
     pub fn clear(a: &mut Applied) -> Result<(), String> {
