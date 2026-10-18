@@ -2,6 +2,8 @@
 
 mod app;
 mod blocker;
+#[cfg(target_os = "linux")]
+mod idle;
 mod mcp_server;
 mod phone_server;
 mod sound;
@@ -33,6 +35,12 @@ fn cleanup() {
 }
 
 fn main() {
+    // idle.rs calls Xlib from the updater thread: libX11 before 1.8 (Ubuntu 22.04) is thread-safe
+    // only after this, and it must come before GTK opens its display.
+    #[cfg(target_os = "linux")]
+    if let Ok(xlib) = x11_dl::xlib::Xlib::open() {
+        unsafe { (xlib.XInitThreads)() };
+    }
     #[cfg(target_os = "linux")]
     if let Some(code) = blocker::helper_main() {
         std::process::exit(code);
