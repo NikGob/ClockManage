@@ -131,8 +131,8 @@ function snapshot() {
       tz_offset_min: cfg.tz_offset_min,
       // ?lang=en previews the English interface; "auto" follows the browser.
       lang: cfg.lang === 'auto' ? (/^(ru|uk|be)/i.test(navigator.language) ? 'ru' : 'en') : cfg.lang,
-      // ?update=ready previews a downloaded update (also checking, downloading, error).
-      update: { state: update, version: ['ready', 'downloading'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null },
+      // ?update=ready previews a downloaded update (also available, checking, downloading, error).
+      update: { state: update, version: ['available', 'downloading', 'ready'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null },
     },
   };
 }

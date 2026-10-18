@@ -154,6 +154,7 @@ export function mountSettings(root, ctx) {
     const ver = esc(u.version || '');
     const state = {
       checking: tr('settings_checking'),
+      available: tr('settings_version_is_available', { version: ver }),
       downloading: tr('settings_downloading', { version: ver }),
       ready: cfg.auto_update && !LINUX ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
       latest: u.checked_at ? tr('settings_latest_version_checked_at', { time: clock(u.checked_at) }) : '',
@@ -163,7 +164,7 @@ export function mountSettings(root, ctx) {
     // The backend refuses a restart while a day or a lock runs: say so instead of a dead click.
     const canRestart = !v.lock.base && !v.lock.blocked && ['idle', 'done'].includes(v.phase.kind);
     return `<div class="setting"><div class="grow"><div class="t">${tr('settings_automatic_updates')}${info('update')}</div><div class="d">${state}</div></div>
-      ${u.state === 'ready'
+      ${['available', 'ready'].includes(u.state)
         ? `<button class="btn tonal interactive" id="installupdate" ${canRestart ? '' : `disabled data-tip="${esc(tr('updater_the_update_installs_after_the_study'))}"`}>${icon('download')}${tr('settings_restart_and_update')}</button>`
         : `<button class="btn text interactive" id="checkupdate" ${busy ? 'disabled' : ''}>${icon('refresh')}${tr('settings_check')}</button>`}
       ${sw('auto_update', cfg.auto_update, tr('settings_automatic_updates'), 'update')}</div>`;
