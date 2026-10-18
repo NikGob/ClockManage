@@ -1,4 +1,4 @@
-import { call, esc, mmss } from '../api.js';
+import { call, esc, mmss, LINUX } from '../api.js';
 import { icon } from '../icons.js';
 import { run, snack, tsHm } from '../ui.js';
 import { emergencyDialog } from './dialogs.js';
@@ -79,7 +79,7 @@ export function mountBlock(root, ctx) {
       <section class="section">
         <h2>${tr('blocking_good_to_know')}</h2>
         <ul class="limits body-m">
-          <li>${tr('blocking_the_app_runs_as_administrator_it')}</li>
+          <li>${LINUX ? tr('blocking_quit_is_off_during_study_and') : tr('blocking_the_app_runs_as_administrator_it')}</li>
           <li>${tr('blocking_chrome_edge_brave_and_yandex_pick')}</li>
           <li>${tr('blocking_shorts_opened_by_a_click_inside')}</li>
         </ul>
@@ -130,7 +130,7 @@ export function mountBlock(root, ctx) {
       const startText = v.autolock && !v.autolock.on ? tr('blocking_turns_on_at_or_with_start_day', { time: v.autolock.time }) : tr('blocking_turns_on_with_start_day');
       p = { not_started: v.study_day ? (v.after_day_end ? tr('blocking_no_lock_after', { day_end: v.day_end }) : startText) : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
     }
-    if (!last.meta.admin) p += tr('blocking_warning_the_app_runs_without_administrator');
+    if (!last.meta.admin) p += LINUX ? tr('blocking_warning_sites_are_not_blocked_install') : tr('blocking_warning_the_app_runs_without_administrator');
     if (last.meta.blocker_error) p += ` ${tr('blocking_error')}: ${last.meta.blocker_error}`;
     const html = `<h2>${esc(h)}</h2><p class="body-l">${esc(p)}</p>${v.emergency_count ? `<p class="body-m">${tr('blocking_emergency_accesses_today')} ${v.emergency_count}</p>` : ''}`;
     const hero = $('hero');

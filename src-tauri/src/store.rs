@@ -114,8 +114,12 @@ impl Store {
     }
 
     pub fn export_dir(&self) -> PathBuf {
-        let base = std::env::var_os("USERPROFILE")
-            .map(|p| PathBuf::from(p).join("Documents"))
+        // Linux: the XDG documents folder, "~/Документы" on a Russian desktop.
+        #[cfg(target_os = "linux")]
+        let docs = dirs::document_dir();
+        #[cfg(not(target_os = "linux"))]
+        let docs = std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("Documents"));
+        let base = docs
             .filter(|p| p.exists())
             .unwrap_or_else(|| self.dir.clone());
         base.join("ClockManage")

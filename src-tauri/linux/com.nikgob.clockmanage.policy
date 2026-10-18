@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- The root step of the study lock (the block-sites argument below) writes the hosts section and
+     the browser policies. The active user runs it without a password, like the Windows app that
+     runs elevated. The binary does nothing else under pkexec. No double hyphen in this comment:
+     XML forbids it, and polkit then drops the whole file. -->
+<policyconfig>
+  <vendor>ClockManage</vendor>
+  <action id="com.nikgob.clockmanage.block-sites">
+    <description>Block distracting sites during study time</description>
+    <description xml:lang="ru">Блокировка отвлекающих сайтов во время учёбы</description>
+    <message>ClockManage needs to change hosts and browser policies</message>
+    <message xml:lang="ru">ClockManage нужно изменить hosts и политики браузеров</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/clockmanage</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">--block-sites</annotate>
+  </action>
+</policyconfig>

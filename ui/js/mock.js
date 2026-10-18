@@ -127,19 +127,19 @@ function snapshot() {
       },
     },
     meta: {
-      admin: true, version: '0.5.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
+      admin: q.get('admin') !== '0', version: '0.5.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
       phone: { enabled: cfg.phone.enabled, running: cfg.phone.enabled, port: 47811, address: '192.168.1.42', pc_name: 'DESKTOP-PC', error: null, pin: phonePin, pin_until: phonePin ? t0 + 2 * MIN : null,
         apk: { available: true, code: 42, name: '0.5.0 (58)', size: 812345 },
         devices: [{ id: 'a1b2c3', name: 'Pixel 8', paired_at: t0 - 86400000, last_seen: Date.now() - 2 * MIN, blocker: true }] },
       blocker_error: null, blocking_applied: lock.blocked, sound: true, overlay: true, break_access: cfg.break_access,
       emergency_min: 10, lunch_min: 45, segments: cfg.segments, seed: cfg.appearance.seed, theme_mode: cfg.appearance.mode, variant: cfg.appearance.variant,
       mini_contrast: cfg.appearance.mini_contrast,
-      data_dir: 'C:\\Users\\you\\AppData\\Roaming\\com.nikgob.clockmanage',
+      data_dir: q.get('os') === 'linux' ? '/home/you/.local/share/com.nikgob.clockmanage' : 'C:\\Users\\you\\AppData\\Roaming\\com.nikgob.clockmanage',
       tz_offset_min: cfg.tz_offset_min,
       // ?lang=en previews the English interface; "auto" follows the browser.
       lang: cfg.lang === 'auto' ? (/^(ru|uk|be)/i.test(navigator.language) ? 'ru' : 'en') : cfg.lang,
-      // ?update=ready previews a downloaded update (also checking, downloading, error).
-      update: { state: update, version: ['ready', 'downloading'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null },
+      // ?update=ready previews a downloaded update (also available, checking, downloading, error).
+      update: { state: update, version: ['available', 'downloading', 'ready'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null, by_itself: q.get('os') !== 'linux' || q.get('admin') === '0' },
     },
   };
 }

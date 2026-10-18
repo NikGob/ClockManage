@@ -1,8 +1,10 @@
 //! Self-update from GitHub Releases, no server of our own: the app reads `latest.json` of the
 //! latest release (CI uploads it next to the signed installer), downloads the new installer in
-//! the background and runs it when no study day or lock is running. The installer closes the
-//! app, installs over it and starts it again: our NSIS hook does that (`installer-hooks.nsh`),
-//! because the plugin's own restart runs it without admin rights and so asks for UAC.
+//! the background and runs it when no study day or lock is running. On Linux the check only finds
+//! the version: the AppImage downloads the package when it installs by itself, a .deb when the
+//! user presses "Restart and update". The installer closes the app, installs over it and starts it
+//! again: our NSIS hook does that (`installer-hooks.nsh`), because the plugin's own restart runs
+//! it without admin rights and so asks for UAC.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -12,7 +14,7 @@ use clockmanage_core::i18n::tr;
 use clockmanage_core::tr;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 
 use crate::app::Shared;
 
@@ -24,26 +26,29 @@ const AWAY_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Serialize, Clone, Default)]
 pub struct UpdateStatus {
-    /// idle | checking | downloading | ready | latest | error
+    /// idle | checking | available | downloading | ready | latest | error
     pub state: &'static str,
-    /// The new version (downloading / ready).
+    /// The new version (available / downloading / ready).
     pub version: Option<String>,
     pub checked_at: Option<Ts>,
     pub error: Option<String>,
+    /// With automatic updates on, the update installs by itself (Windows, the AppImage).
+    pub by_itself: bool,
 }
 
 #[derive(Default)]
 pub struct Updates {
     pub status: Mutex<UpdateStatus>,
-    /// The downloaded installer, verified against the public key in tauri.conf.json.
-    ready: Mutex<Option<(Update, Vec<u8>)>>,
+    /// The update found, with the installer downloaded and verified against the public key in
+    /// tauri.conf.json. Linux: without it, until `install` (an AppImage is about 80 MB).
+    ready: Mutex<Option<(Update, Option<Vec<u8>>)>>,
     busy: Mutex<bool>,
 }
 
 impl Updates {
     pub fn status(&self) -> UpdateStatus {
         let s = self.status.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        UpdateStatus { state: if s.state.is_empty() { "idle" } else { s.state }, ..s }
+        UpdateStatus { state: if s.state.is_empty() { "idle" } else { s.state }, by_itself: by_itself(), ..s }
     }
 
     fn set(&self, shared: &Shared, f: impl FnOnce(&mut UpdateStatus)) {
@@ -80,6 +85,9 @@ pub fn spawn(shared: Arc<Shared>) {
         .spawn(move || {
             std::thread::sleep(FIRST_CHECK);
             let mut last_check: Ts = 0;
+            // The check after which the install was last tried: a failed one (no network, a bad
+            // package, a folder not writable) waits for the next check instead of every minute.
+            let mut tried: Ts = 0;
             loop {
                 let now = clock::now_ts();
                 let auto = shared.lock().cfg.auto_update;
@@ -89,11 +97,12 @@ pub fn spawn(shared: Arc<Shared>) {
                 }
                 // Like Discord: the update goes in by itself, but never under the user's hands
                 // and never during a study day (a restart would pause the running timer).
-                if auto && shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+                if installs_by_itself(&shared) && tried < last_check && shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()).is_some()
                     && safe_to_restart(&shared)
                     && user_away(&shared)
                 {
-                    let _ = install(&shared);
+                    tried = last_check;
+                    let _ = install(&shared, true);
                 }
                 std::thread::sleep(Duration::from_secs(60));
             }
@@ -119,17 +128,21 @@ pub fn check(shared: &Arc<Shared>, manual: bool) {
     match res {
         Ok(Some((update, bytes))) => {
             let version = update.version.clone();
+            let state = if bytes.is_some() { "ready" } else { "available" };
             *shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()) = Some((update, bytes));
             shared.updates.set(shared, |s| {
-                s.state = "ready";
+                s.state = state;
                 s.version = Some(version.clone());
                 s.checked_at = Some(now);
             });
-            if !safe_to_restart(shared) || manual {
-                let auto = shared.lock().cfg.auto_update;
+            if !safe_to_restart(shared) || manual || !installs_by_itself(shared) {
                 shared.notice(
                     &tr!("updater_clockmanage_is_ready", version = version),
-                    if auto { tr("updater_it_installs_by_itself_when_no") } else { tr("updater_press_restart_and_update_in_settings") },
+                    match (installs_by_itself(shared), cfg!(windows)) {
+                        (true, true) => tr("updater_it_installs_by_itself_when_no"),
+                        (true, false) => tr("updater_the_appimage_installs_the_update_by"),
+                        (false, _) => tr("updater_press_restart_and_update_in_settings"),
+                    },
                 );
             }
         }
@@ -150,7 +163,7 @@ pub fn check(shared: &Arc<Shared>, manual: bool) {
     *shared.updates.busy.lock().unwrap_or_else(|e| e.into_inner()) = false;
 }
 
-async fn fetch(shared: &Arc<Shared>) -> Result<Option<(Update, Vec<u8>)>, String> {
+async fn fetch(shared: &Arc<Shared>) -> Result<Option<(Update, Option<Vec<u8>>)>, String> {
     // The installer starts after a hard exit: remove the tray icon first, or a ghost stays.
     let app = shared.app.clone();
     let updater = shared
@@ -160,20 +173,33 @@ async fn fetch(shared: &Arc<Shared>) -> Result<Option<(Update, Vec<u8>)>, String
         .restart_after_install(false)
         .build()
         .map_err(|e| e.to_string())?;
+    find(&updater, |version| downloading(shared, version)).await
+}
+
+/// Windows downloads the installer with the check. Linux notes the version and downloads the
+/// package when it installs, so it doesn't hold it in memory until then.
+async fn find(updater: &Updater, on_download: impl FnOnce(&str)) -> Result<Option<(Update, Option<Vec<u8>>)>, String> {
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);
     };
-    let version = update.version.clone();
-    shared.updates.set(shared, |s| {
-        s.state = "downloading";
-        s.version = Some(version);
-    });
+    if !cfg!(windows) {
+        return Ok(Some((update, None)));
+    }
+    on_download(&update.version);
     let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    Ok(Some((update, bytes)))
+    Ok(Some((update, Some(bytes))))
 }
 
-/// Run the downloaded installer: the app exits here and the installer starts it again.
-pub fn install(shared: &Arc<Shared>) -> Result<(), String> {
+fn downloading(shared: &Shared, version: &str) {
+    shared.updates.set(shared, |s| {
+        s.state = "downloading";
+        s.version = Some(version.to_owned());
+    });
+}
+
+/// Run the installer: the app exits here and the installer starts it again. `auto`: it installs by
+/// itself, nobody pressed "Restart and update".
+pub fn install(shared: &Arc<Shared>, auto: bool) -> Result<(), String> {
     if !safe_to_restart(shared) {
         return Err(tr("updater_the_update_installs_after_the_study").into());
     }
@@ -181,12 +207,149 @@ pub fn install(shared: &Arc<Shared>) -> Result<(), String> {
     let Some((update, bytes)) = ready else {
         return Err(tr("updater_no_downloaded_update").into());
     };
-    // Exits the process on success.
-    if let Err(e) = update.install(&bytes) {
-        eprintln!("update install: {e}");
-        // The tray icon is gone and the windows are hidden by now (on_before_exit): start
-        // over clean; the next check downloads the update again.
-        shared.app.restart();
+    let bytes = match bytes {
+        Some(bytes) => bytes,
+        // Linux: the check found the version only, so the package downloads now. `busy` keeps
+        // the 6-hourly check out meanwhile.
+        None => {
+            *shared.updates.busy.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            downloading(shared, &update.version);
+            let res = tauri::async_runtime::block_on(update.download(|_, _| {}, || {}));
+            *shared.updates.busy.lock().unwrap_or_else(|e| e.into_inner()) = false;
+            match res {
+                // The download took a while: a day may have started or the user come back.
+                Ok(_) if !safe_to_restart(shared) || (auto && !user_away(shared)) => {
+                    return Err(keep(shared, update, tr("updater_the_update_installs_after_the_study").into()));
+                }
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    eprintln!("update download: {e}");
+                    return Err(keep(shared, update, tr!("settings_update_failed", error = e)));
+                }
+            }
+        }
+    };
+    // Windows: exits the process on success. Linux: the new AppImage or package is in place.
+    match update.install(&bytes) {
+        Ok(()) if auto => restart_in_tray(shared),
+        Ok(()) => shared.app.restart(),
+        Err(e) => {
+            eprintln!("update install: {e}");
+            // Windows: the tray icon is gone and the windows are hidden by now (on_before_exit):
+            // start over clean; the next check downloads the update again.
+            if cfg!(windows) {
+                shared.app.restart();
+            }
+            // Linux (the password prompt cancelled, a folder not writable): keep the update.
+            Err(keep(shared, update, tr!("settings_update_failed", error = e)))
+        }
     }
-    Ok(())
+}
+
+/// Linux: keep the update found when it didn't install, but not its bytes: the next try downloads
+/// it again.
+fn keep(shared: &Shared, update: Update, message: String) -> String {
+    *shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()) = Some((update, None));
+    shared.updates.set(shared, |s| s.state = "available");
+    message
+}
+
+/// Start the new AppImage in the tray, as the Windows installer does (`installer-hooks.nsh`):
+/// `restart` keeps this run's arguments, so it would open the window if the user started the app.
+fn restart_in_tray(shared: &Shared) -> ! {
+    let mut env = shared.app.env();
+    if !env.args_os.iter().any(|a| a == "--background") {
+        env.args_os.push("--background".into());
+    }
+    shared.app.cleanup_before_exit();
+    tauri::process::restart(&env)
+}
+
+fn installs_by_itself(shared: &Shared) -> bool {
+    shared.lock().cfg.auto_update && by_itself()
+}
+
+/// Windows installs by itself while nobody is at the PC, and so does the AppImage, which replaces
+/// its own file. A .deb asks for the password (pkexec dpkg), so the user installs with "Restart
+/// and update". Linux can't tell how long the PC has been idle, so there "nobody" means the window
+/// is closed.
+fn by_itself() -> bool {
+    #[cfg(target_os = "linux")]
+    let appimage = crate::system::own_appimage().is_some();
+    #[cfg(not(target_os = "linux"))]
+    let appimage = false;
+    cfg!(windows) || appimage
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Only Windows downloads the package with the check: on Linux it would sit in memory (an
+    /// AppImage is about 80 MB) until the user presses "Restart and update".
+    #[test]
+    fn only_windows_downloads_with_the_check() {
+        let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let base = format!("http://{}", server.server_addr());
+        let downloads = Arc::new(AtomicUsize::new(0));
+        let (srv, count, url) = (server.clone(), downloads.clone(), base.clone());
+        std::thread::spawn(move || {
+            for req in srv.incoming_requests() {
+                let body = if req.url() == "/latest.json" {
+                    let package = serde_json::json!({ "url": format!("{url}/package"), "signature": "unsigned" });
+                    let platforms: serde_json::Map<_, _> =
+                        ["linux", "windows"].iter().map(|os| (format!("{os}-{}", std::env::consts::ARCH), package.clone())).collect();
+                    serde_json::json!({ "version": "99.0.0", "platforms": platforms }).to_string()
+                } else {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    "package".into()
+                };
+                let _ = req.respond(tiny_http::Response::from_string(body));
+            }
+        });
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().plugins.0.insert(
+            "updater".into(),
+            serde_json::json!({ "pubkey": "unused", "endpoints": [format!("{base}/latest.json")], "dangerousInsecureTransportProtocol": true }),
+        );
+        let app = tauri::test::mock_builder().plugin(tauri_plugin_updater::Builder::new().build()).build(context).unwrap();
+        let updater = app.updater_builder().build().unwrap();
+
+        let mut announced = None;
+        let found = tauri::async_runtime::block_on(find(&updater, |version| announced = Some(version.to_owned())));
+        if cfg!(windows) {
+            assert_eq!(downloads.load(Ordering::SeqCst), 1);
+            assert_eq!(announced.as_deref(), Some("99.0.0"));
+            assert!(found.is_err(), "an unsigned package passed");
+        } else {
+            let (update, bytes) = found.unwrap().expect("no update found");
+            assert_eq!(update.version, "99.0.0");
+            assert!(bytes.is_none() && announced.is_none());
+            assert_eq!(downloads.load(Ordering::SeqCst), 0, "the check downloaded the package");
+            // "Restart and update" downloads it (and refuses it: it isn't signed).
+            assert!(tauri::async_runtime::block_on(update.download(|_, _| {}, || {})).is_err());
+            assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    /// Windows and the AppImage install by themselves; a .deb waits for "Restart and update",
+    /// because pkexec asks for the password.
+    #[test]
+    fn a_deb_never_installs_by_itself() {
+        if cfg!(windows) {
+            assert!(by_itself());
+            return;
+        }
+        assert!(!by_itself(), "a .deb installs by itself");
+        let mount = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        std::env::set_var("APPIMAGE", "/home/you/ClockManage.AppImage");
+        std::env::set_var("APPDIR", &mount);
+        assert!(by_itself(), "the AppImage waits for Restart and update");
+        // The .deb app started from an AppImage app's terminal inherits both variables.
+        std::env::set_var("APPDIR", "/tmp/.mount_other");
+        assert!(!by_itself(), "a .deb started from an AppImage installs by itself");
+        std::env::remove_var("APPIMAGE");
+        std::env::remove_var("APPDIR");
+    }
 }

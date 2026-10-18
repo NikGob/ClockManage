@@ -33,6 +33,10 @@ fn cleanup() {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if let Some(code) = blocker::helper_main() {
+        std::process::exit(code);
+    }
     if std::env::args().any(|a| a == "--cleanup") {
         cleanup();
         return;
@@ -114,7 +118,10 @@ fn main() {
             let cfg = shared.lock().cfg.clone();
             shared.phone.start(shared.clone(), &cfg);
 
-            windows::build_tray(&handle, shared.clone())?;
+            // Some Linux desktops have no tray: the app runs anyway, a second launch opens it.
+            if let Err(e) = windows::build_tray(&handle, shared.clone()) {
+                eprintln!("tray: {e}");
+            }
             windows::install_close_handlers(&handle);
             std::thread::spawn(move || {
                 sound::warm_up();

@@ -13,7 +13,7 @@ Before every commit (any OS, same as the Linux CI job):
 cargo test -p clockmanage-core -p cm-guard
 ```
 
-This never compiles the app in `src-tauri/`. If you touched `src-tauri/`, or a `core` API it uses (for example the `McpHost` trait), also check the app on Windows. The app needs the launch guard as a sidecar, the same way the Windows CI job does:
+This never compiles the app in `src-tauri/`. If you touched `src-tauri/`, or a `core` API it uses (for example the `McpHost` trait), also check the app on Windows and on Linux. On Windows the app needs the launch guard as a sidecar, the same way the Windows CI job does:
 
 ```powershell
 cargo build --release -p cm-guard
@@ -22,13 +22,22 @@ Copy-Item target/release/cm-guard.exe src-tauri/binaries/cm-guard-x86_64-pc-wind
 cargo check -p clockmanage
 ```
 
+On Linux (Ubuntu 22.04 or newer, or a container of it, like the Linux CI job) no sidecar is needed: `src-tauri/tauri.linux.conf.json` drops the launch guard.
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb
+cargo test --workspace
+npx @tauri-apps/cli@2 build
+bash scripts/linux-smoke.sh target/release/bundle/deb/*.deb   # changes /etc/hosts: throwaway machine only
+```
+
 For UI changes, look at the mock preview **in every language**:
 
 ```sh
 python -m http.server -d ui
 ```
 
-Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed, then the same with every other language (`&lang=ru`, …). The screens are `today`, `plan`, `block`, `log` and `settings`. Check `overlay.html?demo=await` and `mini.html?state=work` the same way. Always pass `&lang=`: without it the mock follows the browser's language.
+Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed, then the same with every other language (`&lang=ru`, …). The screens are `today`, `plan`, `block`, `log` and `settings`. Check `overlay.html?demo=await` and `mini.html?state=work` the same way. Always pass `&lang=`: without it the mock follows the browser's language. Texts that differ in the Linux app show with `&os=linux` (`&admin=0`: an app that can't block sites): check those as well when you change them.
 
 ## Localization: every language, every change
 
@@ -71,6 +80,7 @@ Check those yourself.
 ### Outside `ui/locales`, still in every language
 
 - **Android texts the system reads** (manifest labels, the accessibility service and widget descriptions) cannot use `tr`. Add them to `android/app/src/main/res/values/strings.xml` (English, the default) **and** to `values-<lang>/strings.xml` for every other language (today `values-ru`).
+- **Linux texts the system shows** cannot use `tr` either: the polkit action in `src-tauri/linux/com.nikgob.clockmanage.policy` (`<description xml:lang="ru">`, `<message xml:lang="ru">`) and the menu entry's `Comment[ru]` in `src-tauri/linux/clockmanage.desktop`. Add a variant for every other language.
 - **Mock preview data** in `ui/js/mock.js` keeps its texts inline, one per language: today `L(ru, en)` pairs. A new `Config` setting also needs its default in the mock `cfg` there, or the preview and the README pictures show it unset.
 - **Static tray items**: set them in `src-tauri/src/windows.rs` and again in the `TRAY_LANG` block of `src-tauri/src/app.rs`. Otherwise they keep the old language after a switch.
 
@@ -89,6 +99,7 @@ Check those yourself.
   - Regexes in `ui/js/mini.js` and `ui/js/views/today.js` match the wording of `view_part_of`, `view_*_part_of` and the h/min units in every language.
   - `ui/js/views/log.js` compares against every language's value of `stats_running`.
   - If you reword those texts or add a language, update both sides.
+- **Windows and Linux.** A text that names Windows things (Task Scheduler, UAC, administrator rights, "Like Windows") has a Linux variant, picked with `LINUX` from `ui/js/api.js`. Change both, in every language.
 - **Tests.** Core unit tests run in Russian, because the process-wide language defaults to Russian. Assert texts of any other language only in a separate file under `core/tests/` (like `english.rs`): each file runs as its own process.
 - **Rebuild.** The locale files are compiled into the Rust binary (`include_str!`) and packed into the APK. Rebuild after editing them.
 - **CSP.** The CSP in `src-tauri/tauri.conf.json` must keep `connect-src 'self'`, or the UI shows raw keys. `core/tests/locales.rs` checks this.
@@ -102,6 +113,7 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 - `src-tauri/src/system.rs`: map the Windows UI language id to the new `Lang`.
 - `ui/js/i18n.js`: the accepted codes, the `navigator.language` check, `LOCALE`, `dec()` and `followLang`.
 - `android/.../I18n.kt`, plus `res/values-<lang>/strings.xml`.
+- `src-tauri/linux/`: the polkit action's description and message, and the `.desktop` comment.
 - `core/tests/locales.rs`: compare every locale file, not only `ru` and `en`.
 - `ui/js/views/settings.js`: the language picker.
 - `src-tauri/tauri.conf.json`: the NSIS installer `languages`.
@@ -121,10 +133,10 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 |---|---|
 | MCP tools (`core/src/mcp.rs`) | the "MCP N tools" badge, the tool table and the example prompts. Outside the README, two more tool lists: the `initialize` instructions in `core/src/mcp.rs` and Settings → MCP for Claude (`ui/js/views/settings.js`) |
 | settings, defaults, rules (`core/src/config.rs`, `core/src/day.rs`, `core/src/segments.rs`) | Features, Good to know |
-| blocking (`src-tauri/src/blocker.rs`, `guard/`) | Blocking that bites, Good to know |
+| blocking (`src-tauri/src/blocker.rs`, `guard/`, `src-tauri/linux/`) | Blocking that bites, Good to know, Install → Linux |
 | anything visible in the UI (`ui/`) | the Features section showing it, and its picture |
 | mock states, overlay demos, routes (`ui/js/mock.js`, `ui/js/main.js`) | Development: the preview URLs |
-| build, CI, installer (`.github/workflows/`, `Cargo.toml`, `src-tauri/tauri.conf.json`) | Install, Development |
+| build, CI, installer (`.github/workflows/`, `Cargo.toml`, `src-tauri/tauri.conf.json`, `src-tauri/tauri.linux.conf.json`, `scripts/linux-smoke.sh`) | Install, Development |
 | the i18n machinery or a language | the Languages badge, Good to know, the localization paragraph in Development |
 | the phone app (`android/`, `core/src/phone.rs`, `src-tauri/src/phone_server.rs`) | Android companion |
 | top-level folders | the folder table in Development |

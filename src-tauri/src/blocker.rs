@@ -12,6 +12,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
 use clockmanage_core::i18n::tr;
 use clockmanage_core::tr;
 
@@ -701,7 +702,394 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+/// Whether the lock can change hosts and browser policies: root, or the .deb's polkit rule
+/// for the root step. The AppImage has no install step, so it closes apps only (also on a
+/// machine that has the .deb: pkexec runs only the installed binary).
+#[cfg(target_os = "linux")]
+pub fn can_block_sites() -> bool {
+    platform::is_root() || platform::helper_installed()
+}
+
+/// `clockmanage --block-sites [site…]`, the root step (through pkexec, or the package's remove
+/// script with no sites): make hosts and browser policies block exactly these sites, none = take
+/// ours out. Under pkexec the binary does nothing else, whatever the arguments.
+#[cfg(target_os = "linux")]
+pub fn helper_main() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) != Some(platform::HELPER_ARG) {
+        return std::env::var_os("PKEXEC_UID").is_some().then_some(2);
+    }
+    if !platform::is_root() {
+        return Some(2);
+    }
+    // pkexec keeps the caller's umask: folders root creates must stay readable for browsers.
+    unsafe { libc::umask(0o022) };
+    let mut sites = vec![];
+    for a in &args[1..] {
+        match clockmanage_core::config::normalize_site(a) {
+            Some(s) if &s == a => sites.push(s),
+            _ => return Some(2),
+        }
+    }
+    // The app hands its language over in LANGUAGE (a C locale must not cancel it here).
+    let lang = std::env::var("LANGUAGE").ok().filter(|l| !l.is_empty());
+    let lang = lang.map(|l| clockmanage_core::i18n::Lang::from_locale(l.split(':').next().unwrap_or_default()));
+    clockmanage_core::i18n::set(lang.unwrap_or_else(crate::system::ui_lang));
+    match platform::write_system(std::path::Path::new("/"), &sites) {
+        Ok(()) => Some(0),
+        Err(e) => {
+            eprintln!("{e}");
+            Some(1)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod platform {
+    //! The app runs as the user. Hosts and browser policies are root's files, so the root step
+    //! (`helper_main`, through pkexec) writes them; the .deb ships the polkit rule that lets the
+    //! active user run it without a password. Blocked apps are the user's own processes: closing
+    //! them needs no rights. Nothing stops an app before it starts (no IFEO on Linux).
+    use super::*;
+    use serde_json::{json, Value};
+    use std::path::Path;
+
+    const POLKIT_POLICY: &str = "/usr/share/polkit-1/actions/com.nikgob.clockmanage.policy";
+    /// The binary the polkit rule names (`exec.path`): pkexec runs only this one.
+    const HELPER: &str = "/usr/bin/clockmanage";
+    pub const HELPER_ARG: &str = "--block-sites";
+    /// Chrome, Chromium (Debian and Ubuntu), Edge, Brave, Yandex: our own file in each, read live.
+    const CHROMIUM_DIRS: [&str; 6] = [
+        "etc/opt/chrome/policies/managed",
+        "etc/chromium/policies/managed",
+        "etc/chromium-browser/policies/managed",
+        "etc/opt/edge/policies/managed",
+        "etc/brave/policies/managed",
+        "etc/opt/yandex/browser/policies/managed",
+    ];
+    const OURS: &str = "clockmanage.json";
+    const FIREFOX_DIR: &str = "etc/firefox/policies";
+    const FIREFOX_NAMES: [&str; 3] = ["firefox", "firefox-bin", "firefox-esr"];
+
+    pub fn is_root() -> bool {
+        unsafe { libc::geteuid() == 0 }
+    }
+
+    pub fn helper_installed() -> bool {
+        crate::system::own_appimage().is_none() && Path::new(POLKIT_POLICY).exists() && Path::new(HELPER).exists()
+    }
+
+    fn read_json(p: &Path) -> Option<Value> {
+        std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    /// Browsers run as the user and must read what root wrote.
+    fn write_file(p: &Path, s: &str) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(p, s)?;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o644))
+    }
+
+    fn remove(p: &Path) -> std::io::Result<()> {
+        match std::fs::remove_file(p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    /// The system blocks exactly `sites` (none: nothing of ours is left). Reads only, as the user.
+    pub fn in_place(root: &Path, sites: &[String]) -> bool {
+        let hosts = std::fs::read_to_string(root.join("etc/hosts")).unwrap_or_default().replace("\r\n", "\n");
+        let hosts_ok = if sites.is_empty() {
+            !hosts.lines().any(|l| l.trim() == HOSTS_BEGIN)
+        } else {
+            hosts.contains(&hosts_section(sites).replace("\r\n", "\n"))
+        };
+        let chromium_ok = CHROMIUM_DIRS.iter().all(|d| {
+            let p = root.join(d).join(OURS);
+            if sites.is_empty() {
+                !p.exists()
+            } else {
+                read_json(&p).is_some_and(|v| v["URLBlocklist"] == json!(chromium_rules(sites)))
+            }
+        });
+        hosts_ok && chromium_ok && firefox_in_place(root, &firefox_rules(sites))
+    }
+
+    fn firefox_in_place(root: &Path, rules: &[String]) -> bool {
+        let dir = root.join(FIREFOX_DIR);
+        if rules.is_empty() {
+            return !dir.join(OURS).exists();
+        }
+        let doc = read_json(&dir.join("policies.json")).unwrap_or_default();
+        let block = doc.pointer("/policies/WebsiteFilter/Block").and_then(Value::as_array).cloned().unwrap_or_default();
+        rules.iter().all(|r| block.iter().any(|x| x.as_str() == Some(r)))
+    }
+
+    fn block_list(doc: &mut Value) -> Option<&mut Vec<Value>> {
+        let mut v = doc;
+        for (key, empty) in [("policies", json!({})), ("WebsiteFilter", json!({})), ("Block", json!([]))] {
+            v = v.as_object_mut()?.entry(key).or_insert(empty);
+        }
+        v.as_array_mut()
+    }
+
+    /// Our rules go into Firefox's one policies.json next to whatever an admin put there. What we
+    /// added is remembered beside it (Firefox reads nothing else there), so taking our rules out
+    /// leaves the admin's alone, and a file we created goes away with them.
+    fn write_firefox(root: &Path, rules: &[String]) -> std::io::Result<()> {
+        let dir = root.join(FIREFOX_DIR);
+        let (path, mark) = (dir.join("policies.json"), dir.join(OURS));
+        let prev = read_json(&mark);
+        if rules.is_empty() && prev.is_none() {
+            return Ok(());
+        }
+        let prev = prev.unwrap_or_default();
+        let prev_added: Vec<&str> = prev["added"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let created = prev["created"].as_bool().unwrap_or(!path.exists());
+        let mut doc = match std::fs::read_to_string(&path) {
+            Ok(s) => serde_json::from_str(&s).map_err(std::io::Error::other)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(e) => return Err(e),
+        };
+        let block = block_list(&mut doc).ok_or_else(|| std::io::Error::other("policies.json: no WebsiteFilter.Block list"))?;
+        block.retain(|r| !r.as_str().is_some_and(|r| prev_added.contains(&r)));
+        let mut added = vec![];
+        for r in rules {
+            if !block.iter().any(|x| x.as_str() == Some(r)) {
+                block.push(json!(r));
+                added.push(r.clone());
+            }
+        }
+        if rules.is_empty() {
+            if created && doc == json!({ "policies": { "WebsiteFilter": { "Block": [] } } }) {
+                remove(&path)?;
+            } else {
+                write_file(&path, &serde_json::to_string_pretty(&doc).unwrap_or_default())?;
+            }
+            return remove(&mark);
+        }
+        std::fs::create_dir_all(&dir)?;
+        write_file(&path, &serde_json::to_string_pretty(&doc).unwrap_or_default())?;
+        write_file(&mark, &json!({ "added": added, "created": created }).to_string())
+    }
+
+    /// The root step itself: hosts, every Chromium policy file and Firefox's rules match `sites`.
+    pub fn write_system(root: &Path, sites: &[String]) -> Result<(), String> {
+        let mut problems = vec![];
+        let hosts = root.join("etc/hosts");
+        // Only a missing file counts as empty: an unreadable one must never be replaced.
+        let content = match std::fs::read_to_string(&hosts) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            r => r,
+        };
+        let written = content.and_then(|content| {
+            let new = if sites.is_empty() { strip_section(&content) } else { with_section(&content, sites).replace("\r\n", "\n") };
+            if new == content { Ok(()) } else { write_file(&hosts, &new) }
+        });
+        if let Err(e) = written {
+            problems.push(tr!("blocker_couldnt_write_hosts", e = e));
+        }
+        let mut errors = vec![];
+        let chromium = serde_json::to_string_pretty(&json!({ "URLBlocklist": chromium_rules(sites) })).unwrap_or_default();
+        for d in CHROMIUM_DIRS {
+            let p = root.join(d).join(OURS);
+            let r = if sites.is_empty() { remove(&p) } else { std::fs::create_dir_all(root.join(d)).and_then(|_| write_file(&p, &chromium)) };
+            if let Err(e) = r {
+                errors.push(format!("{}: {e}", p.display()));
+            }
+        }
+        if let Err(e) = write_firefox(root, &firefox_rules(sites)) {
+            errors.push(format!("Firefox: {e}"));
+        }
+        if !errors.is_empty() {
+            problems.push(tr!("blocker_browser_policies", v = errors.join("; ")));
+        }
+        if root == Path::new("/") {
+            // systemd-resolved rereads hosts by itself; its cache may still hold the real address.
+            let _ = std::process::Command::new("resolvectl").arg("flush-caches").stderr(std::process::Stdio::null()).status();
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems.join("; "))
+        }
+    }
+
+    /// Make the system match `sites`: nothing to do when it already does, else the root step.
+    /// Without the .deb's polkit rule there is no root step: sites stay open (the UI says so).
+    fn privileged(sites: &[String]) -> Result<(), String> {
+        let root = Path::new("/");
+        if in_place(root, sites) {
+            return Ok(());
+        }
+        if is_root() {
+            return write_system(root, sites);
+        }
+        if !helper_installed() {
+            return Ok(());
+        }
+        // pkexec keeps LANGUAGE: the root step's errors come in the app's language.
+        let out = std::process::Command::new("pkexec")
+            .arg(HELPER)
+            .arg(HELPER_ARG)
+            .args(sites)
+            .env("LANGUAGE", clockmanage_core::i18n::get().key())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| tr!("blocker_pkexec_didnt_run_the_site", e = e))?;
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        match out.status.code() {
+            Some(0) => Ok(()),
+            // pkexec's own: not authorized, dismissed, or no such program.
+            Some(126 | 127) | None => Err(tr!("blocker_pkexec_didnt_run_the_site", e = if err.is_empty() { out.status.to_string() } else { err })),
+            Some(_) => Err(err),
+        }
+    }
+
+    pub fn apply(a: &mut Applied, sites: &[String]) -> Result<(), String> {
+        let res = privileged(sites);
+        let ff = firefox_rules(sites);
+        // Only rules really in place count: without the root step nothing was written (no Firefox
+        // restart for rules it doesn't have), and a failing hosts still leaves the policies written.
+        if a.ff_rules != ff && firefox_in_place(Path::new("/"), &ff) {
+            a.ff_rules = ff;
+            a.ff_rules_at = now_ms();
+        }
+        a.active = true;
+        a.sites = sites.to_vec();
+        res
+    }
+
+    pub fn verify(a: &mut Applied) -> Result<(), String> {
+        let ff = firefox_rules(&a.sites);
+        let ff_lost = !firefox_in_place(Path::new("/"), &ff);
+        let res = privileged(&a.sites);
+        if ff_lost && firefox_in_place(Path::new("/"), &ff) {
+            a.ff_rules = ff;
+            a.ff_rules_at = now_ms();
+        }
+        res
+    }
+
+    pub fn clear(a: &mut Applied) -> Result<(), String> {
+        privileged(&[])?;
+        a.active = false;
+        a.sites.clear();
+        a.ff_rules.clear();
+        Ok(())
+    }
+
+    /// This user's processes with the names they go by: the exe's file name and the first word of
+    /// the command line (`Game.exe` under Wine, a script's interpreter otherwise). Other users'
+    /// processes (fast user switching) are neither killed nor counted as this user's Firefox.
+    fn processes() -> Vec<(i32, Vec<String>)> {
+        use std::os::unix::fs::MetadataExt;
+        let (me, uid) = (std::process::id() as i32, unsafe { libc::getuid() });
+        let base = |s: &str| s.rsplit(['/', '\\']).next().unwrap_or(s).trim_end_matches(" (deleted)").to_string();
+        std::fs::read_dir("/proc")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let pid: i32 = e.file_name().to_str()?.parse().ok()?;
+                if e.metadata().ok()?.uid() != uid {
+                    return None;
+                }
+                let mut names = vec![];
+                if let Ok(exe) = std::fs::read_link(e.path().join("exe")) {
+                    names.push(base(&exe.to_string_lossy()));
+                }
+                if let Ok(cmd) = std::fs::read(e.path().join("cmdline")) {
+                    let argv0 = String::from_utf8_lossy(cmd.split(|&b| b == 0).next().unwrap_or_default()).to_string();
+                    if !argv0.is_empty() {
+                        names.push(base(&argv0));
+                    }
+                }
+                (pid != me && !names.is_empty()).then_some((pid, names))
+            })
+            .collect()
+    }
+
+    /// `Telegram.exe` matches the process `Telegram` (and `Telegram.exe` under Wine).
+    pub fn kill_apps(apps: &[String]) -> Vec<String> {
+        if apps.is_empty() {
+            return vec![];
+        }
+        let wanted: Vec<String> = apps
+            .iter()
+            .flat_map(|a| {
+                let a = a.to_ascii_lowercase();
+                let stem = a.strip_suffix(".exe").unwrap_or(&a).to_string();
+                [a, stem]
+            })
+            .collect();
+        let mut killed = vec![];
+        for (pid, names) in processes() {
+            if let Some(n) = names.iter().find(|n| wanted.contains(&n.to_ascii_lowercase())) {
+                if unsafe { libc::kill(pid, libc::SIGKILL) } == 0 {
+                    killed.push(n.clone());
+                }
+            }
+        }
+        killed
+    }
+
+    fn firefox_pids() -> Vec<i32> {
+        processes().into_iter().filter(|(_, n)| n.iter().any(|n| FIREFOX_NAMES.contains(&n.as_str()))).map(|(p, _)| p).collect()
+    }
+
+    /// Start time (unix ms) of the oldest running Firefox: boot time + ticks since boot.
+    pub fn firefox_started_at() -> Option<i64> {
+        let stat = std::fs::read_to_string("/proc/stat").ok()?;
+        let boot: i64 = stat.lines().find_map(|l| l.strip_prefix("btime "))?.trim().parse().ok()?;
+        let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as i64;
+        firefox_pids()
+            .into_iter()
+            .filter_map(|pid| {
+                let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+                // Field 22, counted from the state that follows "(comm)".
+                let ticks: i64 = s.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()?;
+                Some(boot * 1000 + ticks * 1000 / hz)
+            })
+            .min()
+    }
+
+    /// Kill Firefox and start it again from PATH (a snap Firefox must go through its launcher).
+    /// Firefox treats the kill as a crash and restores the session.
+    pub fn restart_firefox() -> Result<(), String> {
+        if firefox_pids().is_empty() {
+            return Err(tr!("blocker_firefox_isnt_running"));
+        }
+        for _ in 0..50 {
+            for pid in firefox_pids() {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if firefox_pids().is_empty() {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let mut child = std::process::Command::new("firefox").spawn().map_err(|e| e.to_string())?;
+                std::thread::spawn(move || child.wait());
+                return Ok(());
+            }
+        }
+        Err(tr!("blocker_firefox_didnt_close"))
+    }
+
+    pub fn foreground_window() -> Option<(String, String)> {
+        None
+    }
+    pub fn ifeo_set(_: &str, _: &std::path::Path) -> bool {
+        false
+    }
+    pub fn ifeo_present(_: &str, _: &std::path::Path) -> bool {
+        false
+    }
+    pub fn ifeo_clear(_: &str, _: &std::path::Path) {}
+    pub fn ifeo_clear_any_guard(_: &str) {}
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     //! Dev stub: logs instead of touching the system.
     use super::*;
@@ -781,6 +1169,89 @@ mod tests {
     fn firefox_patterns() {
         let r = firefox_rules(&["youtube.com/shorts".into()]);
         assert!(r.contains(&"*://*.youtube.com/shorts*".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn temp_root(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cm-root-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("etc")).unwrap();
+        d
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_root_step_roundtrip() {
+        let root = temp_root("roundtrip");
+        let hosts = "127.0.0.1 localhost\n::1 localhost\n";
+        std::fs::write(root.join("etc/hosts"), hosts).unwrap();
+        let sites = vec!["x.com".to_string(), "youtube.com/shorts".to_string()];
+        assert!(!platform::in_place(&root, &sites));
+        platform::write_system(&root, &sites).unwrap();
+        assert!(platform::in_place(&root, &sites));
+        let written = std::fs::read_to_string(root.join("etc/hosts")).unwrap();
+        assert!(written.starts_with(hosts) && written.contains("0.0.0.0 www.x.com\n") && !written.contains('\r'));
+        let chrome: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("etc/opt/chrome/policies/managed/clockmanage.json")).unwrap()).unwrap();
+        assert_eq!(chrome["URLBlocklist"], serde_json::json!(["x.com", "youtube.com/shorts"]));
+        let ff = std::fs::read_to_string(root.join("etc/firefox/policies/policies.json")).unwrap();
+        assert!(ff.contains("*://*.youtube.com/shorts*"));
+        // A grown list replaces the old one.
+        let more = vec!["x.com".to_string(), "youtube.com/shorts".to_string(), "reddit.com".to_string()];
+        assert!(!platform::in_place(&root, &more));
+        platform::write_system(&root, &more).unwrap();
+        assert!(platform::in_place(&root, &more));
+        // Taken out: hosts as it was, no policy file of ours, Firefox's file gone (we created it).
+        platform::write_system(&root, &[]).unwrap();
+        assert!(platform::in_place(&root, &[]));
+        assert_eq!(std::fs::read_to_string(root.join("etc/hosts")).unwrap(), hosts);
+        assert!(!root.join("etc/opt/chrome/policies/managed/clockmanage.json").exists());
+        assert!(!root.join("etc/firefox/policies/policies.json").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_keeps_the_admins_firefox_policies() {
+        let root = temp_root("firefox");
+        let dir = root.join("etc/firefox/policies");
+        std::fs::create_dir_all(&dir).unwrap();
+        let admin = serde_json::json!({ "policies": { "DisableTelemetry": true, "WebsiteFilter": { "Block": ["*://casino.example/*"] } } });
+        std::fs::write(dir.join("policies.json"), admin.to_string()).unwrap();
+        platform::write_system(&root, &["casino.example".to_string(), "x.com".to_string()]).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("policies.json")).unwrap()).unwrap();
+        assert_eq!(doc["policies"]["DisableTelemetry"], true);
+        assert!(doc["policies"]["WebsiteFilter"]["Block"].as_array().unwrap().contains(&serde_json::json!("*://x.com/*")));
+        platform::write_system(&root, &[]).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("policies.json")).unwrap()).unwrap();
+        assert_eq!(doc, admin);
+        // A broken file is left alone, not replaced.
+        std::fs::write(dir.join("policies.json"), "{ not json").unwrap();
+        assert!(platform::write_system(&root, &["x.com".to_string()]).is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("policies.json")).unwrap(), "{ not json");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_never_replaces_an_unreadable_hosts() {
+        let root = temp_root("badhosts");
+        let hosts = b"127.0.0.1 localhost # caf\xe9 in Latin-1\n".to_vec();
+        std::fs::write(root.join("etc/hosts"), &hosts).unwrap();
+        assert!(platform::write_system(&root, &["x.com".to_string()]).is_err());
+        assert!(platform::write_system(&root, &[]).is_err());
+        assert_eq!(std::fs::read(root.join("etc/hosts")).unwrap(), hosts);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_closes_a_blocked_app() {
+        let exe = std::env::temp_dir().join(format!("cm-target-{}", std::process::id()));
+        std::fs::copy("/bin/sleep", &exe).unwrap();
+        let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
+        let name = exe.file_name().unwrap().to_string_lossy().to_string();
+        let killed = platform::kill_apps(&[format!("{name}.exe")]);
+        assert_eq!(killed, vec![name]);
+        assert!(!child.wait().unwrap().success());
+        let _ = std::fs::remove_file(&exe);
     }
 
     /// Chromium browsers reread URLBlocklist only on this signal (or every ~15 min).

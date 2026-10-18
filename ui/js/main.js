@@ -1,4 +1,4 @@
-import { call, on, installRipples, esc } from './api.js';
+import { call, on, installRipples, esc, LINUX } from './api.js';
 import { snack, stagger, staggerFirstRender } from './ui.js';
 import { applyTheme } from './theme.js';
 import { installTooltips, hideTip } from './tooltip.js';
@@ -121,7 +121,7 @@ function render(s) {
   const badge = nav.querySelector('[data-route="today"] .badge');
   if (badge) badge.hidden = s.view.phase.kind !== 'await';
   const problems = [];
-  if (!s.meta.admin && s.view.lock.base) problems.push(tr('main_clockmanage_runs_without_administrator_right'));
+  if (!s.meta.admin && s.view.lock.base) problems.push(LINUX ? tr('main_sites_are_not_blocked_the_appimage') : tr('main_clockmanage_runs_without_administrator_right'));
   if (s.meta.blocker_error) problems.push(s.meta.blocker_error);
   banner.hidden = !problems.length;
   if (problems.length) banner.innerHTML = `${icon('warning')}<span>${esc(problems.join(' '))}</span>`;

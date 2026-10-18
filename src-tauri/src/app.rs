@@ -205,11 +205,12 @@ impl Shared {
         }
         // Passive notices never steal focus or clicks from whatever the user is doing.
         let _ = w.set_focusable(!passive);
-        let _ = w.set_ignore_cursor_events(passive);
         let _ = w.set_always_on_top(true);
         // Visible first, then the content: a hidden WebView2 holds animation frames back, so
         // rendering into it first made the card appear late.
         let _ = w.show();
+        // Only once shown: GTK has no window to make click-through before (tao panics on Linux).
+        let _ = w.set_ignore_cursor_events(passive);
         let _ = self.app.emit_to("overlay", "overlay", &payload);
         if !passive {
             let _ = w.set_focus();
@@ -1519,10 +1520,11 @@ pub fn check_update(s: S) {
     std::thread::spawn(move || crate::updater::check(&shared, true));
 }
 
-/// "Restart and update" in Settings.
+/// "Restart and update" in Settings. Off the UI thread: on Linux a .deb waits for the password.
 #[tauri::command]
-pub fn install_update(s: S) -> Result<(), String> {
-    crate::updater::install(s.inner())
+pub async fn install_update(s: State<'_, Arc<Shared>>) -> Result<(), String> {
+    let shared = s.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::updater::install(&shared, false)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
