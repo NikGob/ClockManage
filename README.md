@@ -4,9 +4,10 @@
 
 # ClockManage
 
-**A deep-work timer for Windows that blocks distractions for real — and lets Claude run your day.**
+**A deep-work timer for Windows and Linux that blocks distractions for real — and lets Claude run your day.**
 
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#install)
+[![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20AppImage-FCC624?logo=linux&logoColor=black)](#linux)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
 [![MCP](https://img.shields.io/badge/MCP-15%20tools-6E56CF)](#claude-runs-your-day-mcp)
@@ -54,9 +55,9 @@ When a break ends the timer **doesn't** quietly carry on: a hand-drawn alarm pop
 |---|---|
 | Domains — `x.com`, `twitch.tv`, `web.telegram.org` | a section in `hosts` + `URLBlocklist` policies of Chrome, Edge, Brave, Yandex and Firefox |
 | Paths — `youtube.com/shorts` | browser policies only, so the rest of YouTube keeps working |
-| Apps — `Telegram.exe`, `Discord.exe` | can't start (a tiny guard runs instead and says *Nope*); already running ones are closed within a second |
+| Apps — `Telegram.exe`, `Discord.exe` | can't start (a tiny guard runs instead and says *Nope*); already running ones are closed within a second. On Linux they are closed within a second after they start |
 
-During a study day the block list **can only grow**, the app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler brings it back within 5 minutes. Want the break between blocks free? **Blocking → Access in breaks** opens everything while that break's timer runs; a pause and the short breaks between the parts of a block stay locked. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
+During a study day the block list **can only grow**, the app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler (on Linux, a systemd user service) brings it back within 5 minutes. Want the break between blocks free? **Blocking → Access in breaks** opens everything while that break's timer runs; a pause and the short breaks between the parts of a block stay locked. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
 
 <div align="center">
   <img src="docs/media/blocking.png" alt="Blocking screen" width="62%">
@@ -148,6 +149,22 @@ A native app under a megabyte. Pair it on the same Wi-Fi: **Settings → Phone �
 
 Uninstalling from *Apps & features* rolls back everything ClockManage wrote to the system.
 
+### Linux
+
+1. Download `ClockManage_<version>_amd64.deb` (Ubuntu, Debian, Mint…) or `ClockManage_<version>_amd64.AppImage` (any distribution) from [Releases](https://github.com/NikGob/ClockManage/releases), or from the artifact `ClockManage-<version>-linux` of the latest run in [Actions → build](https://github.com/NikGob/ClockManage/actions/workflows/build.yml).
+2. Install the .deb with `sudo apt install ./ClockManage_<version>_amd64.deb` and start ClockManage from the app menu. For the AppImage: `chmod +x` it and run it.
+3. The app runs as you. Only `hosts` and the browser policies belong to root: for them the .deb installs a polkit rule that lets the signed-in user run one root step (`clockmanage --block-sites`, through `pkexec`) without a password. **The AppImage has no install step, so it closes blocked apps but doesn't block sites.**
+
+ClockManage starts with your desktop session through a systemd user service (`~/.config/systemd/user/clockmanage.service`) that brings it back within 5 minutes if it is killed. `sudo apt remove clock-manage` takes the `hosts` section and the browser policies out.
+
+What works differently from Windows:
+
+- Blocked apps go by their process name: `Telegram.exe` in the list matches the process `Telegram` (Telegram from telegram.org). Ubuntu's own Telegram package runs as `telegram-desktop`: add that name. Apps under Wine match by their `.exe` name.
+- A blocked app can start and is closed within a second: Linux has no way to stop it before it starts. A browser tab showing a blocked site gets no *Nope* (other apps' window titles can't be read on Wayland).
+- Sites: `hosts`, a policy file of Chrome, Chromium, Edge, Brave and Yandex in `/etc/…/policies/managed/` (read at once) and rules in `/etc/firefox/policies/policies.json`. Flatpak browsers read neither.
+- The tray icon opens its menu on a click; there is no click-to-open. The mini timer and the alarm stay on top on X11; under Wayland the compositor may not keep them on top or where they were.
+- Updates download by themselves, but install only when you press **Restart and update**: a .deb asks for your password.
+
 ### Quick start
 
 1. **Plan** — add today's blocks (or edit the Full / Light templates).
@@ -156,32 +173,34 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 
 ## Good to know
 
-- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs a downloaded version at once (outside a study day). The installers are signed, and the app installs nothing else.
-- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
+- **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. On Linux the update only downloads by itself (see [Linux](#linux)). *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs a downloaded version at once (outside a study day). The installers are signed, and the app installs nothing else.
+- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows the system language. The time zone is there too (a new install takes the system's).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
-- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The phone talks to the PC over your local network only, and the only request to the internet is the update check on GitHub.
+- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` on Windows, `~/.local/share/com.nikgob.clockmanage` on Linux (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The phone talks to the PC over your local network only, and the only request to the internet is the update check on GitHub.
 
 ## Development
 
 ```sh
 cargo test -p clockmanage-core -p cm-guard   # timer, lock rules, stats, MCP — runs on any OS
 npx @tauri-apps/cli@2 dev                    # run on Windows (from an administrator console)
-npx @tauri-apps/cli@2 build                  # NSIS installer
+npx @tauri-apps/cli@2 build                  # NSIS installer on Windows; .deb and AppImage on Linux
 ```
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`.
+On Linux the app needs WebKitGTK: `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf` (Ubuntu 22.04 or newer), then `cargo test --workspace` runs the app's tests too. `src-tauri/tauri.linux.conf.json` is merged over `tauri.conf.json` on Linux: no launch guard, the .deb's polkit rule and remove script from `src-tauri/linux/`. `scripts/linux-smoke.sh <deb>` installs a built package and drives the running app over MCP — it changes `/etc/hosts`, so CI runs it on a throwaway runner.
+
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites.
 
 | Folder | What's inside |
 |---|---|
 | `core/` | platform-independent logic: config, the day engine, stats, the MCP handler, the `tr` runtime — covered by tests |
-| `src-tauri/` | the Windows app: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
+| `src-tauri/` | the desktop app for Windows and Linux: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
 | `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler; `ui/locales/` — the texts of every part |
 | `android/` | the phone app, Kotlin with no dependencies: `cd android && gradle assembleRelease` |
 
-A `v*` tag builds the release. With the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, CI signs the installer and uploads `latest.json` next to it; installed apps read `releases/latest/download/latest.json` and check the signature against the public key in `src-tauri/tauri.conf.json`. Without the secrets the installer is built unsigned and apps don't see the release. Keep the private key: without it no update can be signed for the apps already installed.
+Every push builds the Windows installer, the Linux .deb and AppImage and the APK; the Linux job also runs the smoke test above. A `v*` tag publishes them as one release. With the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, CI signs the installer and the Linux packages and uploads `latest.json` next to them (one entry per platform and package type); installed apps read `releases/latest/download/latest.json` and check the signature against the public key in `src-tauri/tauri.conf.json`. Without the secrets the packages are built unsigned and apps don't see the release. Keep the private key: without it no update can be signed for the apps already installed.
 
 The pictures and GIFs above are recorded from the UI on the mock backend by `scripts/media` (headless Chrome + ffmpeg) — rerun it after UI changes.
 

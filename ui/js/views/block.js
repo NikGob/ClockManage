@@ -1,4 +1,4 @@
-import { call, esc, mmss } from '../api.js';
+import { call, esc, mmss, LINUX } from '../api.js';
 import { icon } from '../icons.js';
 import { run, snack, tsHm } from '../ui.js';
 import { emergencyDialog } from './dialogs.js';
@@ -79,7 +79,7 @@ export function mountBlock(root, ctx) {
       <section class="section">
         <h2>${tr('blocking_good_to_know')}</h2>
         <ul class="limits body-m">
-          <li>${tr('blocking_the_app_runs_as_administrator_it')}</li>
+          <li>${LINUX ? tr('blocking_quit_is_off_during_study_hosts') : tr('blocking_the_app_runs_as_administrator_it')}</li>
           <li>${tr('blocking_chrome_edge_brave_and_yandex_pick')}</li>
           <li>${tr('blocking_shorts_opened_by_a_click_inside')}</li>
         </ul>

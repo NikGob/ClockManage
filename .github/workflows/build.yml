@@ -56,7 +56,7 @@ jobs:
           name: android-bundle
           path: bundle/
           if-no-files-found: error
-      # The release itself is published by the windows job, all files at once: installed apps
+      # The release itself is published by the release job, all files at once: installed apps
       # read releases/latest, and a release without latest.json yet would fail their check.
 
   windows:
@@ -108,28 +108,114 @@ jobs:
           name: ClockManage-${{ steps.ver.outputs.version }}-setup
           path: target/release/bundle/nsis/*.exe
           if-no-files-found: error
-      - name: Android APK for the release
+      # The installer with its updater signature, for the release job.
+      - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: Copy-Item src-tauri/resources/android/ClockManage-android.apk "ClockManage-android-${{ steps.ver.outputs.version }}.apk"
-      # What the app reads to update itself: releases/latest/download/latest.json.
-      - name: Update manifest
-        if: startsWith(github.ref, 'refs/tags/v') && env.TAURI_SIGNING_PRIVATE_KEY != ''
-        shell: pwsh
+        with:
+          name: windows-release
+          path: target/release/bundle/nsis/*.exe*
+          if-no-files-found: error
+
+  linux:
+    # The oldest supported Ubuntu: the AppImage then runs on newer systems too, and its polkit
+    # reads the .pkla grant the smoke test needs.
+    runs-on: ubuntu-22.04
+    needs: android
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-bundle
+          path: src-tauri/resources/android
+      - name: System libraries
         run: |
-          $exe = Get-Item target/release/bundle/nsis/*-setup.exe
-          $sig = (Get-Content "$($exe.FullName).sig" -Raw).Trim()
-          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($exe.Name)"
-          @{
-            version   = '${{ steps.ver.outputs.version }}'
-            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            platforms = @{ 'windows-x86_64' = @{ signature = $sig; url = $url } }
-          } | ConvertTo-Json -Depth 4 | Set-Content target/release/bundle/nsis/latest.json -Encoding utf8NoBOM
-      - name: Release
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The app's own tests run here too: the Linux blocker and the autostart service.
+      - name: Tests
+        run: cargo test --workspace
+      - name: Build packages
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo '{"bundle":{"createUpdaterArtifacts":true}}' > updater.json
+            npx --yes @tauri-apps/cli@2 build --config "$PWD/updater.json"
+          else
+            npx --yes @tauri-apps/cli@2 build
+          fi
+      # Installs the .deb, blocks through pkexec, drives the running app over MCP, uninstalls.
+      - name: Smoke test
+        run: bash scripts/linux-smoke.sh target/release/bundle/deb/*.deb
+      - name: Version
+        id: ver
+        run: echo "version=$(jq -r .version src-tauri/tauri.conf.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClockManage-${{ steps.ver.outputs.version }}-linux
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        with:
+          name: linux-release
+          path: |
+            target/release/bundle/deb/*.deb*
+            target/release/bundle/appimage/*.AppImage*
+          if-no-files-found: error
+
+  # One release with every file at once: installed apps read releases/latest, and a release
+  # without latest.json yet would fail their check.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      SIGNED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-bundle
+          path: android
+      - name: Android APK
+        run: cp android/ClockManage-android.apk "release/ClockManage-android-$(jq -r .version src-tauri/tauri.conf.json).apk"
+      # What the apps read to update themselves: releases/latest/download/latest.json. The Linux
+      # app picks the entry of its own package type.
+      - name: Update manifest
+        if: env.SIGNED == 'true'
+        run: |
+          base="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          entry() {
+            f=$(ls release/$1)
+            jq -n --arg url "$base/$(basename "$f")" --rawfile sig "$f.sig" '{signature: ($sig | gsub("^\\s+|\\s+$"; "")), url: $url}'
+          }
+          jq -n --arg version "$(jq -r .version src-tauri/tauri.conf.json)" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson win "$(entry '*-setup.exe')" --argjson deb "$(entry '*.deb')" --argjson appimage "$(entry '*.AppImage')" \
+            '{version: $version, pub_date: $date, platforms: {"windows-x86_64": $win, "linux-x86_64-deb": $deb, "linux-x86_64-appimage": $appimage}}' \
+            > release/latest.json
+          cat release/latest.json
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/nsis/latest.json
-            ClockManage-android-*.apk
+            release/*.exe
+            release/*.deb
+            release/*.AppImage
+            release/*.apk
+            release/latest.json

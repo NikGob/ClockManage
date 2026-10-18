@@ -1,4 +1,4 @@
-import { call, esc, hm as clock } from '../api.js';
+import { call, esc, hm as clock, LINUX } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { applyTheme } from '../theme.js';
 import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm } from '../ui.js';
@@ -29,12 +29,12 @@ const TIP = {
   contrast: tr('settings_inverted_colours_a_dark_pill_in'),
   phone: tr('settings_the_clockmanage_android_app_sees_the'),
   mcp: tr('settings_a_local_server_for_claude_it'),
-  autostart: tr('settings_starts_when_you_sign_in_to'),
-  lang: tr('settings_the_language_of_the_interface_notifications'),
+  autostart: LINUX ? tr('settings_starts_when_you_sign_in_a_systemd') : tr('settings_starts_when_you_sign_in_to'),
+  lang: LINUX ? tr('settings_auto_follows_the_system_the_language') : tr('settings_the_language_of_the_interface_notifications'),
   tz: tr('settings_the_day_end_dates_and_the'),
-  update: tr('settings_every_6_hours_clockmanage_looks_for'),
+  update: LINUX ? tr('settings_clockmanage_looks_for_a_new_version') : tr('settings_every_6_hours_clockmanage_looks_for'),
 };
-const MODE_TIP = { system: tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
+const MODE_TIP = { system: LINUX ? tr('settings_like_the_system') : tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
 const VARIANT_TIP = {
   fidelity: tr('settings_the_colour_exactly_as_picked_the'),
   tonal_spot: tr('settings_muted_tones_like_androids_default'),
@@ -155,7 +155,7 @@ export function mountSettings(root, ctx) {
     const state = {
       checking: tr('settings_checking'),
       downloading: tr('settings_downloading', { version: ver }),
-      ready: cfg.auto_update ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
+      ready: cfg.auto_update && !LINUX ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
       latest: u.checked_at ? tr('settings_latest_version_checked_at', { time: clock(u.checked_at) }) : '',
       error: tr('settings_update_failed', { error: esc(u.error || '') }),
     }[u.state] || (cfg.auto_update ? tr('settings_from_github_releases') : tr('settings_off_only_by_the_check'));
@@ -293,8 +293,8 @@ export function mountSettings(root, ctx) {
           <div class="setting"><div class="grow"><div class="t">${tr('settings_language')}${info('lang')}</div></div>${seg('lang', cfg.lang || 'auto', [['auto', tr('settings_auto')], ['ru', 'Русский'], ['en', 'English']])}</div>
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
             <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${[...new Set([...TZ_OFFSETS, cfg.tz_offset_min])].sort((x, y) => x - y).map((o) => `<option value="${o}" ${o === cfg.tz_offset_min ? 'selected' : ''}>${utcLabel(o)}</option>`).join('')}</select></div></div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${LINUX ? tr('settings_starts_when_you_sign_in_comes_back') : tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : LINUX ? tr('settings_no_hosts_and_browser_policies_need') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
         </div>
       </section>
 

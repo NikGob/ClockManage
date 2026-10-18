@@ -1,5 +1,5 @@
-//! Small Windows integrations: admin check, autostart + self-heal via Task Scheduler,
-//! opening folders.
+//! Small OS integrations: admin check, autostart + self-heal (Task Scheduler on Windows, a
+//! systemd user service on Linux), opening folders.
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -10,7 +10,9 @@ use clockmanage_core::tr;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+#[cfg(windows)]
 const TASK_LOGON: &str = r"ClockManage\Logon";
+#[cfg(windows)]
 const TASK_WATCH: &str = r"ClockManage\Watchdog";
 
 #[cfg(windows)]
@@ -18,7 +20,13 @@ pub fn is_admin() -> bool {
     unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() != 0 }
 }
 
-#[cfg(not(windows))]
+/// Linux: whether the lock can change hosts and browser policies (see `blocker`).
+#[cfg(target_os = "linux")]
+pub fn is_admin() -> bool {
+    crate::blocker::can_block_sites()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn is_admin() -> bool {
     false
 }
@@ -56,7 +64,58 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+const UNIT: &str = "clockmanage.service";
+
+/// A systemd user service started with the graphical session. Like the Windows watchdog it comes
+/// back every 5 minutes after the process is gone (a running instance ignores `--background`),
+/// and it does nothing once the binary is removed.
+#[cfg(target_os = "linux")]
+fn autostart_unit(exe: &Path) -> String {
+    let exe = exe.display().to_string().replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%").replace('$', "$$");
+    format!(
+        "[Unit]\nDescription=ClockManage\nConditionPathExists={exe}\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n\
+         [Service]\nExecStart=\"{exe}\" --background\nRestart=always\nRestartSec=300\n\
+         # Firefox and players the app starts live on when the app is restarted.\nKillMode=process\n\n\
+         [Install]\nWantedBy=graphical-session.target\n"
+    )
+}
+
+/// What `systemctl --user enable/disable` does, by hand: works without a running user manager.
+#[cfg(target_os = "linux")]
+fn write_autostart(config: &Path, exe: Option<&Path>) -> std::io::Result<()> {
+    let dir = config.join("systemd/user");
+    let (unit, link) = (dir.join(UNIT), dir.join("graphical-session.target.wants").join(UNIT));
+    let _ = std::fs::remove_file(&link);
+    let Some(exe) = exe else {
+        return match std::fs::remove_file(&unit) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    };
+    std::fs::create_dir_all(link.parent().unwrap_or(&dir))?;
+    std::fs::write(&unit, autostart_unit(exe))?;
+    std::os::unix::fs::symlink(format!("../{UNIT}"), &link)
+}
+
+#[cfg(target_os = "linux")]
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let config = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| home.map(|h| h.join(".config")));
+    let config = config.ok_or_else(|| tr!("system_couldnt_set_up_autostart", e = "HOME"))?;
+    // An AppImage runs from a temporary mount: the service must start the file itself.
+    let exe = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok());
+    let exe = if enabled { Some(exe.ok_or_else(|| tr!("system_couldnt_set_up_autostart", e = "current_exe"))?) } else { None };
+    write_autostart(&config, exe.as_deref()).map_err(|e| tr!("system_couldnt_set_up_autostart", e = e))?;
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn set_autostart(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
@@ -138,6 +197,7 @@ pub fn style_titlebar(_window: &tauri::WebviewWindow, _bg: &str, _fg: &str, _dar
     let _ = parse_hex;
 }
 
+#[cfg(windows)]
 const FIREWALL_RULE: &str = "ClockManage phone sync";
 
 /// Inbound rule for the phone API and discovery (TCP + UDP of this exe). Every network profile:
@@ -194,7 +254,8 @@ pub fn ui_lang() -> Lang {
 
 #[cfg(not(windows))]
 pub fn ui_lang() -> Lang {
-    Lang::from_locale(&std::env::var("LANG").unwrap_or_default())
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()));
+    Lang::from_locale(&locale.unwrap_or_default())
 }
 
 /// The interface language from the setting ("auto" = the Windows language), applied process-wide.
@@ -208,7 +269,12 @@ pub fn utc_offset_min() -> i32 {
 }
 
 pub fn pc_name() -> String {
-    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| tr!("system_pc"))
+    let linux = || std::fs::read_to_string("/proc/sys/kernel/hostname").map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty());
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .or_else(linux)
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_else(|| tr!("system_pc"))
 }
 
 /// `lan_ip`, looked up at most every 30 s (the state goes to the UI every second).
@@ -232,4 +298,26 @@ pub fn lan_ip() -> Option<String> {
     s.connect("192.168.0.1:9").or_else(|_| s.connect("10.0.0.1:9")).ok()?;
     let ip = s.local_addr().ok()?.ip();
     (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autostart_service_on_and_off() {
+        let config = std::env::temp_dir().join(format!("cm-autostart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&config);
+        write_autostart(&config, Some(Path::new("/opt/Clock Manage/clockmanage"))).unwrap();
+        let unit = std::fs::read_to_string(config.join("systemd/user/clockmanage.service")).unwrap();
+        assert!(unit.contains("ExecStart=\"/opt/Clock Manage/clockmanage\" --background\n"));
+        assert!(unit.contains("Restart=always\nRestartSec=300\n") && unit.contains("WantedBy=graphical-session.target"));
+        let link = config.join("systemd/user/graphical-session.target.wants/clockmanage.service");
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("../clockmanage.service"));
+        // Enabling again replaces the entry; turning it off removes both files.
+        write_autostart(&config, Some(Path::new("/usr/bin/clockmanage"))).unwrap();
+        write_autostart(&config, None).unwrap();
+        assert!(!config.join("systemd/user/clockmanage.service").exists() && std::fs::symlink_metadata(&link).is_err());
+        assert_eq!(autostart_unit(Path::new("/a/100%$x")).lines().find(|l| l.starts_with("ExecStart")), Some("ExecStart=\"/a/100%%$$x\" --background"));
+    }
 }

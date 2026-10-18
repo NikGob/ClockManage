@@ -618,14 +618,18 @@ fn normalize_list(v: &[String], f: impl Fn(&str) -> Option<String>) -> Vec<Strin
     out
 }
 
-/// Processes that must never be blocked: Windows itself, the WebView runtime, ClockManage.
+/// Processes that must never be blocked: Windows itself, the WebView runtime, ClockManage, and
+/// the Linux session (on Linux `gnome-shell.exe` matches the process `gnome-shell`).
 /// Blocking any of them would break the system (or the app) for the whole study day.
-const PROTECTED_APPS: [&str; 22] = [
+const PROTECTED_APPS: [&str; 37] = [
     "explorer.exe", "svchost.exe", "csrss.exe", "wininit.exe", "winlogon.exe", "lsass.exe",
     "services.exe", "smss.exe", "dwm.exe", "fontdrvhost.exe", "sihost.exe", "ctfmon.exe",
     "taskhostw.exe", "runtimebroker.exe", "searchhost.exe", "startmenuexperiencehost.exe",
     "shellexperiencehost.exe", "conhost.exe", "msedgewebview2.exe", "clockmanage.exe",
     "cm-guard.exe", "system",
+    "systemd.exe", "init.exe", "dbus-daemon.exe", "dbus-broker.exe", "xorg.exe", "xwayland.exe",
+    "gnome-shell.exe", "gnome-session-binary.exe", "plasmashell.exe", "kwin_wayland.exe",
+    "kwin_x11.exe", "ksmserver.exe", "pipewire.exe", "wireplumber.exe", "webkitwebprocess.exe",
 ];
 
 /// Only a bare file name: "C:\x\Steam" -> "Steam.exe". System apps are dropped.

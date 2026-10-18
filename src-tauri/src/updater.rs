@@ -89,7 +89,7 @@ pub fn spawn(shared: Arc<Shared>) {
                 }
                 // Like Discord: the update goes in by itself, but never under the user's hands
                 // and never during a study day (a restart would pause the running timer).
-                if auto && shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+                if installs_by_itself(&shared) && shared.updates.ready.lock().unwrap_or_else(|e| e.into_inner()).is_some()
                     && safe_to_restart(&shared)
                     && user_away(&shared)
                 {
@@ -125,11 +125,10 @@ pub fn check(shared: &Arc<Shared>, manual: bool) {
                 s.version = Some(version.clone());
                 s.checked_at = Some(now);
             });
-            if !safe_to_restart(shared) || manual {
-                let auto = shared.lock().cfg.auto_update;
+            if !safe_to_restart(shared) || manual || !installs_by_itself(shared) {
                 shared.notice(
                     &tr!("updater_clockmanage_is_ready", version = version),
-                    if auto { tr("updater_it_installs_by_itself_when_no") } else { tr("updater_press_restart_and_update_in_settings") },
+                    if installs_by_itself(shared) { tr("updater_it_installs_by_itself_when_no") } else { tr("updater_press_restart_and_update_in_settings") },
                 );
             }
         }
@@ -181,12 +180,21 @@ pub fn install(shared: &Arc<Shared>) -> Result<(), String> {
     let Some((update, bytes)) = ready else {
         return Err(tr("updater_no_downloaded_update").into());
     };
-    // Exits the process on success.
-    if let Err(e) = update.install(&bytes) {
+    // Windows: exits the process on success. Linux: the new AppImage or package is in place.
+    let res = update.install(&bytes);
+    if let Err(e) = &res {
         eprintln!("update install: {e}");
-        // The tray icon is gone and the windows are hidden by now (on_before_exit): start
-        // over clean; the next check downloads the update again.
+    }
+    // A failed install starts over clean: the tray icon is gone and the windows are hidden by now
+    // (on_before_exit); the next check downloads the update again. Linux starts the new version.
+    if res.is_err() || cfg!(target_os = "linux") {
         shared.app.restart();
     }
     Ok(())
+}
+
+/// Windows installs by itself while nobody is at the PC. On Linux a .deb asks for the password
+/// (pkexec dpkg), so the user installs with "Restart and update".
+fn installs_by_itself(shared: &Shared) -> bool {
+    shared.lock().cfg.auto_update && cfg!(windows)
 }

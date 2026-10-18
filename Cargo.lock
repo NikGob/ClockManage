@@ -504,6 +504,8 @@ name = "clockmanage"
 version = "0.5.0"
 dependencies = [
  "clockmanage-core",
+ "dirs",
+ "libc",
  "rand 0.8.8",
  "serde",
  "serde_json",

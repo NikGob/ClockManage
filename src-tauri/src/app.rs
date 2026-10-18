@@ -205,11 +205,12 @@ impl Shared {
         }
         // Passive notices never steal focus or clicks from whatever the user is doing.
         let _ = w.set_focusable(!passive);
-        let _ = w.set_ignore_cursor_events(passive);
         let _ = w.set_always_on_top(true);
         // Visible first, then the content: a hidden WebView2 holds animation frames back, so
         // rendering into it first made the card appear late.
         let _ = w.show();
+        // Only once shown: GTK has no window to make click-through before (tao panics on Linux).
+        let _ = w.set_ignore_cursor_events(passive);
         let _ = self.app.emit_to("overlay", "overlay", &payload);
         if !passive {
             let _ = w.set_focus();
