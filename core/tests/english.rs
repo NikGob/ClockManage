@@ -25,12 +25,15 @@ fn defaults_are_english() {
     assert!(c.segments.iter().any(|s| s.name == "Lunch"));
     assert!(c.emergency_phrase.starts_with("I am consciously"));
     assert_eq!(DayKind::Off.label(), "Day off");
+    // A new user picks their study days themselves.
+    assert_eq!(c.week, [DayKind::Off; 7]);
 }
 
 #[test]
 fn timer_view_and_refusals() {
     en();
     let mut c = Config::default();
+    c.week[0] = DayKind::Full;
     c.profiles.full.plan = vec![PlanBlock::new("Math", 90)];
     let mut d = DayState::new(start(), &c);
     assert_eq!(view::build(&d, &c, start()).phase.title, "Day not started");
@@ -48,6 +51,7 @@ fn timer_view_and_refusals() {
 fn autolock_log_is_english() {
     en();
     let mut c = Config::default();
+    c.week[0] = DayKind::Full;
     c.profiles.full.plan = vec![PlanBlock::new("Math", 45)];
     let mut d = DayState::new(start() - 3_600_000, &c);
     d.tick(start(), &c);

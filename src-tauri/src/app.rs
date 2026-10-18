@@ -406,6 +406,8 @@ impl Shared {
                         tr("app_the_lock_is_off")
                     } else if v.lock.reason == "single" {
                         tr("app_the_lock_for_the_timer_goes")
+                    } else if v.autolock.as_ref().is_some_and(|a| a.on) {
+                        if v.lock.blocked { tr("app_the_autolock_goes_on") } else { tr("app_the_autolock_goes_on_access") }
                     } else if v.lock.blocked {
                         tr("app_the_study_lock_goes_on")
                     } else {
@@ -1470,7 +1472,7 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
                 let plan = g.cfg.profile(kind).plan.clone();
                 let _ = g.day.set_plan(now, plan, false);
             }
-            g.day.study_day = g.cfg.profile(g.day.kind).block;
+            g.day.study_day = g.day.blocks_by_profile(&g.cfg);
             g.day.timing = g.cfg.timing.clone();
         } else {
             // A running day takes shorter breaks at once; longer ones only outside the lock.

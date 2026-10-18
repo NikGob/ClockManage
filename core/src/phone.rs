@@ -251,7 +251,7 @@ mod tests {
     }
 
     fn cfg() -> Config {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 45)];
         c
     }

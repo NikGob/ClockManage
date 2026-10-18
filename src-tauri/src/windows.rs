@@ -73,11 +73,14 @@ pub fn try_quit(app: &AppHandle, shared: &Arc<Shared>) {
     let snap = shared.snapshot();
     if snap.view.lock.base {
         use tauri_plugin_notification::NotificationExt;
+        let reason = snap.view.lock.reason.as_str();
         let body = match snap.view.lock.focus_until {
-            Some(u) if snap.view.lock.reason != "study" => tr!(
+            // During the day's own lock (the study day, the autolock) name that one.
+            Some(u) if reason != "study" && reason != "autolock" => tr!(
                 "tray_a_focus_lock_runs_until_only",
                 clockmanage_core = clockmanage_core::clock::hm(u, snap.meta.tz_offset_min),
             ),
+            _ if reason == "autolock" => tr!("tray_the_autolock_is_on_it_lifts"),
             _ => tr!("tray_a_study_day_is_running_the"),
         };
         let _ = app.notification().builder().title(tr("tray_cant_quit")).body(body).show();

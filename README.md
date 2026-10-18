@@ -32,7 +32,7 @@ And because it speaks [MCP](https://modelcontextprotocol.io), Claude can see whe
 
 ### A day, not a stopwatch
 
-Every weekday gets a type — **Full**, **Light** or **Day off** — each with its own plan template and lock setting. Today starts from its template; edit it on the **Plan** screen or let Claude do it. A block of 90 minutes runs as 45 + 45 with a 10-minute break, blocks are 20 minutes apart, and breaks never eat into study time. The day end (22:00 by default) is the hard stop: the lock lifts then even if the plan isn't done, and you can move it for today only — every shift goes to the log.
+Every weekday gets a type — **Full**, **Light** or **Day off** — each with its own plan template and lock setting. A fresh install starts with a week of days off: pick your study days in *Settings → Week*. Today starts from its template; edit it on the **Plan** screen or let Claude do it. A block of 90 minutes runs as 45 + 45 with a 10-minute break, blocks are 20 minutes apart, and breaks never eat into study time. The day end (22:00 by default) is the hard stop: the lock lifts then even if the plan isn't done, and you can move it for today only — every shift goes to the log.
 
 <div align="center">
   <img src="docs/media/plan.png" alt="Plan screen" width="49%">
@@ -105,7 +105,7 @@ A small always-on-top pill with the countdown and one button that does the right
 
 ### Autolock before the day starts
 
-Most time gets lost *before* the first block: one more video, one more chat. So on Full and Light days the block list goes on by itself at **13:00** if you haven't pressed **Start day** yet — sites, apps and the paired phone, as during a block. Five minutes before, a notice warns you. It holds until **Start day** (then the day's usual rules take over) or the day end; only emergency access opens it early. Start before 13:00 and nothing happens. The day log records when it went on and how many minutes later the day started — the *start delay*. A restart or a power cut doesn't drop it. The time, or off, is set per profile in *Settings → Study day → Autolock before the start*, or ask Claude (`set_autolock`); a day off never has one.
+Most time gets lost *before* the first block: one more video, one more chat. So on Full and Light days the block list goes on by itself at **13:00** if you haven't pressed **Start day** yet — sites, apps and the paired phone, as during a block. Five minutes before, a notice warns you. It holds until **Start day** (then the day's usual rules take over) or the day end, which meanwhile only moves later; only emergency access opens it early. Start before 13:00 and nothing happens. The day log records when it went on and how many minutes later the day started — the *start delay*. A restart or a power cut doesn't drop it. The time, or off, is set per profile in *Settings → Study day → Autolock before the start*, or ask Claude (`set_autolock`); a day off never has one.
 
 ## Claude runs your day (MCP)
 

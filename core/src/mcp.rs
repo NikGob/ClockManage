@@ -233,7 +233,7 @@ fn tools() -> Value {
         {
             "name": "set_day_end",
             "title": "Move the day end",
-            "description": "Changes the end of the study day for today only (the setting stays untouched). The lock, the timers and the \"day is over\" notice follow the new time at once. Time is in the app's time zone, later than now and no later than 02:00 the next night (00:00–02:00 = the night after today). The reply has the old and the new time, how much of the plan is left and whether it fits before the new end. Every change goes to the day log.",
+            "description": "Changes the end of the study day for today only (the setting stays untouched). The lock, the timers and the \"day is over\" notice follow the new time at once. Time is in the app's time zone, later than now and no later than 02:00 the next night (00:00–02:00 = the night after today). While the autolock holds, only a later time is accepted. The reply has the old and the new time, how much of the plan is left and whether it fits before the new end. Every change goes to the day log.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

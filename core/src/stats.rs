@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(journal_hours(59.9), 0.75);
         assert_eq!(journal_hours(14.9), 0.0);
         assert_eq!(journal_hours(0.0), 0.0);
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![crate::day::PlanBlock::new("A", 165), crate::day::PlanBlock::new("B", 90)];
         let s = 1_790_589_600_000;
         let mut d = DayState::new(s, &c);
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn week_adds_up_subjects_by_day() {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         let mon = 1_790_589_600_000; // Monday 2026-09-28
         let mut day = |ts: i64, blocks: &[(&str, i64)]| {
             c.profiles.full.plan = blocks.iter().map(|(n, m)| crate::day::PlanBlock::new(n, (*m as u32).max(1))).collect();
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn csv_escapes() {
         assert_eq!(csv_field("a,b"), "\"a,b\"");
-        let cfg = Config::default();
+        let cfg = Config::study_week();
         let d = DayState::new(0, &cfg);
         let s = day_stats(&d, 180, 0);
         let csv = to_csv(&[s]);

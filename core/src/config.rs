@@ -378,18 +378,21 @@ pub struct Config {
     pub plan_template: Option<Vec<PlanBlock>>,
 }
 
+/// Tests: the defaults with a study week, Mon–Fri Full and Sat–Sun off.
+#[cfg(test)]
+impl Config {
+    pub(crate) fn study_week() -> Self {
+        let mut c = Self::default();
+        c.week = [DayKind::Full, DayKind::Full, DayKind::Full, DayKind::Full, DayKind::Full, DayKind::Off, DayKind::Off];
+        c
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
-            week: [
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Off,
-                DayKind::Off,
-            ],
+            // A new user picks their study days themselves.
+            week: [DayKind::Off; 7],
             profiles: Profiles::default(),
             day_end_min: 22 * 60,
             tz_offset_min: 180,

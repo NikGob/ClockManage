@@ -726,8 +726,14 @@ impl DayState {
             }
         }
         if self.started_at.is_none() {
-            self.study_day = cfg.profile(self.kind).block;
+            self.study_day = self.blocks_by_profile(cfg);
         }
+    }
+
+    /// Whether a day not started yet is a study day by its profile. Once the autolock went on
+    /// it stays one: turning the profile's lock off only shapes the days ahead.
+    pub fn blocks_by_profile(&self, cfg: &Config) -> bool {
+        cfg.profile(self.kind).block || self.autolock.is_some()
     }
 
     /// 0 = Monday, of the study day itself (after midnight it may still be yesterday's day).
@@ -977,7 +983,7 @@ impl DayState {
             let text = if now - at < MIN {
                 tr!("day_autolock_on", time = fmt_hm(planned_min))
             } else {
-                // The app was not running at its time.
+                // Late: the app was not running at its time, or the day got its autolock after it.
                 tr!("day_autolock_on_late", time = fmt_hm(planned_min), clock = clock::hm(now, cfg.tz_offset_min))
             };
             self.log(now, "autolock", text);
@@ -1098,7 +1104,7 @@ impl DayState {
         }
         let first = self.first_open_block().ok_or(tr("day_todays_plan_is_empty_add_at"))?;
         self.timing = cfg.timing.clone();
-        self.study_day = cfg.profile(self.kind).block;
+        self.study_day = self.blocks_by_profile(cfg);
         self.started_at = Some(now);
         let leading = self.planned_breaks_before(first);
         if leading.is_empty() {
@@ -1581,6 +1587,10 @@ impl DayState {
         }
         let reason = reason.map(|r| r.trim().chars().take(200).collect::<String>()).filter(|r| !r.is_empty());
         let from = self.day_end(cfg);
+        // The autolock holds until the day end: an earlier end would lift it.
+        if to < from && self.autolock_on(now, cfg) {
+            return Err(tr!("day_during_the_autolock_the_day_end"));
+        }
         let change = DayEndChange { ts: now, from_min: from, to_min: to, reason, by: by.into() };
         if to == from {
             return Ok(change);
@@ -2073,7 +2083,7 @@ mod tests {
     }
 
     fn cfg() -> Config {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 150)];
         c
     }
@@ -2924,7 +2934,7 @@ mod lunch_tests {
 
     #[test]
     fn lunch_starts_from_a_paused_break() {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 105)];
         let s = t("2026-09-30T10:00:00Z");
         for with_timer in [true, false] {
@@ -2961,7 +2971,7 @@ mod autolock_tests {
     }
 
     fn cfg() -> Config {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 150)];
         c
     }
@@ -3081,6 +3091,11 @@ mod autolock_tests {
         off.profiles.full.block = false;
         r.restore(at("13:41"), &off);
         assert!(r.lock_state(at("13:41"), &off).blocked);
+        // ...and the day started after that still locks.
+        r.start_day(at("13:42"), &off).unwrap();
+        assert_eq!(r.lock_state(at("13:42"), &off).reason, "study");
+        r.restore(at("13:43"), &off);
+        assert_eq!(r.lock_state(at("13:43"), &off).reason, "study");
 
         // The app was not running at 13:00: on as soon as it is, and the log says when.
         let mut d = DayState::new(at("09:00"), &c);
@@ -3120,6 +3135,9 @@ mod autolock_tests {
         // The phone holds it too, offline as well.
         let p = crate::phone::snapshot(&d, &c, until);
         assert!(p.lock.blocked && p.lock.day_lock);
+        // An earlier day end would lift it too: only a later one.
+        assert!(d.set_day_end(until, &c, "13:50", None, "mcp").is_err());
+        assert!(d.clone().set_day_end(until, &c, "23:00", None, "mcp").is_ok());
 
         // Never started: the day end lifts it.
         let ten_pm = at("22:00");

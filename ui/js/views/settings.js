@@ -183,7 +183,7 @@ export function mountSettings(root, ctx) {
     const t = cfg.timing;
     const ns = cfg.night_start;
     box.innerHTML = `
-      ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${tr('settings_a_study_day_is_running_the')}</div></div>` : ''}
+      ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_the')}</div></div>` : ''}
       ${weekSection(locked, v.weekday)}
 
       <section class="section">
@@ -391,8 +391,17 @@ export function mountSettings(root, ctx) {
     if (!kind || kind === cur) return;
     pulse = `[data-day="${i}"]`;
     const ok = await save((c) => { c.week[i] = kind; });
-    if (ok && i === last.view.weekday && !last.view.started) snack(tr('settings_today_is_a_day_plan_updated', { kind: kindLabel(kind).toLowerCase() }));
+    // During the lock (the autolock too) today only takes a stricter kind; a lighter one waits for next week.
+    const rank = (k) => KINDS.findIndex((x) => x.id === k);
+    const follows = last.view.can.lighter_kind || rank(kind) < rank(last.view.kind);
+    if (ok && i === last.view.weekday && !last.view.started && follows) snack(tr('settings_today_is_a_day_plan_updated', { kind: kindLabel(kind).toLowerCase() }));
   }
+
+  // "HH:MM" of a time field in minutes. A cleared field (Backspace) gives null, not 00:00.
+  const minOf = (value) => {
+    const [h, mm] = value.split(':').map(Number);
+    return value && Number.isFinite(h) ? h * 60 + (mm || 0) : null;
+  };
 
   box.addEventListener('change', (e) => {
     const t = e.target;
@@ -409,16 +418,19 @@ export function mountSettings(root, ctx) {
       } else if (name) save((c) => { c.segments[i].name = name; });
       else render();
     } else if (t.id === 'dayend') {
-      const [h, mm] = t.value.split(':').map(Number);
-      if (Number.isFinite(h)) save((c) => { c.day_end_min = h * 60 + (mm || 0); });
+      const m = minOf(t.value);
+      if (m === null) render();
+      else save((c) => { c.day_end_min = m; });
     } else if (t.dataset.autolock) {
       const id = t.dataset.autolock;
-      const [h, mm] = t.value.split(':').map(Number);
-      if (Number.isFinite(h)) save((c) => { c.profiles[id].autolock_min = h * 60 + (mm || 0); });
+      const m = minOf(t.value);
+      if (m === null) render();
+      else save((c) => { c.profiles[id].autolock_min = m; });
     } else if (t.id === 'nightuntil') {
-      const [h, mm] = t.value.split(':').map(Number);
+      const m = minOf(t.value);
       // The backend caps the night at 12:00.
-      if (Number.isFinite(h)) save((c) => { c.night_start.until_min = Math.min(720, h * 60 + (mm || 0)); });
+      if (m === null) render();
+      else save((c) => { c.night_start.until_min = Math.min(720, m); });
     } else if (t.id === 'seed-in') {
       save((c) => { c.appearance.seed = t.value; });
     } else if (t.id === 'tz') {
