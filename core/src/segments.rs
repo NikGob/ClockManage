@@ -354,7 +354,7 @@ mod tests {
         t("2026-09-28T10:00:00Z")
     }
     fn cfg() -> Config {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 45), PlanBlock::new("Экстернат", 45)];
         c
     }

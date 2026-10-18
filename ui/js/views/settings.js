@@ -1,4 +1,4 @@
-import { call, esc, hm as clock } from '../api.js';
+import { call, esc, hm as clock, LINUX } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { applyTheme } from '../theme.js';
 import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm } from '../ui.js';
@@ -16,6 +16,7 @@ const TIP = {
   plan: tr('settings_every_such_day_starts_with_this'),
   dayEnd: tr('settings_when_the_lock_lifts_by_itself'),
   night: tr('settings_at_night_start_day_works_only'),
+  autolock: tr('settings_sites_apps_and_the_phone_are'),
   seg: tr('settings_a_block_is_cut_into_parts'),
   short: tr('settings_rest_between_the_parts_of_one'),
   between: tr('settings_rest_after_a_closed_block_before'),
@@ -29,12 +30,12 @@ const TIP = {
   contrast: tr('settings_inverted_colours_a_dark_pill_in'),
   phone: tr('settings_the_clockmanage_android_app_sees_the'),
   mcp: tr('settings_a_local_server_for_claude_it'),
-  autostart: tr('settings_starts_when_you_sign_in_to'),
-  lang: tr('settings_the_language_of_the_interface_notifications'),
+  autostart: LINUX ? tr('settings_starts_when_you_sign_in_and_a') : tr('settings_starts_when_you_sign_in_to'),
+  lang: LINUX ? tr('settings_auto_follows_the_system_the_language') : tr('settings_the_language_of_the_interface_notifications'),
   tz: tr('settings_the_day_end_dates_and_the'),
-  update: tr('settings_every_6_hours_clockmanage_looks_for'),
+  update: LINUX ? tr('settings_clockmanage_looks_for_a_new_version') : tr('settings_every_6_hours_clockmanage_looks_for'),
 };
-const MODE_TIP = { system: tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
+const MODE_TIP = { system: LINUX ? tr('settings_like_the_system') : tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
 const VARIANT_TIP = {
   fidelity: tr('settings_the_colour_exactly_as_picked_the'),
   tonal_spot: tr('settings_muted_tones_like_androids_default'),
@@ -154,8 +155,9 @@ export function mountSettings(root, ctx) {
     const ver = esc(u.version || '');
     const state = {
       checking: tr('settings_checking'),
+      available: cfg.auto_update && u.by_itself ? tr('settings_version_is_available_the_appimage_installs', { version: ver }) : tr('settings_version_is_available', { version: ver }),
       downloading: tr('settings_downloading', { version: ver }),
-      ready: cfg.auto_update ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
+      ready: cfg.auto_update && !LINUX ? tr('settings_version_is_downloaded_it_installs', { version: ver }) : tr('settings_version_is_downloaded', { version: ver }),
       latest: u.checked_at ? tr('settings_latest_version_checked_at', { time: clock(u.checked_at) }) : '',
       error: tr('settings_update_failed', { error: esc(u.error || '') }),
     }[u.state] || (cfg.auto_update ? tr('settings_from_github_releases') : tr('settings_off_only_by_the_check'));
@@ -163,7 +165,7 @@ export function mountSettings(root, ctx) {
     // The backend refuses a restart while a day or a lock runs: say so instead of a dead click.
     const canRestart = !v.lock.base && !v.lock.blocked && ['idle', 'done'].includes(v.phase.kind);
     return `<div class="setting"><div class="grow"><div class="t">${tr('settings_automatic_updates')}${info('update')}</div><div class="d">${state}</div></div>
-      ${u.state === 'ready'
+      ${['available', 'ready'].includes(u.state)
         ? `<button class="btn tonal interactive" id="installupdate" ${canRestart ? '' : `disabled data-tip="${esc(tr('updater_the_update_installs_after_the_study'))}"`}>${icon('download')}${tr('settings_restart_and_update')}</button>`
         : `<button class="btn text interactive" id="checkupdate" ${busy ? 'disabled' : ''}>${icon('refresh')}${tr('settings_check')}</button>`}
       ${sw('auto_update', cfg.auto_update, tr('settings_automatic_updates'), 'update')}</div>`;
@@ -182,7 +184,7 @@ export function mountSettings(root, ctx) {
     const t = cfg.timing;
     const ns = cfg.night_start;
     box.innerHTML = `
-      ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${tr('settings_a_study_day_is_running_the')}</div></div>` : ''}
+      ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_the')}</div></div>` : ''}
       ${weekSection(locked, v.weekday)}
 
       <section class="section">
@@ -201,6 +203,15 @@ export function mountSettings(root, ctx) {
             ${sw('night_start.after_day_end', ns.after_day_end, tr('settings_after_the_day_end_too'))}</div>
           <div class="setting sub"><div class="grow"><div class="t">${tr('settings_hold_to_start')}</div></div>
             ${stepper('night_start.hold_sec', { min: 1, max: 10, step: 1, unit: tr('settings_s'), label: tr('settings_hold_to_start') })}</div>` : ''}
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_autolock_before_the_start')}${info('autolock')}</div><div class="d">${tr('settings_if_the_day_hasnt_started_by')}</div></div></div>
+          ${['full', 'light'].map((id) => {
+            const k = KINDS.find((x) => x.id === id);
+            const p = cfg.profiles[id];
+            const label = `${tr('settings_autolock_before_the_start')}: ${k.label}`;
+            return `<div class="setting sub"><div class="grow"><div class="t">${k.label}</div>${p.block ? '' : `<div class="d">${tr('settings_no_lock_on_such_a_day')}</div>`}</div>
+              ${p.autolock ? `<div class="field"><input type="time" data-autolock="${id}" value="${hm(p.autolock_min)}" aria-label="${esc(label)}"></div>` : ''}
+              ${sw(`profiles.${id}.autolock`, p.autolock, label, 'autolock')}</div>`;
+          }).join('')}
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_work_part')}${info('seg')}</div><div class="d">${tr('settings_work_part_example')}</div></div>
             ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_of_work_per_part'), disabled: locked })}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_break_between_parts')}${info('short')}</div><div class="d">${tr('settings_between_the_parts_of_one_block')}</div></div>
@@ -276,7 +287,7 @@ export function mountSettings(root, ctx) {
         <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -293,8 +304,8 @@ export function mountSettings(root, ctx) {
           <div class="setting"><div class="grow"><div class="t">${tr('settings_language')}${info('lang')}</div></div>${seg('lang', cfg.lang || 'auto', [['auto', tr('settings_auto')], ['ru', 'Русский'], ['en', 'English']])}</div>
           <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
             <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${[...new Set([...TZ_OFFSETS, cfg.tz_offset_min])].sort((x, y) => x - y).map((o) => `<option value="${o}" ${o === cfg.tz_offset_min ? 'selected' : ''}>${utcLabel(o)}</option>`).join('')}</select></div></div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
-          <div class="setting"><div class="grow"><div class="t">${tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${LINUX ? tr('settings_starts_when_you_sign_in_comes_back') : tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
+          <div class="setting"><div class="grow"><div class="t">${LINUX ? tr('settings_site_blocking') : tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : LINUX ? tr('settings_no_hosts_and_browser_policies_need') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
         </div>
       </section>
 
@@ -326,6 +337,7 @@ export function mountSettings(root, ctx) {
     if (d.sw) return `[data-sw="${d.sw}"]`;
     if (d.seed) return `[data-seed="${d.seed}"]`;
     if (d.tpl) return `[data-tpl="${d.tpl}"]`;
+    if (d.autolock) return `[data-autolock="${d.autolock}"]`;
     if (d.v && el.closest('[data-seg]')) return `[data-seg="${el.closest('[data-seg]').dataset.seg}"] [data-v="${d.v}"]`;
     return el.id ? `#${el.id}` : null;
   }
@@ -380,8 +392,17 @@ export function mountSettings(root, ctx) {
     if (!kind || kind === cur) return;
     pulse = `[data-day="${i}"]`;
     const ok = await save((c) => { c.week[i] = kind; });
-    if (ok && i === last.view.weekday && !last.view.started) snack(tr('settings_today_is_a_day_plan_updated', { kind: kindLabel(kind).toLowerCase() }));
+    // During the lock (the autolock too) today only takes a stricter kind; a lighter one waits for next week.
+    const rank = (k) => KINDS.findIndex((x) => x.id === k);
+    const follows = last.view.can.lighter_kind || rank(kind) < rank(last.view.kind);
+    if (ok && i === last.view.weekday && !last.view.started && follows) snack(tr('settings_today_is_a_day_plan_updated', { kind: kindLabel(kind).toLowerCase() }));
   }
+
+  // "HH:MM" of a time field in minutes. A cleared field (Backspace) gives null, not 00:00.
+  const minOf = (value) => {
+    const [h, mm] = value.split(':').map(Number);
+    return value && Number.isFinite(h) ? h * 60 + (mm || 0) : null;
+  };
 
   box.addEventListener('change', (e) => {
     const t = e.target;
@@ -398,12 +419,19 @@ export function mountSettings(root, ctx) {
       } else if (name) save((c) => { c.segments[i].name = name; });
       else render();
     } else if (t.id === 'dayend') {
-      const [h, mm] = t.value.split(':').map(Number);
-      if (Number.isFinite(h)) save((c) => { c.day_end_min = h * 60 + (mm || 0); });
+      const m = minOf(t.value);
+      if (m === null) render();
+      else save((c) => { c.day_end_min = m; });
+    } else if (t.dataset.autolock) {
+      const id = t.dataset.autolock;
+      const m = minOf(t.value);
+      if (m === null) render();
+      else save((c) => { c.profiles[id].autolock_min = m; });
     } else if (t.id === 'nightuntil') {
-      const [h, mm] = t.value.split(':').map(Number);
+      const m = minOf(t.value);
       // The backend caps the night at 12:00.
-      if (Number.isFinite(h)) save((c) => { c.night_start.until_min = Math.min(720, h * 60 + (mm || 0)); });
+      if (m === null) render();
+      else save((c) => { c.night_start.until_min = Math.min(720, m); });
     } else if (t.id === 'seed-in') {
       save((c) => { c.appearance.seed = t.value; });
     } else if (t.id === 'tz') {

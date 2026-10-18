@@ -57,6 +57,38 @@ pub struct PendingNote {
     pub name: String,
 }
 
+/// Today's autolock: still ahead, holding the lock, or handed over to the day.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AutoLockView {
+    /// Its time from the profile ("13:00").
+    pub time: String,
+    /// When it goes on (still ahead) or went on.
+    pub at: Ts,
+    /// It holds the block list right now.
+    pub on: bool,
+    /// "Начать день" came this many whole minutes after it went on ("задержка старта").
+    pub start_delay_min: Option<u32>,
+}
+
+impl AutoLockView {
+    pub fn of(d: &DayState, cfg: &Config, now: Ts) -> Option<Self> {
+        match &d.autolock {
+            Some(a) => Some(Self {
+                time: fmt_hm(a.planned_min),
+                at: a.at,
+                on: d.autolock_on(now, cfg),
+                start_delay_min: a.start_delay_ms().map(crate::day::worked_min),
+            }),
+            None => d.autolock_due(now, cfg).map(|at| Self {
+                time: fmt_hm(cfg.autolock_min(d.kind).unwrap_or_default()),
+                at,
+                on: false,
+                start_delay_min: None,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PauseView {
     pub since: Ts,
@@ -129,6 +161,8 @@ pub struct View {
     pub planned_ms: i64,
     pub work_ms: i64,
     pub lock: LockState,
+    /// Today's autolock (`None`: off for today's profile, or too late for it).
+    pub autolock: Option<AutoLockView>,
     pub pause: Option<PauseView>,
     pub emergency_count: usize,
     pub lunch_used: bool,
@@ -332,7 +366,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
             && d.completed_at.is_none()
             && d.is_live(now, cfg)
             && day_end < MAX_DAY_END_MIN,
-        lighter_kind: !d.plan_lock(now, cfg),
+        lighter_kind: !d.plan_lock(now, cfg) && !d.autolock_on(now, cfg),
         set_day_end: d.mode == Mode::Plan && d.is_live(now, cfg),
         undo_skip: d.skip_undo.as_ref().is_some_and(|u| now - u.at <= crate::day::SKIP_UNDO_MS)
             && matches!(d.phase, Phase::Work { since: Some(_), .. })
@@ -364,6 +398,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         phase,
         blocks,
         lock,
+        autolock: AutoLockView::of(d, cfg, now),
         pause,
         emergency_count: d.emergencies.len(),
         lunch_used: d.lunch.is_some(),

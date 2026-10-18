@@ -3,8 +3,8 @@
 use serde::Serialize;
 
 use crate::clock::{self, MIN};
-use crate::config::DayKind;
-use crate::day::{fmt_day_min, DayState, MIN_PAUSE_MS};
+use crate::config::{fmt_hm, DayKind};
+use crate::day::{fmt_day_min, worked_min, DayState, MIN_PAUSE_MS};
 use crate::i18n::tr;
 use crate::tr;
 
@@ -117,6 +117,21 @@ pub struct DayStats {
     pub day_end_changes: Vec<DayEndChangeStats>,
     /// Focus locks of this day; one carried over from the day before starts when this day began.
     pub focus_locks: Vec<FocusStats>,
+    /// The autolock, when it went on this day (`None`: the day started before its time, or off).
+    pub autolock: Option<AutoLockStats>,
+}
+
+/// "Автоблокировка с 13:00" as it ran.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoLockStats {
+    /// Its time from the profile, "13:00".
+    pub time: String,
+    /// When it went on (later than `time` when the app was not running then).
+    pub at: String,
+    /// "Начать день" — the day's own lock took over.
+    pub day_started_at: Option<String>,
+    /// "Задержка старта": whole minutes from `at` to the day start (`None`: not started).
+    pub start_delay_min: Option<u32>,
 }
 
 fn m(ms: i64) -> f64 {
@@ -232,6 +247,12 @@ pub fn day_stats(d: &DayState, tz: i32, now: clock::Ts) -> DayStats {
             .iter()
             .map(|f| FocusStats { at: iso(f.at), until: iso(f.until), minutes: m(f.until - f.at), reason: f.reason.clone(), by: f.by.clone() })
             .collect(),
+        autolock: d.autolock.as_ref().map(|a| AutoLockStats {
+            time: fmt_hm(a.planned_min),
+            at: iso(a.at),
+            day_started_at: a.started_at.map(iso),
+            start_delay_min: a.start_delay_ms().map(worked_min),
+        }),
     }
 }
 
@@ -434,7 +455,7 @@ mod tests {
         assert_eq!(journal_hours(59.9), 0.75);
         assert_eq!(journal_hours(14.9), 0.0);
         assert_eq!(journal_hours(0.0), 0.0);
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![crate::day::PlanBlock::new("A", 165), crate::day::PlanBlock::new("B", 90)];
         let s = 1_790_589_600_000;
         let mut d = DayState::new(s, &c);
@@ -452,7 +473,7 @@ mod tests {
 
     #[test]
     fn week_adds_up_subjects_by_day() {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         let mon = 1_790_589_600_000; // Monday 2026-09-28
         let mut day = |ts: i64, blocks: &[(&str, i64)]| {
             c.profiles.full.plan = blocks.iter().map(|(n, m)| crate::day::PlanBlock::new(n, (*m as u32).max(1))).collect();
@@ -486,7 +507,7 @@ mod tests {
     #[test]
     fn csv_escapes() {
         assert_eq!(csv_field("a,b"), "\"a,b\"");
-        let cfg = Config::default();
+        let cfg = Config::study_week();
         let d = DayState::new(0, &cfg);
         let s = day_stats(&d, 180, 0);
         let csv = to_csv(&[s]);

@@ -1,5 +1,6 @@
 //! Synthesised sounds (no audio files, no audio crates): bell-like tones rendered into
-//! in-memory WAVs and played with `PlaySoundW(SND_MEMORY | SND_ASYNC)` on Windows.
+//! in-memory WAVs and played with `PlaySoundW(SND_MEMORY | SND_ASYNC)` on Windows, by the
+//! system's player on Linux.
 
 use std::f32::consts::TAU;
 use std::sync::OnceLock;
@@ -151,7 +152,29 @@ pub fn play(sound: Sound) {
     }
 }
 
-#[cfg(not(windows))]
+/// Through whichever player the system has: PulseAudio (PipeWire answers it too), PipeWire, ALSA.
+#[cfg(target_os = "linux")]
+pub fn play(sound: Sound) {
+    // The user's runtime dir is private; /tmp is shared with other users.
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let path = dir.join(format!("clockmanage-{sound:?}.wav"));
+    if std::fs::write(&path, cached(sound)).is_err() {
+        return;
+    }
+    for player in ["paplay", "pw-play", "aplay"] {
+        let child = std::process::Command::new(player)
+            .arg(&path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut child) = child {
+            std::thread::spawn(move || child.wait());
+            return;
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn play(sound: Sound) {
     let _ = cached(sound);
     eprintln!("[sound] {sound:?}");

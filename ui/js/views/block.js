@@ -1,4 +1,4 @@
-import { call, esc, mmss } from '../api.js';
+import { call, esc, mmss, LINUX } from '../api.js';
 import { icon } from '../icons.js';
 import { run, snack, tsHm } from '../ui.js';
 import { emergencyDialog } from './dialogs.js';
@@ -79,7 +79,7 @@ export function mountBlock(root, ctx) {
       <section class="section">
         <h2>${tr('blocking_good_to_know')}</h2>
         <ul class="limits body-m">
-          <li>${tr('blocking_the_app_runs_as_administrator_it')}</li>
+          <li>${LINUX ? tr('blocking_quit_is_off_during_study_and') : tr('blocking_the_app_runs_as_administrator_it')}</li>
           <li>${tr('blocking_chrome_edge_brave_and_yandex_pick')}</li>
           <li>${tr('blocking_shorts_opened_by_a_click_inside')}</li>
         </ul>
@@ -118,7 +118,8 @@ export function mountBlock(root, ctx) {
       const focusEnd = lk.focus_until ? tsHm(lk.focus_until, last.meta.tz_offset_min) : '';
       p = lk.reason === 'single' ? tr('blocking_for_the_single_timer')
         : lk.reason === 'focus' ? tr('blocking_focus_lock_until_only_emergency_access', { focus_end: focusEnd })
-          : tr('blocking_lifts_when_all_blocks_are_done', { day_end: v.day_end });
+          : lk.reason === 'autolock' ? tr('blocking_autolock_holds_until_start_day', { day_end: v.day_end })
+            : tr('blocking_lifts_when_all_blocks_are_done', { day_end: v.day_end });
       if (focusEnd && lk.reason !== 'focus') p += tr('blocking_focus_lock_until', { focus_end: focusEnd });
     } else if (lk.base) {
       cls = 'open';
@@ -126,9 +127,10 @@ export function mountBlock(root, ctx) {
       p = lk.until ? tr('blocking_the_lock_comes_back_in', { lk: mmss(lk.until - v.now) }) : '';
     } else {
       h = tr('blocking_no_lock_right_now');
-      p = { not_started: v.study_day ? (v.after_day_end ? tr('blocking_no_lock_after', { day_end: v.day_end }) : tr('blocking_turns_on_with_start_day')) : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
+      const startText = v.autolock && !v.autolock.on ? tr('blocking_turns_on_at_or_with_start_day', { time: v.autolock.time }) : tr('blocking_turns_on_with_start_day');
+      p = { not_started: v.study_day ? (v.after_day_end ? tr('blocking_no_lock_after', { day_end: v.day_end }) : startText) : (v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this')), completed: tr('blocking_all_blocks_of_the_day_are'), day_end: tr('blocking_no_lock_after', { day_end: v.day_end }), not_study_day: v.kind === 'off' ? tr('blocking_today_is_a_day_off_no') : tr('blocking_the_lock_is_off_for_this') }[lk.reason] || '';
     }
-    if (!last.meta.admin) p += tr('blocking_warning_the_app_runs_without_administrator');
+    if (!last.meta.admin) p += LINUX ? tr('blocking_warning_sites_are_not_blocked_install') : tr('blocking_warning_the_app_runs_without_administrator');
     if (last.meta.blocker_error) p += ` ${tr('blocking_error')}: ${last.meta.blocker_error}`;
     const html = `<h2>${esc(h)}</h2><p class="body-l">${esc(p)}</p>${v.emergency_count ? `<p class="body-m">${tr('blocking_emergency_accesses_today')} ${v.emergency_count}</p>` : ''}`;
     const hero = $('hero');

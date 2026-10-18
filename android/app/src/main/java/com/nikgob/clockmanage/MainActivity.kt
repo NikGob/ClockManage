@@ -390,7 +390,8 @@ class MainActivity : Activity() {
         }
         val focusUntil = s.focusUntil?.takeIf { now < it }
         lock.text = if (s.blockedAt(now, store.syncedAt)) {
-            if (focusUntil != null && (s.lockReason != "study" || focusUntil >= minOf(s.dayEndAt, s.doneAt ?: s.dayEndAt))) tr("android_main_focus_lock_until", "focus_until" to hm.format(Date(focusUntil - store.offset)))
+            if (focusUntil != null && ((s.lockReason != "study" && s.lockReason != "autolock") || focusUntil >= minOf(s.dayEndAt, s.doneAt ?: s.dayEndAt))) tr("android_main_focus_lock_until", "focus_until" to hm.format(Date(focusUntil - store.offset)))
+            else if (s.lockReason == "autolock") tr("android_main_autolock_until_start_day")
             else tr("android_main_lock_on_until_or_until_the", "day_end" to s.dayEnd)
         } else when (s.lockReason) {
             "break_access" -> tr("blocking_access_in_the_break")

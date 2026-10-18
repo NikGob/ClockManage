@@ -134,14 +134,29 @@ impl DayKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct DayProfile {
     /// Plan a new day of this kind starts with.
     pub plan: Vec<PlanBlock>,
     /// "Начать день" turns on blocking.
     pub block: bool,
+    /// "Автоблокировка с …": the block list goes on at `autolock_min` when the day has not
+    /// started by then, and holds until "Начать день". Configs from before 0.5.1 have none: on at
+    /// 13:00. Never on a day off.
+    pub autolock: bool,
+    /// Minutes after midnight.
+    pub autolock_min: u32,
 }
+
+impl Default for DayProfile {
+    fn default() -> Self {
+        Self { plan: vec![], block: false, autolock: true, autolock_min: DEFAULT_AUTOLOCK_MIN }
+    }
+}
+
+/// "Автоблокировка с 13:00" unless the profile says otherwise.
+pub const DEFAULT_AUTOLOCK_MIN: u32 = 13 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -161,12 +176,14 @@ impl Default for Profiles {
                     PlanBlock::new(tr("config_project"), 150),
                 ],
                 block: true,
+                ..Default::default()
             },
             light: DayProfile {
                 plan: vec![PlanBlock::new(tr("config_math"), 60), PlanBlock::new(tr("config_languages"), 60)],
                 block: true,
+                ..Default::default()
             },
-            off: DayProfile { plan: vec![], block: false },
+            off: DayProfile { autolock: false, ..Default::default() },
         }
     }
 }
@@ -282,6 +299,52 @@ impl Default for Phone {
     }
 }
 
+/// A default text still untouched in another language: the same default in the current one.
+fn default_in_other_lang(text: &str, keys: &[&'static str]) -> Option<&'static str> {
+    let now = crate::i18n::get();
+    keys.iter().find_map(|&key| {
+        let other = crate::i18n::langs().any(|l| l != now && crate::i18n::tr_in(l, key) == text);
+        let ours = crate::i18n::tr_in(now, key);
+        (other && ours != text).then_some(ours)
+    })
+}
+
+/// Rename the untouched defaults among `names` into the current language, unless the new name
+/// is taken already (two segment types or blocks with one name would merge).
+fn follow_lang_names<'a>(names: impl Iterator<Item = &'a mut String>, keys: &[&'static str]) -> bool {
+    let mut names: Vec<&mut String> = names.collect();
+    let mut changed = false;
+    for i in 0..names.len() {
+        let Some(to) = default_in_other_lang(names[i], keys) else { continue };
+        if !names.iter().any(|n| n.to_lowercase() == to.to_lowercase()) {
+            *names[i] = to.into();
+            changed = true;
+        }
+    }
+    changed
+}
+
+impl Config {
+    /// The defaults (plan names, segment types, the emergency phrase) are written in the
+    /// language of the first run. While the user hasn't changed them they follow the interface
+    /// language: a later language switch, or a config from an older version, doesn't leave them
+    /// in another language. Returns whether anything changed.
+    pub fn follow_lang(&mut self) -> bool {
+        const BLOCKS: [&str; 3] = ["config_math", "config_languages", "config_project"];
+        const SEGMENTS: [&str; 3] = ["config_lunch", "config_nap", "config_walk"];
+        let mut changed = false;
+        for k in [DayKind::Full, DayKind::Light, DayKind::Off] {
+            changed |= follow_lang_names(self.profiles.get_mut(k).plan.iter_mut().map(|b| &mut b.name), &BLOCKS);
+        }
+        changed |= follow_lang_names(self.segments.iter_mut().map(|t| &mut t.name), &SEGMENTS);
+        if let Some(to) = default_in_other_lang(&self.emergency_phrase, &["config_i_am_consciously_interrupting_my_study"]) {
+            self.emergency_phrase = to.into();
+            changed = true;
+        }
+        changed
+    }
+}
+
 pub fn default_phrase() -> &'static str {
     tr("config_i_am_consciously_interrupting_my_study")
 }
@@ -361,18 +424,21 @@ pub struct Config {
     pub plan_template: Option<Vec<PlanBlock>>,
 }
 
+/// Tests: the defaults with a study week, Mon–Fri Full and Sat–Sun off.
+#[cfg(test)]
+impl Config {
+    pub(crate) fn study_week() -> Self {
+        let mut c = Self::default();
+        c.week = [DayKind::Full, DayKind::Full, DayKind::Full, DayKind::Full, DayKind::Full, DayKind::Off, DayKind::Off];
+        c
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
-            week: [
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Full,
-                DayKind::Off,
-                DayKind::Off,
-            ],
+            // A new user picks their study days themselves.
+            week: [DayKind::Off; 7],
             profiles: Profiles::default(),
             day_end_min: 22 * 60,
             tz_offset_min: 180,
@@ -431,6 +497,12 @@ impl Config {
         n != self.plan_overrides.len()
     }
 
+    /// "Автоблокировка с …" of a profile, minutes after midnight; `None`: off (always on a day off).
+    pub fn autolock_min(&self, k: DayKind) -> Option<u32> {
+        let p = self.profile(k);
+        (k != DayKind::Off && p.autolock).then_some(p.autolock_min)
+    }
+
     /// The segment type called `name` (case-insensitive).
     pub fn segment_type(&self, name: &str) -> Option<&SegmentType> {
         let n = name.trim();
@@ -453,6 +525,11 @@ impl Config {
         self.day_end_min = self.day_end_min.min(24 * 60 - 1);
         self.night_start.until_min = self.night_start.until_min.min(MAX_NIGHT_UNTIL_MIN);
         self.night_start.hold_sec = self.night_start.hold_sec.clamp(1, MAX_NIGHT_HOLD_SEC);
+        for k in DayKind::ALL {
+            let p = self.profiles.get_mut(k);
+            p.autolock_min = p.autolock_min.min(24 * 60 - 1);
+        }
+        self.profiles.off.autolock = false;
         self.blocklist.sites = normalize_list(&self.blocklist.sites, normalize_site);
         self.blocklist.apps = normalize_list(&self.blocklist.apps, normalize_app);
         // Configs from before 0.3 have no segment types: start from the defaults, lunch keeps
@@ -618,14 +695,18 @@ fn normalize_list(v: &[String], f: impl Fn(&str) -> Option<String>) -> Vec<Strin
     out
 }
 
-/// Processes that must never be blocked: Windows itself, the WebView runtime, ClockManage.
+/// Processes that must never be blocked: Windows itself, the WebView runtime, ClockManage, and
+/// the Linux session (on Linux `gnome-shell.exe` matches the process `gnome-shell`).
 /// Blocking any of them would break the system (or the app) for the whole study day.
-const PROTECTED_APPS: [&str; 22] = [
+const PROTECTED_APPS: [&str; 37] = [
     "explorer.exe", "svchost.exe", "csrss.exe", "wininit.exe", "winlogon.exe", "lsass.exe",
     "services.exe", "smss.exe", "dwm.exe", "fontdrvhost.exe", "sihost.exe", "ctfmon.exe",
     "taskhostw.exe", "runtimebroker.exe", "searchhost.exe", "startmenuexperiencehost.exe",
     "shellexperiencehost.exe", "conhost.exe", "msedgewebview2.exe", "clockmanage.exe",
     "cm-guard.exe", "system",
+    "systemd.exe", "init.exe", "dbus-daemon.exe", "dbus-broker.exe", "xorg.exe", "xwayland.exe",
+    "gnome-shell.exe", "gnome-session-binary.exe", "plasmashell.exe", "kwin_wayland.exe",
+    "kwin_x11.exe", "ksmserver.exe", "pipewire.exe", "wireplumber.exe", "webkitwebprocess.exe",
 ];
 
 /// Only a bare file name: "C:\x\Steam" -> "Steam.exe". System apps are dropped.
@@ -840,6 +921,29 @@ mod tests {
         assert!(cfg.check_update(&n, EditContext { locked: false }).is_ok());
         // Turning it off only makes the lock stricter.
         assert!(n.check_update(&cfg, EditContext { locked: true }).is_ok());
+    }
+
+    #[test]
+    fn autolock_defaults_to_13_and_never_on_a_day_off() {
+        let c = Config::default();
+        assert_eq!(c.autolock_min(DayKind::Full), Some(13 * 60));
+        assert_eq!(c.autolock_min(DayKind::Light), Some(13 * 60));
+        assert_eq!(c.autolock_min(DayKind::Off), None);
+        // A config from before the setting: on at 13:00 for study profiles, off for a day off.
+        let json = r#"{"profiles":{"full":{"plan":[],"block":true},"light":{"block":true},"off":{"block":false}}}"#;
+        let mut old: Config = serde_json::from_str(json).unwrap();
+        old.normalize();
+        assert_eq!(old.autolock_min(DayKind::Full), Some(13 * 60));
+        assert_eq!(old.autolock_min(DayKind::Light), Some(13 * 60));
+        assert!(!old.profiles.off.autolock);
+        let mut c = c;
+        c.profiles.light.autolock = false;
+        c.profiles.full.autolock_min = 99 * 60;
+        c.profiles.off.autolock = true;
+        c.normalize();
+        assert_eq!(c.autolock_min(DayKind::Light), None);
+        assert_eq!(c.autolock_min(DayKind::Full), Some(24 * 60 - 1));
+        assert_eq!(c.autolock_min(DayKind::Off), None);
     }
 
     #[test]

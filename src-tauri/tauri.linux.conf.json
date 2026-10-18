@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": [
+      "deb",
+      "appimage"
+    ],
+    "externalBin": [],
+    "linux": {
+      "deb": {
+        "depends": [
+          "pkexec | policykit-1"
+        ],
+        "files": {
+          "/usr/share/polkit-1/actions/com.nikgob.clockmanage.policy": "linux/com.nikgob.clockmanage.policy"
+        },
+        "preRemoveScript": "linux/prerm.sh",
+        "desktopTemplate": "linux/clockmanage.desktop"
+      }
+    }
+  }
+}

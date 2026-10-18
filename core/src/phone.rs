@@ -70,7 +70,8 @@ pub struct PhoneLock {
     pub until: Option<Ts>,
     /// End of the focus lock: blocked until then, past the day end and the plan too.
     pub focus_until: Option<Ts>,
-    /// The study-day or single-timer lock alone, without the focus lock.
+    /// The study-day, single-timer or autolock lock alone, without the focus lock: holds until the
+    /// day end, `done_at` or the end of an access window.
     pub day_lock: bool,
 }
 
@@ -214,7 +215,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
         mode: v.mode,
         day_end: v.day_end,
         day_end_at: v.day_end_at,
-        lock: PhoneLock { base: v.lock.base, blocked: v.lock.blocked, reason: v.lock.reason, until: v.lock.until, focus_until: v.lock.focus_until, day_lock: locked || d.single_lock() },
+        lock: PhoneLock { base: v.lock.base, blocked: v.lock.blocked, reason: v.lock.reason, until: v.lock.until, focus_until: v.lock.focus_until, day_lock: locked || d.single_lock() || d.autolock_on(now, cfg) },
         done_at,
         blocks,
         timeline,
@@ -250,7 +251,7 @@ mod tests {
     }
 
     fn cfg() -> Config {
-        let mut c = Config::default();
+        let mut c = Config::study_week();
         c.profiles.full.plan = vec![PlanBlock::new("Математика", 90), PlanBlock::new("Экстернат", 45)];
         c
     }

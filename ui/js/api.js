@@ -10,6 +10,8 @@ async function getMock() {
 }
 
 export const inTauri = !!T;
+/** The Linux app (WebKitGTK); the mock preview shows it with `?os=linux`. */
+export const LINUX = T ? /Linux/.test(navigator.userAgent) : new URLSearchParams(location.search).get('os') === 'linux';
 
 export async function call(cmd, args = {}) {
   if (T) return T.core.invoke(cmd, args);
