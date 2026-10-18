@@ -59,12 +59,19 @@ fn main() {
                 cfg.tz_offset_min = system::utc_offset_min();
             }
             system::apply_lang(&cfg);
+            let before_lang = cfg.clone();
+            cfg.follow_lang();
             if cfg.mcp_port == 0 {
                 cfg.mcp_port = mcp_server::random_port();
             }
             store.save_config(&cfg);
             let now = clock::now_ts();
-            let day = app::load_today(&store, &cfg, now);
+            let mut day = app::load_today(&store, &cfg, now);
+            // Today's plan, still the untouched template, takes the defaults' new names too.
+            if day.started_at.is_none() && day.plan == before_lang.profile(day.kind).plan {
+                let plan = cfg.profile(day.kind).plan.clone();
+                let _ = day.set_plan(now, plan, false);
+            }
             store.save_day(&day);
             if cfg.drop_overrides_through(day.date) {
                 store.save_config(&cfg);

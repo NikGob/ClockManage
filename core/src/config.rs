@@ -299,6 +299,52 @@ impl Default for Phone {
     }
 }
 
+/// A default text still untouched in another language: the same default in the current one.
+fn default_in_other_lang(text: &str, keys: &[&'static str]) -> Option<&'static str> {
+    let now = crate::i18n::get();
+    keys.iter().find_map(|&key| {
+        let other = crate::i18n::langs().any(|l| l != now && crate::i18n::tr_in(l, key) == text);
+        let ours = crate::i18n::tr_in(now, key);
+        (other && ours != text).then_some(ours)
+    })
+}
+
+/// Rename the untouched defaults among `names` into the current language, unless the new name
+/// is taken already (two segment types or blocks with one name would merge).
+fn follow_lang_names<'a>(names: impl Iterator<Item = &'a mut String>, keys: &[&'static str]) -> bool {
+    let mut names: Vec<&mut String> = names.collect();
+    let mut changed = false;
+    for i in 0..names.len() {
+        let Some(to) = default_in_other_lang(names[i], keys) else { continue };
+        if !names.iter().any(|n| n.to_lowercase() == to.to_lowercase()) {
+            *names[i] = to.into();
+            changed = true;
+        }
+    }
+    changed
+}
+
+impl Config {
+    /// The defaults (plan names, segment types, the emergency phrase) are written in the
+    /// language of the first run. While the user hasn't changed them they follow the interface
+    /// language: a later language switch, or a config from an older version, doesn't leave them
+    /// in another language. Returns whether anything changed.
+    pub fn follow_lang(&mut self) -> bool {
+        const BLOCKS: [&str; 3] = ["config_math", "config_languages", "config_project"];
+        const SEGMENTS: [&str; 3] = ["config_lunch", "config_nap", "config_walk"];
+        let mut changed = false;
+        for k in [DayKind::Full, DayKind::Light, DayKind::Off] {
+            changed |= follow_lang_names(self.profiles.get_mut(k).plan.iter_mut().map(|b| &mut b.name), &BLOCKS);
+        }
+        changed |= follow_lang_names(self.segments.iter_mut().map(|t| &mut t.name), &SEGMENTS);
+        if let Some(to) = default_in_other_lang(&self.emergency_phrase, &["config_i_am_consciously_interrupting_my_study"]) {
+            self.emergency_phrase = to.into();
+            changed = true;
+        }
+        changed
+    }
+}
+
 pub fn default_phrase() -> &'static str {
     tr("config_i_am_consciously_interrupting_my_study")
 }

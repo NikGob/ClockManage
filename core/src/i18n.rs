@@ -95,7 +95,17 @@ fn table(lang: Lang) -> &'static HashMap<String, String> {
 /// The text of `key` in the current language (English if it is missing there, the key itself
 /// if it is missing everywhere — the tests make sure it never is).
 pub fn tr(key: &'static str) -> &'static str {
-    table(get()).get(key).or_else(|| table(Lang::En).get(key)).map(String::as_str).unwrap_or(key)
+    tr_in(get(), key)
+}
+
+/// The text of `key` in `lang`, whatever the current language is.
+pub fn tr_in(lang: Lang, key: &'static str) -> &'static str {
+    table(lang).get(key).or_else(|| table(Lang::En).get(key)).map(String::as_str).unwrap_or(key)
+}
+
+/// Every language with a texts file.
+pub fn langs() -> impl Iterator<Item = Lang> {
+    FILES.iter().map(|(l, _)| *l)
 }
 
 /// Put `{name}` arguments into a text.

@@ -163,7 +163,7 @@ Uninstalling from *Apps & features* rolls back everything ClockManage wrote to t
 ## Good to know
 
 - **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs a downloaded version at once (outside a study day). The installers are signed, and the app installs nothing else.
-- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The time zone is there too (a new install takes the Windows one).
+- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows Windows. The default plan names, segment types and emergency phrase switch along until you change them. The time zone is there too (a new install takes the Windows one).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).

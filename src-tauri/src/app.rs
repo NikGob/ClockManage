@@ -1451,6 +1451,8 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
         system::apply_lang(&cfg);
+        // A language switch takes the untouched defaults along (today's untouched plan follows below).
+        cfg.follow_lang();
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
         let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
