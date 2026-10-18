@@ -24,6 +24,10 @@ tauri = { version = "2", features = ["test"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 dirs = "7"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+x11-dl = "2.21"
+zbus = "5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

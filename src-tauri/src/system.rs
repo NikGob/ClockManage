@@ -161,19 +161,26 @@ pub fn set_autostart(_enabled: bool) -> Result<(), String> {
 
 /// Milliseconds since the last keyboard or mouse input in this session.
 #[cfg(windows)]
-pub fn idle_ms() -> u64 {
+pub fn idle_ms() -> Option<u64> {
     use windows_sys::Win32::System::SystemInformation::GetTickCount;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
     let mut li = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
     if unsafe { GetLastInputInfo(&mut li) } == 0 {
-        return 0;
+        return None;
     }
-    unsafe { GetTickCount() }.wrapping_sub(li.dwTime) as u64
+    Some(unsafe { GetTickCount() }.wrapping_sub(li.dwTime) as u64)
 }
 
-#[cfg(not(windows))]
-pub fn idle_ms() -> u64 {
-    u64::MAX
+/// Milliseconds since the last keyboard or mouse input in this session, where the desktop tells
+/// (`idle.rs`); None where it doesn't, such as a Wayland compositor without ext-idle-notify.
+#[cfg(target_os = "linux")]
+pub fn idle_ms() -> Option<u64> {
+    crate::idle::idle_ms()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn idle_ms() -> Option<u64> {
+    None
 }
 
 pub fn open_path(path: &Path) {
