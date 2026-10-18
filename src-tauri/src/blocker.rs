@@ -1248,7 +1248,16 @@ mod tests {
         std::fs::copy("/bin/sleep", &exe).unwrap();
         let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
         let name = exe.file_name().unwrap().to_string_lossy().to_string();
-        let killed = platform::kill_apps(&[format!("{name}.exe")]);
+        // Right after the spawn /proc may still show the test binary: the app closes blocked apps
+        // on every pass, so give the new process a moment to show up as itself.
+        let mut killed = vec![];
+        for _ in 0..100 {
+            killed = platform::kill_apps(&[format!("{name}.exe")]);
+            if !killed.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         assert_eq!(killed, vec![name]);
         assert!(!child.wait().unwrap().success());
         let _ = std::fs::remove_file(&exe);
