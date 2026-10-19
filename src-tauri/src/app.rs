@@ -71,6 +71,7 @@ pub struct Shared {
     pub finish_token: Mutex<Option<FinishToken>>,
     /// Bundled Android APK + apk.json (version), served to paired phones for self-update.
     pub apk_dir: Option<std::path::PathBuf>,
+    pub meals: Mutex<crate::meals::MealsRt>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1122,6 +1123,43 @@ impl McpHost for McpBridge {
         }
         apply_finish(&self.0, Some(&t.block), "mcp")
     }
+
+    fn get_diet(&self) -> Value {
+        let m = self.0.lock().cfg.meals.clone();
+        json!({
+            "diet": m.diet,
+            "address": m.address,
+            "location_set": m.location().is_some(),
+            "max_km": m.max_km,
+            "meal_times": m.times.iter().map(|t| clockmanage_core::config::fmt_hm(*t)).collect::<Vec<_>>(),
+            "lead_min": m.lead_min,
+            "iphone_paired": m.subscription.is_some(),
+        })
+    }
+
+    fn set_diet(&self, text: &str) -> Result<Value, String> {
+        {
+            let mut g = self.0.lock();
+            g.cfg.meals.diet = text.trim().to_string();
+            self.0.store.save_config(&g.cfg);
+        }
+        let _ = self.0.app.emit("config", ());
+        let _ = self.0.app.emit("meals", ());
+        self.0.notice(tr("meals_diet"), tr("meals_the_diet_was_updated"));
+        Ok(json!({ "saved": true, "chars": text.trim().chars().count() }))
+    }
+
+    fn wolt_search(&self, query: Option<&str>) -> Result<Value, String> {
+        crate::meals::wolt_search(&self.0, query)
+    }
+
+    fn wolt_menu(&self, venue: &str) -> Result<Value, String> {
+        crate::meals::wolt_menu(&self.0, venue)
+    }
+
+    fn set_meal_options(&self, picks: Vec<clockmanage_core::mcp::MealPick>) -> Result<Value, String> {
+        crate::meals::set_meal_options(&self.0, picks)
+    }
 }
 
 /// End-of-block line from the UI, the overlay or the agent.
@@ -1449,6 +1487,9 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         // a phone was paired must not drop its token. Plans set ahead for dates come from MCP.
         cfg.phone.devices = g.cfg.phone.devices.clone();
         cfg.plan_overrides = g.cfg.plan_overrides.clone();
+        // The iPhone link and the push keys change only through pairing.
+        let m = &g.cfg.meals;
+        (cfg.meals.link, cfg.meals.subscription, cfg.meals.vapid_key, cfg.meals.relay_seen) = (m.link.clone(), m.subscription.clone(), m.vapid_key.clone(), m.relay_seen);
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
         g.cfg.check_update(&cfg, ctx)?;
         system::apply_lang(&cfg);

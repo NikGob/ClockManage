@@ -216,6 +216,7 @@ fn locales_match_each_other_and_the_code() {
         ("core/src", "rs", "rs"),
         ("src-tauri/src", "rs", "rs"),
         ("ui/js", "js", "js"),
+        ("pwa", "js", "js"),
         ("android/app/src/main/java", "kt", "kt"),
     ] {
         for (p, src) in sources(dir, ext) {

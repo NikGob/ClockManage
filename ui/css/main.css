@@ -522,3 +522,12 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
   .seg-add { flex-wrap: wrap; }
   .seg-add > .grow { flex-basis: 100%; }
 }
+
+/* Meals */
+.meal-venue { margin-bottom: 12px; }
+.setting.dish { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.setting.dish .tnum { color: var(--md-sys-color-primary); font-weight: 500; }
+.pair-box { align-items: flex-start; gap: 8px; }
+.pair-box .pin { font: 500 28px/36px var(--font); letter-spacing: .08em; color: var(--md-sys-color-primary); }
+.qr svg { width: 220px; height: 220px; border-radius: var(--shape-s); display: block; }
+input.mono { font: 400 13px/20px ui-monospace, "Cascadia Code", Consolas, monospace; }

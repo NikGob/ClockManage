@@ -5,6 +5,7 @@ mod blocker;
 #[cfg(target_os = "linux")]
 mod idle;
 mod mcp_server;
+mod meals;
 mod phone_server;
 mod sound;
 mod store;
@@ -113,6 +114,7 @@ fn main() {
                 overlay_rect: Mutex::new(None),
                 finish_token: Mutex::new(None),
                 apk_dir: handle.path().resource_dir().ok().map(|d| d.join("resources").join("android")),
+                meals: Mutex::new(Default::default()),
             });
             tauri_app.manage(shared.clone());
 
@@ -138,6 +140,7 @@ fn main() {
                 }
             });
             app::spawn_ticker(shared.clone());
+            meals::start(shared.clone());
             updater::spawn(shared.clone());
 
             if !background {
@@ -187,6 +190,12 @@ fn main() {
             app::set_segment_mode,
             app::drop_queued,
             app::week_stats,
+            meals::meals_state,
+            meals::meals_pick_now,
+            meals::meals_pair,
+            meals::meals_unpair,
+            meals::meals_geocode,
+            meals::open_url,
             app::check_update,
             app::install_update,
         ])

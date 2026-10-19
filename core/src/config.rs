@@ -416,6 +416,8 @@ pub struct Config {
     /// Plans set ahead for particular dates (MCP `set_plan` with `date`): that day starts with
     /// it instead of its profile's template. Dropped once that date's day exists.
     pub plan_overrides: BTreeMap<NaiveDate, Vec<PlanBlock>>,
+    /// Diet, address, meal times and the paired iPhone web app.
+    pub meals: crate::meals::Meals,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
     pub study_days: Option<[bool; 7]>,
@@ -461,6 +463,7 @@ impl Default for Config {
             phone: Phone::default(),
             night_start: NightStart::default(),
             plan_overrides: BTreeMap::new(),
+            meals: crate::meals::Meals::default(),
             study_days: None,
             plan_template: None,
         }
@@ -510,6 +513,7 @@ impl Config {
     }
 
     pub fn normalize(&mut self) {
+        self.meals.normalize();
         if let Some(days) = self.study_days.take() {
             self.week = days.map(|d| if d { DayKind::Full } else { DayKind::Off });
         }
