@@ -105,6 +105,8 @@ pub struct Picks {
 #[serde(default)]
 pub struct PickVenue {
     pub name: String,
+    /// A grocery store (products to buy), not a restaurant.
+    pub store: bool,
     pub url: String,
     pub km: f64,
     pub eta: String,
@@ -132,6 +134,7 @@ pub struct Venue {
     pub online: bool,
     pub url: String,
     pub currency: String,
+    pub store: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -165,7 +168,8 @@ fn short(text: &str, max: usize) -> String {
     }
 }
 
-/// Restaurants of `/v1/pages/restaurants` that deliver to `at` and are within `max_km`, nearest first.
+/// Venues of `/v1/pages/restaurants` (or the grocery list) that deliver to `at` and are within
+/// `max_km`, nearest first.
 pub fn parse_venues(page: &Value, at: (f64, f64), max_km: f64) -> Vec<Venue> {
     let city = s(page, "city");
     let mut out: Vec<Venue> = Vec::new();
@@ -191,6 +195,7 @@ pub fn parse_venues(page: &Value, at: (f64, f64), max_km: f64) -> Vec<Venue> {
             tags: v["tags"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect(),
             online: v["online"] == json!(true),
             currency: s(v, "currency"),
+            store: kind == "venue",
         });
     }
     out.sort_by(|a, b| a.km.total_cmp(&b.km));
@@ -311,9 +316,12 @@ pub fn agent_prompt(meal: &str, kind: &str, lang: &str) -> String {
         "You run unattended inside ClockManage: nobody will answer questions. The user wants {kind} {when}: pick food that suits {kind}. \
          1) Call get_diet. 2) Find food that fits the diet with wolt_search (search dishes or cuisines; try several queries) \
          and look at promising restaurants with wolt_menu. Only restaurants these tools return deliver to the user and are close enough. \
-         3) Choose up to 3 restaurants that are open now, and in each 1-4 available dishes that together make a meal fitting the diet. \
+         3) Choose up to 5 restaurants that are open now, and in each 1-4 available dishes that together make a meal fitting the diet. \
          Wolt menus have no nutrition data: judge by names and descriptions, and prefer dishes whose fit is clear. \
-         4) Call set_meal_options exactly once with your picks; write each `why` in one short line in this language: {lang}. Then stop."
+         Never pick drinks of any kind (water, juice, soda, coffee, tea, smoothies): the user buys their own. \
+         Also choose up to 5 grocery stores (store: true in wolt_search) and in each 2-6 products to buy that fit the diet for the next days \
+         (for example berries, nuts, oily fish, leafy greens, eggs, Greek yogurt, olive oil): search for them by name with wolt_search. \
+         4) Call set_meal_options exactly once with your picks, restaurants and stores together; write each `why` in one short line in this language: {lang}. Then stop."
     )
 }
 
@@ -343,6 +351,7 @@ mod tests {
         assert_eq!(v.iter().map(|v| v.slug.as_str()).collect::<Vec<_>>(), ["salad-bar", "shop"]);
         assert_eq!(v[0].url, "https://wolt.com/en/fin/helsinki/restaurant/salad-bar");
         assert_eq!(v[1].url, "https://wolt.com/en/fin/helsinki/venue/shop");
+        assert!(!v[0].store && v[1].store);
         assert_eq!((v[0].eta.as_str(), v[0].rating, v[0].online), ("20-30", Some(9.1), true));
         assert!(!v[1].online);
         assert_eq!(parse_venues(&page(), (60.1699, 24.9384), 20.0).len(), 3);
@@ -378,6 +387,7 @@ mod tests {
     fn kinds_by_time_of_day() {
         assert_eq!([kind_at(8 * 60), kind_at(11 * 60), kind_at(15 * 60 + 59), kind_at(19 * 60)], ["breakfast", "lunch", "lunch", "dinner"]);
         assert!(agent_prompt("", "breakfast", "ru").contains("wants breakfast now"));
+        assert!(agent_prompt("13:00", "lunch", "en").contains("Never pick drinks"));
     }
 
     #[test]
@@ -393,7 +403,7 @@ mod tests {
     #[test]
     fn push_fits_one_message() {
         let dish = PickDish { name: "Блюдо с длинным названием".repeat(3), price: 1290, currency: "EUR".into(), url: format!("https://wolt.com/en/fin/helsinki/restaurant/{}/itemid-0123456789abcdef01234567", "x".repeat(40)), why: "Белок и овощи, без сахара".repeat(2) };
-        let venue = PickVenue { name: "Ресторан".into(), url: "https://wolt.com/en/fin/helsinki/restaurant/x".into(), km: 1.2, eta: "20-30".into(), dishes: vec![dish; 6] };
+        let venue = PickVenue { name: "Ресторан".into(), store: false, url: "https://wolt.com/en/fin/helsinki/restaurant/x".into(), km: 1.2, eta: "20-30".into(), dishes: vec![dish; 6] };
         let p = Picks { at: 1, meal: "13:00".into(), kind: "lunch".into(), venues: vec![venue; 4] };
         let out = push_payload(&p, "Обед");
         assert!(out.len() <= MAX_PLAINTEXT, "{}", out.len());

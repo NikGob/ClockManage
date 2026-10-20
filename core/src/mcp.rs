@@ -347,7 +347,7 @@ fn tools() -> Value {
         {
             "name": "wolt_search",
             "title": "Find food on Wolt nearby",
-            "description": "Wolt food that delivers to the user's address, within max_km. With query (a dish, an ingredient or a cuisine, e.g. \"chicken salad\", \"poke\", \"vegan\") — matching dishes: id, venue (slug), name, description, price (cents), currency, available. Without query — the nearby restaurants: slug, name, km, eta (minutes), rating, tags, online. Run several queries; the data is cached for a few minutes.",
+            "description": "Wolt food that delivers to the user's address, within max_km. Restaurants and grocery stores both. With query (a dish, a product, an ingredient or a cuisine, e.g. \"chicken salad\", \"poke\", \"blueberries\", \"walnuts\") — matching items: id, venue (slug), store (true for a grocery store), name, description, price (cents), currency, available. Without query — the nearby restaurants and stores: slug, name, km, eta (minutes), rating, tags, online. Run several queries; the data is cached for a few minutes.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "query": { "type": "string", "description": "What to search for; omit to list the restaurants" } },
@@ -370,16 +370,16 @@ fn tools() -> Value {
         {
             "name": "set_meal_options",
             "title": "Offer the meal picks",
-            "description": "Saves the picks for the coming meal and sends them to the user: they show on the Meals screen with links to each restaurant and dish on Wolt, and a notification goes to the paired iPhone. Up to 3 restaurants, each with 1-6 dishes (ids from wolt_search or wolt_menu) and a short why per dish in the user's language. Replaces the previous picks. The user orders on Wolt themselves; nothing is put in a basket.",
+            "description": "Saves the picks for the coming meal and sends them to the user: they show on the Meals screen with links to each restaurant and dish on Wolt, and a notification goes to the paired iPhone. Up to 5 restaurants and up to 5 grocery stores, each with 1-6 dishes or products (ids from wolt_search or wolt_menu) and a short why per item in the user's language; never drinks. Replaces the previous picks. The user orders on Wolt themselves; nothing is put in a basket.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "venues": {
-                        "type": "array", "minItems": 1, "maxItems": 3,
+                        "type": "array", "minItems": 1, "maxItems": 10,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "venue": { "type": "string", "description": "Restaurant slug" },
+                                "venue": { "type": "string", "description": "Restaurant or store slug" },
                                 "dishes": {
                                     "type": "array", "minItems": 1, "maxItems": 6,
                                     "items": {
@@ -586,7 +586,7 @@ fn parse_meal_options(args: &Value) -> Result<Vec<MealPick>, String> {
     let venues = args.get("venues").and_then(Value::as_array).filter(|v| !v.is_empty()).ok_or(tr("mcp_meals_pick_at_least_one_restaurant"))?;
     venues
         .iter()
-        .take(3)
+        .take(10)
         .map(|v| {
             let venue = v.get("venue").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or(tr("mcp_meals_a_restaurant_has_no_slug"))?;
             let dishes: Vec<(String, String)> = v
@@ -629,7 +629,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — study timer", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early. Meals: get_diet — the user's diet, address and meal times; set_diet — save the diet the user gives you; wolt_search and wolt_menu — Wolt dishes and restaurants that deliver to the user (nearby only); set_meal_options — offer up to 3 restaurants with dishes that fit the diet (shown in the app and pushed to the iPhone; the user orders on Wolt themselves)."
+                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early. Meals: get_diet — the user's diet, address and meal times; set_diet — save the diet the user gives you; wolt_search and wolt_menu — Wolt dishes and restaurants that deliver to the user (nearby only); set_meal_options — offer up to 5 restaurants with dishes and up to 5 grocery stores with products that fit the diet (shown in the app and pushed to the iPhone; the user orders on Wolt themselves)."
                 }),
             )
         }
@@ -801,7 +801,7 @@ mod tests {
             { "venue": "b", "dishes": [{ "id": "b1" }] }, { "venue": "c", "dishes": [{ "id": "c1" }] }, { "venue": "d", "dishes": [{ "id": "d1" }] }
         ]}))
         .unwrap();
-        assert_eq!(p.len(), 3);
+        assert_eq!(p.len(), 4);
         assert_eq!(p[0].dishes, vec![("a1".to_string(), "белок".to_string()), ("a2".to_string(), String::new())]);
         assert!(parse_meal_options(&json!({ "venues": [] })).is_err());
         assert!(parse_meal_options(&json!({ "venues": [{ "venue": "x", "dishes": [] }] })).unwrap_err().contains('x'));

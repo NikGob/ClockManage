@@ -188,7 +188,12 @@ fn nearby(shared: &Shared) -> Result<Vec<Venue>, String> {
         }
     }
     let page = get_json(http().get(format!("https://consumer-api.wolt.com/v1/pages/restaurants?lat={}&lon={}", at.0, at.1)))?;
-    let list = meals::parse_venues(&page, at, max_km);
+    let mut list = meals::parse_venues(&page, at, max_km);
+    // Stores are not on the restaurants page; a store list that fails leaves just the restaurants.
+    if let Ok(page) = get_json(http().get(format!("https://consumer-api.wolt.com/v1/pages/venue-list/category-grocery?lat={}&lon={}", at.0, at.1))) {
+        let stores: Vec<Venue> = meals::parse_venues(&page, at, max_km).into_iter().filter(|v| v.store && !list.iter().any(|r| r.slug == v.slug)).collect();
+        list.extend(stores);
+    }
     rt(shared).venues = Some((now, key, list.clone()));
     Ok(list)
 }
@@ -196,9 +201,10 @@ fn nearby(shared: &Shared) -> Result<Vec<Venue>, String> {
 pub fn wolt_search(shared: &Shared, query: Option<&str>) -> Result<Value, String> {
     let venues = nearby(shared)?;
     let Some(q) = query else {
-        return Ok(json!({ "restaurants": venues.iter().take(60).map(|v| json!({
+        let list = |store: bool, n: usize| venues.iter().filter(|v| v.store == store).take(n).map(|v| json!({
             "slug": v.slug, "name": v.name, "km": v.km, "eta": v.eta, "rating": v.rating, "tags": v.tags, "online": v.online
-        })).collect::<Vec<_>>() }));
+        })).collect::<Vec<_>>();
+        return Ok(json!({ "restaurants": list(false, 50), "stores": list(true, 20) }));
     };
     let at = shared.lock().cfg.meals.location().ok_or(tr("meals_set_the_address_first"))?;
     let page = get_json(http().post("https://restaurant-api.wolt.com/v1/pages/search").json(&json!({ "q": q, "target": "items", "lat": at.0, "lon": at.1 })))?;
@@ -209,7 +215,7 @@ pub fn wolt_search(shared: &Shared, query: Option<&str>) -> Result<Value, String
         .iter()
         .map(|d| {
             let v = near[d.venue.as_str()];
-            json!({ "id": d.id, "venue": d.venue, "venue_name": v.name, "km": v.km, "eta": v.eta, "online": v.online,
+            json!({ "id": d.id, "venue": d.venue, "venue_name": v.name, "store": v.store, "km": v.km, "eta": v.eta, "online": v.online,
                     "name": d.name, "description": d.description, "price": d.price, "currency": d.currency, "available": d.available })
         })
         .collect();
@@ -241,6 +247,7 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
     let venues = nearby(shared)?;
     let mut r = rt(shared);
     let mut out = Vec::new();
+    let (mut restaurants, mut stores) = (0, 0);
     for p in &picks {
         let v = venues.iter().find(|v| v.slug == p.venue).ok_or_else(|| tr!("meals_no_such_restaurant_nearby", venue = p.venue, km = max_km))?;
         let mut dishes = Vec::new();
@@ -248,7 +255,12 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
             let d = r.dishes.get(id).filter(|d| d.venue == v.slug).ok_or_else(|| tr!("meals_unknown_dish", id = id))?;
             dishes.push(PickDish { name: d.name.clone(), price: d.price, currency: d.currency.clone(), url: meals::dish_url(&v.url, &d.id), why: why.clone() });
         }
-        out.push(PickVenue { name: v.name.clone(), url: v.url.clone(), km: v.km, eta: v.eta.clone(), dishes });
+        let (count, max) = if v.store { (&mut stores, 5) } else { (&mut restaurants, 5) };
+        *count += 1;
+        if *count > max {
+            continue;
+        }
+        out.push(PickVenue { name: v.name.clone(), store: v.store, url: v.url.clone(), km: v.km, eta: v.eta.clone(), dishes });
     }
     let (meal, kind) = match &r.running {
         Some((meal, kind, _)) => (meal.clone(), kind.clone()),
@@ -259,6 +271,7 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
     r.error = None;
     drop(r);
     let _ = crate::store::write_atomic(&picks_path(shared), &serde_json::to_string_pretty(&picks).unwrap_or_default());
+    publish_picks(shared, &picks);
     emit(shared);
     let title = meals::picks_title(&picks);
     let body = picks.venues.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(" · ");
@@ -498,6 +511,14 @@ pub fn unpair(shared: &Shared) {
     });
     rt(shared).pairing = None;
     emit(shared);
+}
+
+/// The whole picks for the web app: a push holds 4 KB, so it may carry fewer of them.
+fn publish_picks(shared: &Shared, picks: &Picks) {
+    let Some(link) = shared.lock().cfg.meals.link.clone() else { return };
+    let Ok(key) = webpush::unb64(&link.key) else { return };
+    let sealed = relay::seal(&key, json!({ "t": "picks", "picks": picks }).to_string().as_bytes());
+    let _ = post_sealed(&link.down, &sealed);
 }
 
 /// Sends the diet to the web app when it changed, and every 10 hours (ntfy keeps messages 12 h).

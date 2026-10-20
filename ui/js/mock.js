@@ -48,6 +48,10 @@ const mealPicks = {
     { name: 'Poke Bowl Helsinki', url: `${W}poke-bowl`, km: 1.1, eta: '25-35', dishes: [
       { name: L('Поке с лососем', 'Salmon poke'), price: 1590, currency: 'EUR', url: `${W}poke-bowl/itemid-3`, why: L('Рыба и рис, соус отдельно', 'Fish and rice, sauce on the side') },
     ] },
+    { name: 'Wolt Market Holešovice', store: true, url: 'https://wolt.com/en/cze/prague/venue/wolt-market-holesovice', km: 0.4, eta: '15-25', dishes: [
+      { name: L('Черника, 125 г', 'Blueberries, 125 g'), price: 5490, currency: 'CZK', url: 'https://wolt.com/en/cze/prague/venue/wolt-market-holesovice/itemid-6', why: L('Ягоды каждый день', 'Berries every day') },
+      { name: L('Грецкие орехи, 100 г', 'Walnuts, 100 g'), price: 6990, currency: 'CZK', url: 'https://wolt.com/en/cze/prague/venue/wolt-market-holesovice/itemid-7', why: L('Омега-3 на перекус', 'Omega-3 for a snack') },
+    ] },
     { name: 'Green Kitchen', url: `${W}green-kitchen`, km: 2.4, eta: '30-40', dishes: [
       { name: L('Салат с тофу', 'Tofu salad'), price: 1290, currency: 'EUR', url: `${W}green-kitchen/itemid-4`, why: L('Лёгкий ужин до 500 ккал', 'A light dinner under 500 kcal') },
       { name: L('Суп из чечевицы', 'Lentil soup'), price: 890, currency: 'EUR', url: `${W}green-kitchen/itemid-5`, why: L('Белок без мяса', 'Protein without meat') },
