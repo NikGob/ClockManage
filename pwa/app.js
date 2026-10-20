@@ -195,10 +195,11 @@ async function keepPicks(p) {
 function venueHtml(v) {
   const sum = v.dishes.reduce((n, d) => n + (d.price || 0), 0);
   return `<article class="venue">
+      ${v.image ? `<div class="banner" style="background-image:url('${esc(v.image)}')"></div>` : ''}
       <div class="vhead"><div class="grow"><div class="vname">${esc(v.name)}</div>
         <div class="meta"><span class="pill">${icon('pin')}${esc(tr('meals_km_away', { km: Number(v.km).toLocaleString(LOCALE) }))}</span>${v.eta ? `<span class="pill">${icon('clock')}${esc(tr('meals_eta_min', { eta: v.eta }))}</span>` : ''}</div></div>
         <a class="open" href="${esc(v.url)}" aria-label="${tr('meals_open_in_wolt')}">Wolt${icon('open')}</a></div>
-      ${v.dishes.map((d) => `<a class="item" href="${esc(d.url)}"><div class="grow"><div class="iname">${esc(d.name)}</div>${d.why ? `<div class="why">${icon('leaf')}<span>${esc(d.why)}</span></div>` : ''}</div>
+      ${v.dishes.map((d) => `<a class="item" href="${esc(d.url)}">${d.image ? `<img class="thumb" src="${esc(d.image)}" alt="" loading="lazy">` : ''}<div class="grow"><div class="iname">${esc(d.name)}</div>${d.why ? `<div class="why">${icon('leaf')}<span>${esc(d.why)}</span></div>` : ''}</div>
         <span class="price">${esc(money(d.price, d.currency))}</span>${icon('chev', 'chev')}</a>`).join('')}
       ${v.dishes.length > 1 ? `<div class="total"><span>${tr('meals_total')}</span><b>${esc(money(sum, v.dishes[0].currency))}</b></div>` : ''}
     </article>`;

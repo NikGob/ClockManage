@@ -256,14 +256,21 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
         let mut dishes = Vec::new();
         for (id, why) in &p.dishes {
             let d = r.dishes.get(id).filter(|d| d.venue == v.slug).ok_or_else(|| tr!("meals_unknown_dish", id = id))?;
-            dishes.push(PickDish { name: d.name.clone(), price: d.price, currency: d.currency.clone(), url: meals::dish_url(&v.url, &d.id), why: why.clone() });
+            dishes.push(PickDish {
+                name: d.name.clone(),
+                price: d.price,
+                currency: d.currency.clone(),
+                url: meals::dish_url(&v.url, &d.id),
+                why: why.clone(),
+                image: meals::sized(&d.image, 160),
+            });
         }
         let (count, max) = if v.store { (&mut stores, 5) } else { (&mut restaurants, 5) };
         *count += 1;
         if *count > max {
             continue;
         }
-        out.push(PickVenue { name: v.name.clone(), store: v.store, url: v.url.clone(), km: v.km, eta: v.eta.clone(), dishes });
+        out.push(PickVenue { name: v.name.clone(), store: v.store, url: v.url.clone(), km: v.km, eta: v.eta.clone(), image: meals::sized(&v.image, 600), dishes });
     }
     let (meal, kind) = match &r.running {
         Some((meal, kind, _)) => (meal.clone(), kind.clone()),

@@ -57,11 +57,11 @@ export function mountMeals(root, ctx) {
     }
     const title = p.meal ? tr('meals_kind_at', { kind: kindName(p.kind), time: p.meal }) : kindName(p.kind);
     const card = (v) => `<div class="surface meal-venue">
-        <div class="setting"><span class="badge">${icon('restaurant')}</span>
+        <div class="setting">${v.image ? `<img class="venue-pic" src="${esc(v.image)}" alt="" loading="lazy">` : `<span class="badge">${icon(v.store ? 'cart' : 'restaurant')}</span>`}
           <div class="grow"><div class="t">${esc(v.name)}</div><div class="d">${tr('meals_km_min', { km: dec(v.km), eta: esc(v.eta) })}</div></div>
           <button class="btn tonal interactive" data-open="${esc(v.url)}">${icon('open')}${tr('meals_open_in_wolt')}</button></div>
         ${v.dishes.map((d) => `<button class="setting dish interactive" data-open="${esc(d.url)}" data-tip="${esc(tr('meals_opens_the_dish_on_wolt'))}">
-          <div class="grow"><div class="t">${esc(d.name)}</div>${d.why ? `<div class="d">${esc(d.why)}</div>` : ''}</div><span class="tnum">${esc(price(d))}</span></button>`).join('')}
+          ${d.image ? `<img class="dish-pic" src="${esc(d.image)}" alt="" loading="lazy">` : ''}<div class="grow"><div class="t">${esc(d.name)}</div>${d.why ? `<div class="d">${esc(d.why)}</div>` : ''}</div><span class="tnum">${esc(price(d))}</span></button>`).join('')}
         ${v.dishes.length > 1 ? `<div class="setting meal-total"><div class="grow d">${tr('meals_total')}</div><span class="tnum">${esc(price({ price: v.dishes.reduce((n, d) => n + d.price, 0), currency: v.dishes[0].currency }))}</span></div>` : ''}
       </div>`;
     const food = p.venues.filter((v) => !v.store).map(card).join('');

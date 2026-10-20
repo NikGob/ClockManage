@@ -120,6 +120,8 @@ pub struct PickVenue {
     pub url: String,
     pub km: f64,
     pub eta: String,
+    /// A photo of the venue, sized for a card.
+    pub image: String,
     pub dishes: Vec<PickDish>,
 }
 
@@ -131,6 +133,8 @@ pub struct PickDish {
     pub currency: String,
     pub url: String,
     pub why: String,
+    /// A thumbnail of the dish or product.
+    pub image: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -145,6 +149,7 @@ pub struct Venue {
     pub url: String,
     pub currency: String,
     pub store: bool,
+    pub image: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -156,6 +161,7 @@ pub struct Dish {
     pub price: i64,
     pub currency: String,
     pub available: bool,
+    pub image: String,
 }
 
 /// Great-circle distance in km.
@@ -207,6 +213,7 @@ pub fn parse_venues(page: &Value, at: (f64, f64), max_km: f64) -> Vec<Venue> {
             online: v["online"] == json!(true),
             currency: s(v, "currency"),
             store: kind == "venue",
+            image: s(&item["image"], "url"),
         });
     }
     out.sort_by(|a, b| a.km.total_cmp(&b.km));
@@ -232,6 +239,7 @@ pub fn parse_search(page: &Value) -> Vec<Dish> {
                 price: m["price"].as_i64().unwrap_or(0),
                 currency: s(m, "currency"),
                 available: m["is_available"] != json!(false),
+                image: s(&m["image"], "url"),
             })
         })
         .collect()
@@ -253,9 +261,19 @@ pub fn parse_menu(page: &Value, slug: &str, currency: &str) -> Vec<Dish> {
                 price: m["price"].as_i64().unwrap_or(0),
                 currency: currency.to_string(),
                 available: m["disabled_info"].is_null(),
+                image: s(&m["images"][0], "url"),
             })
         })
         .collect()
+}
+
+/// Wolt's image CDNs resize by `?w=`: a phone gets kilobytes, not a full photo.
+pub fn sized(url: &str, width: u32) -> String {
+    if url.is_empty() {
+        String::new()
+    } else {
+        format!("{url}{}w={width}", if url.contains('?') { '&' } else { '?' })
+    }
 }
 
 pub fn dish_url(venue_url: &str, id: &str) -> String {
@@ -304,6 +322,12 @@ pub fn push_payload(p: &Picks, title: &str) -> String {
     let mut picks = p.clone();
     let make = |picks: &Picks| json!({ "title": title, "body": body, "picks": picks }).to_string();
     let mut out = make(&picks);
+    if out.len() > MAX_PLAINTEXT {
+        // The relay brings the whole picks to the web app anyway: drop pictures first.
+        picks.venues.iter_mut().for_each(|v| v.image.clear());
+        picks.venues.iter_mut().flat_map(|v| v.dishes.iter_mut()).for_each(|d| d.image.clear());
+        out = make(&picks);
+    }
     if out.len() > MAX_PLAINTEXT {
         picks.venues.iter_mut().flat_map(|v| v.dishes.iter_mut()).for_each(|d| d.why.clear());
         out = make(&picks);
@@ -382,12 +406,12 @@ mod tests {
     fn search_and_menu_dishes() {
         let search = json!({ "sections": [{ "items": [{
             "link": { "menu_item_details": { "venue_slug": "salad-bar", "description": "Chicken,\n fresh   salad" } },
-            "menu_item": { "id": "a1", "name": "Chicken salad", "price": 1390, "currency": "EUR", "is_available": true }
+            "menu_item": { "id": "a1", "name": "Chicken salad", "price": 1390, "currency": "EUR", "is_available": true, "image": { "url": "https://img/a1.jpg" } }
         }]}]});
         let d = parse_search(&search);
         assert_eq!(d[0].venue, "salad-bar");
         assert_eq!(d[0].description, "Chicken, fresh salad");
-        assert_eq!((d[0].price, d[0].available), (1390, true));
+        assert_eq!((d[0].price, d[0].available, d[0].image.as_str()), (1390, true, "https://img/a1.jpg"));
         let menu = json!({ "items": [
             { "id": "m1", "name": "Bowl", "description": "x".repeat(200), "price": 1200, "disabled_info": null },
             { "id": "m2", "name": "Gone", "price": 900, "disabled_info": { "reason": "sold out" } }
@@ -395,6 +419,8 @@ mod tests {
         let m = parse_menu(&menu, "salad-bar", "EUR");
         assert_eq!(m[0].description.chars().count(), 141);
         assert!(m[0].available && !m[1].available);
+        assert_eq!(sized("https://imageproxy.wolt.com/assets/a", 160), "https://imageproxy.wolt.com/assets/a?w=160");
+        assert_eq!(sized("", 160), "");
         assert_eq!(dish_url("https://wolt.com/en/fin/helsinki/restaurant/salad-bar", "m1"), "https://wolt.com/en/fin/helsinki/restaurant/salad-bar/itemid-m1");
     }
 
@@ -427,8 +453,8 @@ mod tests {
 
     #[test]
     fn push_fits_one_message() {
-        let dish = PickDish { name: "Блюдо с длинным названием".repeat(3), price: 1290, currency: "EUR".into(), url: format!("https://wolt.com/en/fin/helsinki/restaurant/{}/itemid-0123456789abcdef01234567", "x".repeat(40)), why: "Белок и овощи, без сахара".repeat(2) };
-        let venue = PickVenue { name: "Ресторан".into(), store: false, url: "https://wolt.com/en/fin/helsinki/restaurant/x".into(), km: 1.2, eta: "20-30".into(), dishes: vec![dish; 6] };
+        let dish = PickDish { name: "Блюдо с длинным названием".repeat(3), price: 1290, currency: "EUR".into(), url: format!("https://wolt.com/en/fin/helsinki/restaurant/{}/itemid-0123456789abcdef01234567", "x".repeat(40)), why: "Белок и овощи, без сахара".repeat(2), image: format!("https://wolt-menu-images-cdn.wolt.com/menu-images/{}.jpg?w=160", "x".repeat(60)) };
+        let venue = PickVenue { name: "Ресторан".into(), store: false, url: "https://wolt.com/en/fin/helsinki/restaurant/x".into(), km: 1.2, eta: "20-30".into(), image: "https://imageproxy.wolt.com/assets/x?w=600".into(), dishes: vec![dish; 6] };
         let p = Picks { at: 1, meal: "13:00".into(), kind: "lunch".into(), venues: vec![venue; 4] };
         let out = push_payload(&p, "Обед");
         assert!(out.len() <= MAX_PLAINTEXT, "{}", out.len());
