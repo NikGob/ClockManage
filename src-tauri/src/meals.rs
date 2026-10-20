@@ -49,6 +49,8 @@ pub struct PairView {
 
 #[derive(Serialize)]
 pub struct MealsView {
+    /// Where Claude Code was found; `None` when it isn't installed.
+    pub claude: Option<String>,
     pub picks: Option<Picks>,
     pub running: bool,
     pub error: Option<String>,
@@ -155,6 +157,7 @@ pub fn view(shared: &Shared) -> MealsView {
     let url_base = shared.lock().cfg.meals.pwa_url.clone();
     let r = rt(shared);
     MealsView {
+        claude: find_claude().map(|p| p.display().to_string()),
         picks: r.picks.clone(),
         running: r.running.is_some(),
         error: r.error.clone(),
@@ -310,7 +313,7 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone:
         } else {
             None
         };
-        (m.agent_cmd.clone(), err, g.cfg.tz_offset_min)
+        (m.clone(), err, g.cfg.tz_offset_min)
     };
     let label = meal.map(clockmanage_core::config::fmt_hm).unwrap_or_default();
     if let Some(m) = meal {
@@ -346,7 +349,13 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone:
     emit(&shared);
     let config = shared.store.dir.join("meals-mcp.json");
     let _ = crate::store::write_atomic(&config, &json!({ "mcpServers": { "clockmanage": { "type": "http", "url": mcp.url } } }).to_string());
-    let line = cmd.replace("{mcp_config}", &config.display().to_string());
+    let line = match agent_line(&cmd, &config.display().to_string(), &mcp.url) {
+        Ok(line) => line,
+        Err(e) => {
+            rt(&shared).running = None;
+            return fail(&shared, e);
+        }
+    };
     let prompt = meals::agent_prompt(&label, kind, clockmanage_core::i18n::get().key());
     std::thread::spawn(move || {
         let before = rt(&shared).picks.as_ref().map(|p| p.at);
@@ -368,6 +377,35 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone:
         }
     });
     Ok(())
+}
+
+/// Claude Code on PATH, or where its installers put it.
+fn find_claude() -> Option<std::path::PathBuf> {
+    let names: &[&str] = if cfg!(windows) { &["claude.exe", "claude.cmd"] } else { &["claude"] };
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    for (var, sub) in [("APPDATA", "npm"), ("USERPROFILE", ".local/bin"), ("HOME", ".local/bin"), ("HOME", ".npm-global/bin")] {
+        if let Some(base) = std::env::var_os(var) {
+            dirs.push(std::path::PathBuf::from(base).join(sub));
+        }
+    }
+    dirs.iter().flat_map(|d| names.iter().map(move |n| d.join(n))).find(|p| p.is_file())
+}
+
+/// The shell line of the chosen agent. Claude Code runs on its own login (`claude`, then
+/// `/login`) without the user's settings, hooks and plugins, and may call only the meal tools.
+fn agent_line(m: &clockmanage_core::meals::Meals, config: &str, url: &str) -> Result<String, String> {
+    if m.agent == "custom" {
+        if m.agent_cmd.trim().is_empty() {
+            return Err(tr("meals_write_the_agent_command_first").to_string());
+        }
+        return Ok(m.agent_cmd.replace("{mcp_config}", config).replace("{mcp_url}", url));
+    }
+    let claude = find_claude().ok_or(tr("meals_claude_code_isnt_found_install_it"))?;
+    Ok(format!(
+        "\"{}\" -p --setting-sources project,local --mcp-config \"{config}\" --strict-mcp-config --allowedTools \"{}\"",
+        claude.display(),
+        meals::AGENT_TOOLS
+    ))
 }
 
 fn shell(line: &str) -> Command {

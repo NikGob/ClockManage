@@ -1,5 +1,5 @@
 import { call, esc } from '../api.js';
-import { icon } from '../icons.js';
+import { icon, CHECK } from '../icons.js';
 import { run, snack, hm, tsHm } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
 
@@ -130,10 +130,17 @@ export function mountMeals(root, ctx) {
       </section>
       <section class="section">
         <h2>${tr('meals_agent')}</h2>
-        <p class="section-d">${tr('meals_before_each_meal_clockmanage_runs_this', { file: '<code>{mcp_config}</code>' })}</p>
+        <p class="section-d">${tr('meals_before_each_meal_clockmanage_asks_this')}</p>
         <div class="surface">
-          <div class="setting col"><div class="field"><input id="agent" class="mono" value="${esc(m.agent_cmd)}" spellcheck="false" aria-label="${tr('meals_agent')}"></div>
-            <div><button class="btn text interactive" id="agent-reset">${icon('refresh')}${tr('meals_back_to_claude_code')}</button></div></div>
+          <div class="setting"><div class="grow"><div class="t">${tr('meals_who_picks')}</div></div>
+            <div class="segmented" role="group" data-agent>${[['claude', tr('meals_claude_code')], ['custom', tr('meals_custom_command')]].map(([v, l]) =>
+              `<button class="interactive" data-agent="${v}" aria-pressed="${m.agent === v}">${CHECK}${l}</button>`).join('')}</div></div>
+          ${m.agent === 'custom'
+            ? `<div class="setting col"><div class="field"><input id="agent" class="mono" value="${esc(m.agent_cmd)}" spellcheck="false" placeholder="codex exec --skip-git-repo-check -" aria-label="${tr('meals_custom_command')}"></div>
+                <div class="d">${tr('meals_the_task_comes_on_stdin', { url: '<code>{mcp_url}</code>', config: '<code>{mcp_config}</code>' })}</div></div>`
+            : `<div class="setting"><span class="badge">${icon(st.claude ? 'check' : 'warning')}</span><div class="grow"><div class="d">${st.claude
+              ? tr('meals_found_it_runs_on_its_own', { path: `<code>${esc(st.claude)}</code>` })
+              : tr('meals_claude_code_isnt_found_install_it')}</div></div></div>`}
         </div>
       </section>`;
   }
@@ -183,7 +190,7 @@ export function mountMeals(root, ctx) {
       if (!address) return;
       const r = await run(() => call('meals_geocode', { address }), b);
       if (r) save((m) => { m.address = address; m.lat = r.lat; m.lon = r.lon; }, r.label);
-    } else if (b.id === 'agent-reset') save((m) => { m.agent_cmd = ''; });
+    } else if (b.dataset.agent) save((m) => { m.agent = b.dataset.agent; });
     else if (b.id === 'pair') { const p = await run(() => call('meals_pair'), b); if (p) await refresh(); }
     else if (b.id === 'unpair') { await run(() => call('meals_unpair'), b); await reload(); }
   });

@@ -31,7 +31,7 @@ const cfg = {
   meals: {
     diet: L('Без сахара и жареного. Белок в каждом приёме пищи, овощи — половина тарелки. Обед до 700 ккал, ужин до 500.', 'No sugar, nothing fried. Protein at every meal, vegetables half the plate. Lunch up to 700 kcal, dinner up to 500.'),
     address: 'Mannerheimintie 16, Helsinki', lat: 60.1699, lon: 24.9384, max_km: 3, times: [780, 1140], lead_min: 30,
-    agent_cmd: 'claude -p --mcp-config "{mcp_config}" --strict-mcp-config --allowedTools "mcp__clockmanage__get_diet mcp__clockmanage__wolt_search mcp__clockmanage__wolt_menu mcp__clockmanage__set_meal_options"',
+    agent: q.get('agent') || 'claude', agent_cmd: '',
     pwa_url: 'https://danilt2000.github.io/ClockManage/', vapid_key: '', link: q.get('paired') === '0' ? null : { key: '', up: '', down: '' }, subscription: null, relay_seen: 0,
   },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
@@ -222,7 +222,7 @@ export async function invoke(cmd, args) {
     case 'install_update': location.reload(); return null;
     case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
-    case 'meals_state': return { picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: q.get('paired') !== '0', pairing: mealsPairing };
+    case 'meals_state': return { claude: q.get('claude') === '0' ? null : 'C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd', picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: q.get('paired') !== '0', pairing: mealsPairing };
     case 'meals_pick_now': return null;
     case 'meals_pair': mealsPairing = { code: 'K7QM-4XPT', url: `${cfg.meals.pwa_url}?pair=K7QM4XPT`, qr: MOCK_QR, until: Date.now() + 10 * MIN }; return mealsPairing;
     case 'meals_unpair': mealsPairing = null; cfg.meals.link = null; return null;

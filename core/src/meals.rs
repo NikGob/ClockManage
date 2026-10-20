@@ -12,7 +12,10 @@ use crate::i18n::tr;
 use crate::relay::Link;
 use crate::webpush::{Subscription, MAX_PLAINTEXT};
 
-pub const DEFAULT_AGENT: &str = "claude -p --mcp-config \"{mcp_config}\" --strict-mcp-config --allowedTools \"mcp__clockmanage__get_diet mcp__clockmanage__wolt_search mcp__clockmanage__wolt_menu mcp__clockmanage__set_meal_options\"";
+/// The MCP tools the agent may call: the meal ones only.
+pub const AGENT_TOOLS: &str = "mcp__clockmanage__get_diet mcp__clockmanage__wolt_search mcp__clockmanage__wolt_menu mcp__clockmanage__set_meal_options";
+/// The command of 0.5 builds, before the agent picker: a config holding it means Claude Code.
+const OLD_DEFAULT_AGENT: &str = "claude -p --mcp-config \"{mcp_config}\" --strict-mcp-config --allowedTools \"mcp__clockmanage__get_diet mcp__clockmanage__wolt_search mcp__clockmanage__wolt_menu mcp__clockmanage__set_meal_options\"";
 pub const DEFAULT_PWA: &str = "https://danilt2000.github.io/ClockManage/";
 pub const MAX_KM: f64 = 15.0;
 
@@ -30,7 +33,10 @@ pub struct Meals {
     pub times: Vec<u32>,
     /// How long before a meal the agent starts picking.
     pub lead_min: u32,
-    /// Shell command of the agent; the prompt comes on stdin, `{mcp_config}` is a file path.
+    /// "claude" (Claude Code, found by itself) or "custom" (`agent_cmd`).
+    pub agent: String,
+    /// The custom agent's shell command: the prompt comes on stdin, `{mcp_url}` is the MCP
+    /// address and `{mcp_config}` a Claude-style config file.
     pub agent_cmd: String,
     /// Where the iPhone web app is hosted (the QR code opens it).
     pub pwa_url: String,
@@ -57,7 +63,8 @@ impl Default for Meals {
             max_km: 3.0,
             times: vec![13 * 60, 19 * 60],
             lead_min: 30,
-            agent_cmd: DEFAULT_AGENT.into(),
+            agent: "claude".into(),
+            agent_cmd: String::new(),
             pwa_url: DEFAULT_PWA.into(),
             vapid_key: String::new(),
             link: None,
@@ -77,8 +84,11 @@ impl Meals {
         self.times.retain(|t| *t < 24 * 60);
         self.times.sort_unstable();
         self.times.dedup();
-        if self.agent_cmd.trim().is_empty() {
-            self.agent_cmd = DEFAULT_AGENT.into();
+        if self.agent_cmd == OLD_DEFAULT_AGENT {
+            self.agent_cmd.clear();
+        }
+        if self.agent != "custom" {
+            self.agent = "claude".into();
         }
         if self.pwa_url.trim().is_empty() {
             self.pwa_url = DEFAULT_PWA.into();
@@ -381,6 +391,16 @@ mod tests {
         assert_eq!(m[0].description.chars().count(), 141);
         assert!(m[0].available && !m[1].available);
         assert_eq!(dish_url("https://wolt.com/en/fin/helsinki/restaurant/salad-bar", "m1"), "https://wolt.com/en/fin/helsinki/restaurant/salad-bar/itemid-m1");
+    }
+
+    #[test]
+    fn the_old_default_command_means_claude_code() {
+        let mut m = Meals { agent: String::new(), agent_cmd: OLD_DEFAULT_AGENT.into(), ..Meals::default() };
+        m.normalize();
+        assert_eq!((m.agent.as_str(), m.agent_cmd.as_str()), ("claude", ""));
+        let mut m = Meals { agent: "custom".into(), agent_cmd: "codex exec -".into(), ..Meals::default() };
+        m.normalize();
+        assert_eq!((m.agent.as_str(), m.agent_cmd.as_str()), ("custom", "codex exec -"));
     }
 
     #[test]
