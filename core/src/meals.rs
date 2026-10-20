@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::clock::Ts;
+use crate::i18n::tr;
 use crate::relay::Link;
 use crate::webpush::{Subscription, MAX_PLAINTEXT};
 
@@ -41,10 +42,15 @@ pub struct Meals {
     pub relay_seen: i64,
 }
 
+/// A diet for a clear head on study days; the user's own replaces it.
+pub fn default_diet() -> &'static str {
+    tr("meals_goal_a_clear_steady_mind")
+}
+
 impl Default for Meals {
     fn default() -> Self {
         Self {
-            diet: String::new(),
+            diet: default_diet().into(),
             address: String::new(),
             lat: None,
             lon: None,
@@ -63,6 +69,9 @@ impl Default for Meals {
 
 impl Meals {
     pub fn normalize(&mut self) {
+        if self.diet.trim().is_empty() {
+            self.diet = default_diet().into();
+        }
         self.max_km = self.max_km.clamp(0.5, MAX_KM);
         self.lead_min = self.lead_min.clamp(5, 180);
         self.times.retain(|t| *t < 24 * 60);

@@ -325,7 +325,7 @@ fn follow_lang_names<'a>(names: impl Iterator<Item = &'a mut String>, keys: &[&'
 }
 
 impl Config {
-    /// The defaults (plan names, segment types, the emergency phrase) are written in the
+    /// The defaults (plan names, segment types, the emergency phrase, the diet) are written in the
     /// language of the first run. While the user hasn't changed them they follow the interface
     /// language: a later language switch, or a config from an older version, doesn't leave them
     /// in another language. Returns whether anything changed.
@@ -339,6 +339,10 @@ impl Config {
         changed |= follow_lang_names(self.segments.iter_mut().map(|t| &mut t.name), &SEGMENTS);
         if let Some(to) = default_in_other_lang(&self.emergency_phrase, &["config_i_am_consciously_interrupting_my_study"]) {
             self.emergency_phrase = to.into();
+            changed = true;
+        }
+        if let Some(to) = default_in_other_lang(&self.meals.diet, &["meals_goal_a_clear_steady_mind"]) {
+            self.meals.diet = to.into();
             changed = true;
         }
         changed

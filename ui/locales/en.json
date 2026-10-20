@@ -585,6 +585,7 @@
   "meals_food_for": "Food for {meal}",
   "meals_food_picks": "Food picks",
   "meals_for_example_13_00_19_00": "For example 13:00, 19:00",
+  "meals_goal_a_clear_steady_mind": "Goal: a clear, steady mind for long study days — focus, memory and energy without a slump after lunch.\n\nEvery meal:\n- Protein (fish, eggs, chicken, legumes, tofu or Greek yogurt) and vegetables; leafy greens at least once a day.\n- Slow carbs only: whole grains, oats, buckwheat, brown rice, legumes. No white bread, sweet pastries or sugary sauces.\n- Healthy fats: olive oil, nuts, avocado, seeds.\n\nOften:\n- Oily fish (salmon, mackerel, sardines) at least twice a week, for omega-3.\n- Berries, nuts and dark chocolate (70%+) as snacks.\n\nAvoid:\n- Sugary drinks, sweets, fried and deep-fried food, fast food, sausages and other processed meat.\n- Heavy, greasy portions before study: a moderate lunch (about 500–700 kcal), so it doesn't make you sleepy.\n- Alcohol.\n\nCoffee and tea before 14:00 only: sleep does more for the brain than anything on the plate.\nWater with every meal.\n\nThis is a general default, not medical advice: replace it with your own diet.",
   "meals_how_long_before_a_meal_the": "How long before a meal the agent starts picking",
   "meals_in_your_own_words_rules_banned": "In your own words: rules, banned foods, portions, goals. Claude can load it through MCP (set_diet), and the paired iPhone can edit it too.",
   "meals_iphone": "iPhone",
