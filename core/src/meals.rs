@@ -181,7 +181,8 @@ fn short(text: &str, max: usize) -> String {
 /// Venues of `/v1/pages/restaurants` (or the grocery list) that deliver to `at` and are within
 /// `max_km`, nearest first.
 pub fn parse_venues(page: &Value, at: (f64, f64), max_km: f64) -> Vec<Venue> {
-    let city = s(page, "city");
+    // The restaurants page has `city`; the grocery list only `city_data.slug`.
+    let city = Some(s(page, "city")).filter(|c| !c.is_empty()).unwrap_or_else(|| s(&page["city_data"], "slug"));
     let mut out: Vec<Venue> = Vec::new();
     for item in page["sections"].as_array().into_iter().flatten().flat_map(|sec| sec["items"].as_array().into_iter().flatten()) {
         let v = &item["venue"];
@@ -365,6 +366,10 @@ mod tests {
         assert_eq!((v[0].eta.as_str(), v[0].rating, v[0].online), ("20-30", Some(9.1), true));
         assert!(!v[1].online);
         assert_eq!(parse_venues(&page(), (60.1699, 24.9384), 20.0).len(), 3);
+        let mut grocery = page();
+        grocery.as_object_mut().unwrap().remove("city");
+        grocery["city_data"] = json!({ "slug": "helsinki" });
+        assert_eq!(parse_venues(&grocery, (60.1699, 24.9384), 3.0)[1].url, "https://wolt.com/en/fin/helsinki/venue/shop");
     }
 
     #[test]
