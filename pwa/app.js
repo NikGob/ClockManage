@@ -307,7 +307,8 @@ async function render() {
   try { texts = await (await fetch(`locales/${lang}.json`)).json(); } catch { /* keys stay visible */ }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
-    navigator.serviceWorker.addEventListener('message', () => { if (load().link) render(); });
+    // Any push (picks or a failure) ends the wait for a pick.
+    navigator.serviceWorker.addEventListener('message', () => { if (load().link) { store({ pending: null }); render(); } });
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden && load().link) render(); });
   render();
