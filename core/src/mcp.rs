@@ -347,7 +347,7 @@ fn tools() -> Value {
         {
             "name": "wolt_search",
             "title": "Find food on Wolt nearby",
-            "description": "Wolt food that delivers to the user's address, within max_km. Restaurants and grocery stores both. With query (a dish, a product, an ingredient or a cuisine, e.g. \"chicken salad\", \"poke\", \"blueberries\", \"walnuts\") — matching items: id, venue (slug), store (true for a grocery store), name, description, price (cents), currency, available. Without query — the nearby restaurants and stores: slug, name, km, eta (minutes), rating, tags, online. Run several queries; the data is cached for a few minutes.",
+            "description": "Wolt food that delivers to the user's address, within max_km. Restaurants and grocery stores both. With query (a dish, a product, an ingredient or a cuisine, e.g. \"chicken salad\", \"poke\", \"blueberries\", \"walnuts\") — up to 20 available items, at most 3 per venue: items[] (id, venue slug, name, description, price in cents), venues{slug: name, store (true for a grocery store), km, eta in minutes} and currency. Without query — the nearby open restaurants and stores: slug, name, km, eta, rating, tags. Run several queries; the data is cached for a few minutes.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "query": { "type": "string", "description": "What to search for; omit to list the restaurants" } },
@@ -358,7 +358,7 @@ fn tools() -> Value {
         {
             "name": "wolt_menu",
             "title": "A restaurant's menu",
-            "description": "The menu of one nearby restaurant (venue = its slug from wolt_search): dishes with id, name, description, price (cents), currency, available, and the restaurant's km, eta and online. Menus carry no nutrition data: judge by names and descriptions.",
+            "description": "The menu of one nearby restaurant (venue = its slug from wolt_search): up to 60 available dishes with id, name, description, price (cents), plus km, eta and currency. Grocery stores list no menu: search their products with wolt_search. Menus carry no nutrition data: judge by names and descriptions.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "venue": { "type": "string", "description": "Restaurant slug from wolt_search" } },

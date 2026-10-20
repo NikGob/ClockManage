@@ -612,6 +612,7 @@
   "meals_meal_times": "Meal times",
   "meals_no_address_yet": "No address yet: type it and press Find.",
   "meals_no_iphone_yet": "No iPhone yet",
+  "meals_no_menu_here_grocery_stores_list": "No menu here: grocery stores list none. Find its products by name with wolt_search.",
   "meals_no_picks_yet_before_each_meal": "No picks yet. Before each meal the agent finds restaurants nearby that fit your diet; or press Pick now.",
   "meals_no_such_restaurant_nearby": "No restaurant {venue} within {km} km: take slugs from wolt_search.",
   "meals_not_farther_than": "Not farther than",

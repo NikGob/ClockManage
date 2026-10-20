@@ -353,6 +353,7 @@ pub fn agent_prompt(meal: &str, kind: &str, lang: &str) -> String {
          and look at promising restaurants with wolt_menu. Only restaurants these tools return deliver to the user and are close enough. \
          3) Choose up to 5 restaurants that are open now, and in each 1-4 available dishes that together make a meal fitting the diet. \
          Wolt menus have no nutrition data: judge by names and descriptions, and prefer dishes whose fit is clear. \
+         Be economical: at most 20 tool calls in all; one wolt_search per dish or product idea, and wolt_menu only for a restaurant you are about to pick. \
          Never pick drinks of any kind (water, juice, soda, coffee, tea, smoothies): the user buys their own. \
          Also choose up to 5 grocery stores (store: true in wolt_search) and in each 4-10 products to buy that fit the diet for the next days \
          (for example berries, nuts, oily fish, leafy greens, eggs, Greek yogurt, olive oil): search for them by name with wolt_search. \

@@ -612,6 +612,7 @@
   "meals_meal_times": "Время еды",
   "meals_no_address_yet": "Адреса пока нет: введите его и нажмите «Найти».",
   "meals_no_iphone_yet": "iPhone пока не подключён",
+  "meals_no_menu_here_grocery_stores_list": "Меню здесь нет: продуктовые магазины его не выкладывают. Ищите их товары по названию через wolt_search.",
   "meals_no_picks_yet_before_each_meal": "Подборок пока нет. Перед каждым приёмом пищи агент найдёт рядом рестораны под вашу диету; или нажмите «Подобрать сейчас».",
   "meals_no_such_restaurant_nearby": "Ресторана {venue} нет в радиусе {km} км: берите slug из wolt_search.",
   "meals_not_farther_than": "Не дальше",

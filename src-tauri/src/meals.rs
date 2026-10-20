@@ -204,28 +204,51 @@ fn nearby(shared: &Shared) -> Result<Vec<Venue>, String> {
 pub fn wolt_search(shared: &Shared, query: Option<&str>) -> Result<Value, String> {
     let venues = nearby(shared)?;
     let Some(q) = query else {
-        let list = |store: bool, n: usize| venues.iter().filter(|v| v.store == store).take(n).map(|v| json!({
-            "slug": v.slug, "name": v.name, "km": v.km, "eta": v.eta, "rating": v.rating, "tags": v.tags, "online": v.online
+        let list = |store: bool, n: usize| venues.iter().filter(|v| v.store == store && v.online).take(n).map(|v| json!({
+            "slug": v.slug, "name": v.name, "km": v.km, "eta": v.eta, "rating": v.rating, "tags": v.tags.iter().take(3).collect::<Vec<_>>()
         })).collect::<Vec<_>>();
-        return Ok(json!({ "restaurants": list(false, 50), "stores": list(true, 20) }));
+        return Ok(json!({ "restaurants": list(false, 40), "stores": list(true, 15) }));
     };
     let at = shared.lock().cfg.meals.location().ok_or(tr("meals_set_the_address_first"))?;
     let page = get_json(http().post("https://restaurant-api.wolt.com/v1/pages/search").json(&json!({ "q": q, "target": "items", "lat": at.0, "lon": at.1 })))?;
     let near: HashMap<&str, &Venue> = venues.iter().map(|v| (v.slug.as_str(), v)).collect();
-    let found: Vec<Dish> = meals::parse_search(&page).into_iter().filter(|d| near.contains_key(d.venue.as_str())).take(40).collect();
-    let mut r = rt(shared);
-    let out: Vec<Value> = found
-        .iter()
-        .map(|d| {
-            let v = near[d.venue.as_str()];
-            json!({ "id": d.id, "venue": d.venue, "venue_name": v.name, "store": v.store, "km": v.km, "eta": v.eta, "online": v.online,
-                    "name": d.name, "description": d.description, "price": d.price, "currency": d.currency, "available": d.available })
+    // Results add up in the agent's context over many searches: few per venue, venue facts once.
+    let mut per_venue: HashMap<String, usize> = HashMap::new();
+    let found: Vec<Dish> = meals::parse_search(&page)
+        .into_iter()
+        .filter(|d| d.available && near.get(d.venue.as_str()).is_some_and(|v| v.online))
+        .filter(|d| {
+            let n = per_venue.entry(d.venue.clone()).or_default();
+            *n += 1;
+            *n <= 3
         })
+        .take(20)
         .collect();
+    let mut seen: HashMap<&str, Value> = HashMap::new();
+    for d in &found {
+        let v = near[d.venue.as_str()];
+        seen.entry(v.slug.as_str()).or_insert_with(|| json!({ "name": v.name, "store": v.store, "km": v.km, "eta": v.eta }));
+    }
+    let items: Vec<Value> = found
+        .iter()
+        .map(|d| json!({ "id": d.id, "venue": d.venue, "name": d.name, "description": shorter(&d.description), "price": d.price }))
+        .collect();
+    let currency = found.first().map(|d| d.currency.clone()).unwrap_or_default();
+    let venues_out = json!(seen);
+    let mut r = rt(shared);
     for d in found {
         r.dishes.insert(d.id.clone(), d);
     }
-    Ok(json!({ "query": q, "dishes": out }))
+    Ok(json!({ "query": q, "currency": currency, "venues": venues_out, "items": items }))
+}
+
+/// Descriptions for the agent: enough to judge a dish, short enough for dozens of results.
+fn shorter(text: &str) -> String {
+    if text.chars().count() <= 90 {
+        text.to_string()
+    } else {
+        format!("{}…", text.chars().take(90).collect::<String>().trim_end())
+    }
 }
 
 pub fn wolt_menu(shared: &Shared, slug: &str) -> Result<Value, String> {
@@ -233,16 +256,16 @@ pub fn wolt_menu(shared: &Shared, slug: &str) -> Result<Value, String> {
     let venues = nearby(shared)?;
     let v = venues.iter().find(|v| v.slug == slug).ok_or_else(|| tr!("meals_no_such_restaurant_nearby", venue = slug, km = max_km))?;
     let page = get_json(http().get(format!("https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/{slug}/assortment")))?;
-    let dishes = meals::parse_menu(&page, slug, &v.currency);
-    let out: Vec<Value> = dishes
-        .iter()
-        .map(|d| json!({ "id": d.id, "name": d.name, "description": d.description, "price": d.price, "currency": d.currency, "available": d.available }))
-        .collect();
+    let dishes: Vec<Dish> = meals::parse_menu(&page, slug, &v.currency).into_iter().filter(|d| d.available).take(60).collect();
+    if dishes.is_empty() {
+        return Ok(json!({ "venue": v.slug, "name": v.name, "dishes": [], "note": tr("meals_no_menu_here_grocery_stores_list") }));
+    }
+    let out: Vec<Value> = dishes.iter().map(|d| json!({ "id": d.id, "name": d.name, "description": shorter(&d.description), "price": d.price })).collect();
     let mut r = rt(shared);
     for d in dishes {
         r.dishes.insert(d.id.clone(), d);
     }
-    Ok(json!({ "venue": v.slug, "name": v.name, "km": v.km, "eta": v.eta, "online": v.online, "dishes": out }))
+    Ok(json!({ "venue": v.slug, "name": v.name, "km": v.km, "eta": v.eta, "online": v.online, "currency": v.currency, "dishes": out }))
 }
 
 pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, String> {
