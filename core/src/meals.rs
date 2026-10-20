@@ -354,7 +354,7 @@ pub fn agent_prompt(meal: &str, kind: &str, lang: &str) -> String {
          3) Choose up to 5 restaurants that are open now, and in each 1-4 available dishes that together make a meal fitting the diet. \
          Wolt menus have no nutrition data: judge by names and descriptions, and prefer dishes whose fit is clear. \
          Never pick drinks of any kind (water, juice, soda, coffee, tea, smoothies): the user buys their own. \
-         Also choose up to 5 grocery stores (store: true in wolt_search) and in each 2-6 products to buy that fit the diet for the next days \
+         Also choose up to 5 grocery stores (store: true in wolt_search) and in each 4-10 products to buy that fit the diet for the next days \
          (for example berries, nuts, oily fish, leafy greens, eggs, Greek yogurt, olive oil): search for them by name with wolt_search. \
          4) Call set_meal_options exactly once with your picks, restaurants and stores together; write each `why` in one short line in this language: {lang}. Then stop."
     )

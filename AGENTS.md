@@ -22,6 +22,8 @@ Copy-Item target/release/cm-guard.exe src-tauri/binaries/cm-guard-x86_64-pc-wind
 cargo check -p clockmanage
 ```
 
+Don't start the built app from a shell inside the Claude desktop app on Windows: it is an MSIX package, and every process it starts writes AppData into `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming`, so that app sees other settings than the real one started by autostart. Start it from a terminal opened outside Claude.
+
 On Linux (Ubuntu 22.04 or newer, or a container of it, like the Linux CI job) no sidecar is needed: `src-tauri/tauri.linux.conf.json` drops the launch guard.
 
 ```sh

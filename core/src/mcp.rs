@@ -370,7 +370,7 @@ fn tools() -> Value {
         {
             "name": "set_meal_options",
             "title": "Offer the meal picks",
-            "description": "Saves the picks for the coming meal and sends them to the user: they show on the Meals screen with links to each restaurant and dish on Wolt, and a notification goes to the paired iPhone. Up to 5 restaurants and up to 5 grocery stores, each with 1-6 dishes or products (ids from wolt_search or wolt_menu) and a short why per item in the user's language; never drinks. Replaces the previous picks. The user orders on Wolt themselves; nothing is put in a basket.",
+            "description": "Saves the picks for the coming meal and sends them to the user: they show on the Meals screen with links to each restaurant and dish on Wolt, and a notification goes to the paired iPhone. Up to 5 restaurants and up to 5 grocery stores, each with 1-4 dishes (restaurants) or up to 10 products (stores), ids from wolt_search or wolt_menu, and a short why per item in the user's language; never drinks. Replaces the previous picks. The user orders on Wolt themselves; nothing is put in a basket.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -381,7 +381,7 @@ fn tools() -> Value {
                             "properties": {
                                 "venue": { "type": "string", "description": "Restaurant or store slug" },
                                 "dishes": {
-                                    "type": "array", "minItems": 1, "maxItems": 6,
+                                    "type": "array", "minItems": 1, "maxItems": 10,
                                     "items": {
                                         "type": "object",
                                         "properties": {
@@ -594,7 +594,7 @@ fn parse_meal_options(args: &Value) -> Result<Vec<MealPick>, String> {
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .take(6)
+                .take(10)
                 .filter_map(|d| {
                     let id = d.get("id").and_then(Value::as_str)?;
                     Some((id.to_string(), d.get("why").and_then(Value::as_str).unwrap_or("").chars().take(160).collect()))
