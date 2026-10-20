@@ -530,4 +530,7 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
 .pair-box { align-items: flex-start; gap: 8px; }
 .pair-box .pin { font: 500 28px/36px var(--font); letter-spacing: .08em; color: var(--md-sys-color-primary); }
 .qr svg { width: 220px; height: 220px; border-radius: var(--shape-s); display: block; }
+.hstack.wrap { flex-wrap: wrap; }
+.chip { font: 500 14px/20px var(--font); padding: 6px 14px; border-radius: 999px; border: 1px solid var(--md-sys-color-outline-variant); background: none; color: var(--md-sys-color-on-surface); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
 input.mono { font: 400 13px/20px ui-monospace, "Cascadia Code", Consolas, monospace; }

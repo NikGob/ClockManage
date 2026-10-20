@@ -30,7 +30,8 @@ const VAPID_SUBJECT: &str = "https://github.com/NikGob/ClockManage";
 #[derive(Default)]
 pub struct MealsRt {
     picks: Option<Picks>,
-    running: Option<String>,
+    /// The run now: its meal time ("" by hand), kind, and whether the iPhone asked for it.
+    running: Option<(String, String, bool)>,
     error: Option<String>,
     pairing: Option<(String, Ts)>,
     venues: Option<(Ts, (f64, f64, f64), Vec<Venue>)>,
@@ -104,11 +105,11 @@ pub fn start(shared: Arc<Shared>) {
             std::thread::sleep(Duration::from_secs(5));
             let now = clock::now_ts();
             if let Some(meal) = due_meal(&shared, now) {
-                let _ = run_agent(shared.clone(), Some(meal));
+                let _ = run_agent(shared.clone(), Some(meal), meals::kind_at(meal), false);
             }
             let linked = shared.lock().cfg.meals.link.is_some();
             let pairing = rt(&shared).pairing.is_some();
-            if linked && now - last_poll >= if pairing { 5_000 } else { 60_000 } {
+            if linked && now - last_poll >= if pairing { 5_000 } else { 15_000 } {
                 last_poll = now;
                 if let Err(e) = poll_phone(&shared) {
                     eprintln!("meals relay: {e}");
@@ -249,13 +250,17 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
         }
         out.push(PickVenue { name: v.name.clone(), url: v.url.clone(), km: v.km, eta: v.eta.clone(), dishes });
     }
-    let picks = Picks { at: clock::now_ts(), meal: r.running.clone().unwrap_or_default(), venues: out };
+    let (meal, kind) = match &r.running {
+        Some((meal, kind, _)) => (meal.clone(), kind.clone()),
+        None => (String::new(), now_kind(shared).to_string()),
+    };
+    let picks = Picks { at: clock::now_ts(), meal, kind, venues: out };
     r.picks = Some(picks.clone());
     r.error = None;
     drop(r);
     let _ = crate::store::write_atomic(&picks_path(shared), &serde_json::to_string_pretty(&picks).unwrap_or_default());
     emit(shared);
-    let title = if picks.meal.is_empty() { tr("meals_food_picks").to_string() } else { tr!("meals_food_for", meal = picks.meal) };
+    let title = meals::picks_title(&picks);
     let body = picks.venues.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(" · ");
     let _ = shared.app.notification().builder().title(&title).body(&body).show();
     let pushed = match push(shared, &meals::push_payload(&picks, &title)) {
@@ -271,7 +276,17 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
 
 // ---- the agent ----
 
-pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>) -> Result<(), String> {
+fn now_kind(shared: &Shared) -> &'static str {
+    let tz = shared.lock().cfg.tz_offset_min;
+    meals::kind_at(clock::minute_of_day(clock::now_ts(), tz))
+}
+
+/// A notification on the iPhone that its pick failed (it would wait for nothing otherwise).
+fn push_failure(shared: &Shared, error: &str) {
+    let _ = push(shared, &json!({ "title": tr("meals_couldnt_pick_food"), "body": error }).to_string());
+}
+
+pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone: bool) -> Result<(), String> {
     let (cmd, ready_err, tz) = {
         let g = shared.lock();
         let m = &g.cfg.meals;
@@ -291,6 +306,9 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>) -> Result<(), String> {
     let fail = |shared: &Shared, e: String| {
         rt(shared).error = Some(e.clone());
         emit(shared);
+        if from_phone {
+            push_failure(shared, &e);
+        }
         Err(e)
     };
     if let Some(e) = ready_err {
@@ -303,30 +321,38 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>) -> Result<(), String> {
     {
         let mut r = rt(&shared);
         if r.running.is_some() {
+            drop(r);
+            if from_phone {
+                push_failure(&shared, tr("meals_the_agent_is_already_picking"));
+            }
             return Err(tr("meals_the_agent_is_already_picking").to_string());
         }
-        r.running = Some(label.clone());
+        r.running = Some((label.clone(), kind.to_string(), from_phone));
         r.error = None;
     }
     emit(&shared);
     let config = shared.store.dir.join("meals-mcp.json");
     let _ = crate::store::write_atomic(&config, &json!({ "mcpServers": { "clockmanage": { "type": "http", "url": mcp.url } } }).to_string());
     let line = cmd.replace("{mcp_config}", &config.display().to_string());
-    let prompt = meals::agent_prompt(&label, clockmanage_core::i18n::get().key());
+    let prompt = meals::agent_prompt(&label, kind, clockmanage_core::i18n::get().key());
     std::thread::spawn(move || {
         let before = rt(&shared).picks.as_ref().map(|p| p.at);
         let res = spawn_and_wait(&line, &prompt);
         let mut r = rt(&shared);
         r.running = None;
         let got = r.picks.as_ref().map(|p| p.at) != before;
-        if !got {
-            r.error = Some(match res {
-                Err(e) => e,
-                Ok(out) => tr!("meals_the_agent_ended_without_picks", output = out),
-            });
+        let error = (!got).then(|| match res {
+            Err(e) => e,
+            Ok(out) => tr!("meals_the_agent_ended_without_picks", output = out),
+        });
+        if let Some(e) = &error {
+            r.error = Some(e.clone());
         }
         drop(r);
         emit(&shared);
+        if let (Some(e), true) = (error, from_phone) {
+            push_failure(&shared, &e);
+        }
     });
     Ok(())
 }
@@ -492,7 +518,7 @@ fn publish_diet(shared: &Shared, now: Ts) {
 }
 
 /// Applies what the web app sent: its push subscription, a diet edit.
-fn poll_phone(shared: &Shared) -> Result<(), String> {
+fn poll_phone(shared: &Arc<Shared>) -> Result<(), String> {
     let (link, seen) = {
         let g = shared.lock();
         (g.cfg.meals.link.clone(), g.cfg.meals.relay_seen)
@@ -526,6 +552,11 @@ fn poll_phone(shared: &Shared) -> Result<(), String> {
                 if let Err(e) = push(shared, &hello) {
                     rt(shared).error = Some(e);
                     emit(shared);
+                }
+            }
+            Some("pick") => {
+                if let Some(kind) = meals::KINDS.into_iter().find(|k| msg["kind"].as_str() == Some(*k)) {
+                    let _ = run_agent(shared.clone(), None, kind, true);
                 }
             }
             Some("diet") => {
@@ -570,7 +601,7 @@ pub fn meals_state(s: S) -> MealsView {
 
 #[tauri::command]
 pub fn meals_pick_now(s: S) -> Result<(), String> {
-    run_agent(s.inner().clone(), None)
+    run_agent(s.inner().clone(), None, now_kind(&s), false)
 }
 
 #[tauri::command]

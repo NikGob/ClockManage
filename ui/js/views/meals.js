@@ -14,6 +14,19 @@ function parseTimes(text) {
   return out;
 }
 
+/** Ready diets: [id, name, text], built at render time so the texts are in the current language. */
+function presets() {
+  return [
+    ['brain', tr('meals_max_for_the_brain'), tr('meals_goal_a_clear_steady_mind')],
+    ['protein', tr('meals_brain_protein'), tr('meals_goal_plenty_of_protein_for')],
+    ['light', tr('meals_brain_light'), tr('meals_goal_lose_weight_slowly_while')],
+  ];
+}
+
+function kindName(kind) {
+  return { breakfast: tr('meals_breakfast'), lunch: tr('meals_lunch'), dinner: tr('meals_dinner') }[kind] || tr('meals_food_picks');
+}
+
 export function mountMeals(root, ctx) {
   let cfg = null;
   let st = null;
@@ -41,7 +54,7 @@ export function mountMeals(root, ctx) {
       return `<section class="section"><h2>${tr('meals_picks')}</h2>
         <div class="surface">${status}<div class="setting"><div class="grow"><div class="d">${tr('meals_no_picks_yet_before_each_meal')}</div></div></div></div></section>`;
     }
-    const title = p.meal ? tr('meals_food_for', { meal: p.meal }) : tr('meals_food_picks');
+    const title = p.meal ? tr('meals_kind_at', { kind: kindName(p.kind), time: p.meal }) : kindName(p.kind);
     const venues = p.venues.map((v) => `<div class="surface meal-venue">
         <div class="setting"><span class="badge">${icon('restaurant')}</span>
           <div class="grow"><div class="t">${esc(v.name)}</div><div class="d">${tr('meals_km_min', { km: dec(v.km), eta: esc(v.eta) })}</div></div>
@@ -82,7 +95,8 @@ export function mountMeals(root, ctx) {
         <h2>${tr('meals_diet')}</h2>
         <p class="section-d">${tr('meals_in_your_own_words_rules_banned')}</p>
         <div class="surface">
-          <div class="setting col"><div class="field"><textarea id="diet" rows="8" spellcheck="false" aria-label="${tr('meals_diet')}">${esc(draft ?? m.diet)}</textarea></div>
+          <div class="setting col"><div class="hstack wrap"><span class="d">${tr('meals_ready_diets')}</span>${presets().map(([id, name, text]) => `<button class="chip interactive" data-preset="${id}" aria-pressed="${(draft ?? m.diet) === text}">${esc(name)}</button>`).join('')}</div>
+            <div class="field"><textarea id="diet" rows="8" spellcheck="false" aria-label="${tr('meals_diet')}">${esc(draft ?? m.diet)}</textarea></div>
             <div><button class="btn tonal interactive" id="diet-save">${icon('check')}${tr('meals_save_the_diet')}</button></div></div>
         </div>
       </section>
@@ -149,6 +163,11 @@ export function mountMeals(root, ctx) {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.open) await run(() => call('open_url', { url: b.dataset.open }));
+    else if (b.dataset.preset) {
+      draft = presets().find(([id]) => id === b.dataset.preset)[2];
+      render();
+      snack(tr('meals_press_save_the_diet_to_keep'));
+    }
     else if (b.dataset.copy) {
       try { await navigator.clipboard.writeText(b.dataset.copy); snack(tr('settings_copied')); } catch { snack(tr('log_couldnt_copy')); }
     } else if (b.id === 'diet-save') {

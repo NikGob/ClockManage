@@ -91,6 +91,13 @@ async function poll(topic) {
 }
 
 // ---- screens ----
+const kindName = (kind) => ({ breakfast: tr('meals_breakfast'), lunch: tr('meals_lunch'), dinner: tr('meals_dinner') }[kind] || tr('meals_food_picks'));
+const presets = () => [
+  ['brain', tr('meals_max_for_the_brain'), tr('meals_goal_a_clear_steady_mind')],
+  ['protein', tr('meals_brain_protein'), tr('meals_goal_plenty_of_protein_for')],
+  ['light', tr('meals_brain_light'), tr('meals_goal_lose_weight_slowly_while')],
+];
+
 const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
 function pairScreen(code = '', error = '') {
@@ -151,7 +158,8 @@ function picksHtml(p) {
   if (!p?.venues?.length) return `<div class="card muted">${tr('pwa_no_picks_yet_they_come_before')}</div>`;
   const price = (d) => { try { return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: d.currency || 'EUR' }).format(d.price / 100); } catch { return String(d.price / 100); } };
   const time = new Date(p.at).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
-  return `<p class="muted">${tr('meals_picked_at_tap_a_dish', { time })}</p>` + p.venues.map((v) => `<div class="card">
+  const title = p.meal ? tr('meals_kind_at', { kind: kindName(p.kind), time: p.meal }) : kindName(p.kind);
+  return `<p class="name">${esc(title)}</p><p class="muted">${tr('meals_picked_at_tap_a_dish', { time })}</p>` + p.venues.map((v) => `<div class="card">
       <div class="venue-head"><div class="grow"><div class="name">${esc(v.name)}</div>
         <div class="muted">${tr('meals_km_min', { km: Number(v.km).toLocaleString(LOCALE), eta: esc(v.eta) })}</div></div>
         <a class="btn tonal" href="${esc(v.url)}">${tr('meals_open_in_wolt')}</a></div>
@@ -178,13 +186,30 @@ async function mainScreen(s) {
     : !s.subscribed || Notification.permission !== 'granted'
       ? `<div class="card"><p>${tr('pwa_meal_picks_from_the_pc_come')}</p><div class="row"><button class="btn" id="allow">${tr('pwa_allow_notifications')}</button></div></div>`
       : '';
+  const current = await picks();
+  const pending = s.pending && Date.now() - s.pending.at < 10 * 60000 && !(current && current.at > s.pending.at) ? s.pending : null;
   app.innerHTML = `<p class="muted">${esc(tr('pwa_connected_to', { pc: s.pc || '' }))}</p>${step}
-    <h2>${tr('meals_picks')}</h2><div id="picks">${picksHtml(await picks())}</div>
+    <h2>${tr('pwa_order_now')}</h2>
+    <div class="card"><div class="row">${['breakfast', 'lunch', 'dinner'].map((k) => `<button class="btn ${pending?.kind === k ? '' : 'tonal'}" data-kind="${k}">${esc(kindName(k))}</button>`).join('')}</div>
+      <p class="muted" id="order-note">${pending ? esc(tr('pwa_picking_a_notification_comes_in', { meal: kindName(pending.kind) })) : tr('pwa_the_pc_picks_restaurants_and')}</p></div>
+    <h2>${tr('meals_picks')}</h2><div id="picks">${picksHtml(current)}</div>
     <h2>${tr('meals_diet')}</h2>
-    <div class="card"><textarea id="diet" rows="8">${esc(s.diet?.text || '')}</textarea>
+    <div class="card"><div class="row"><span class="muted">${tr('meals_ready_diets')}</span>${presets().map(([id, name]) => `<button class="btn tonal" data-preset="${id}">${esc(name)}</button>`).join('')}</div>
+      <textarea id="diet" rows="8" style="margin-top:10px">${esc(s.diet?.text || '')}</textarea>
       <div class="row"><button class="btn" id="save">${tr('meals_save_the_diet')}</button></div></div>
     <div class="row"><button class="btn text" id="repair">${tr('meals_pair_again')}</button></div>`;
   document.getElementById('allow')?.addEventListener('click', subscribe);
+  app.querySelectorAll('[data-kind]').forEach((b) => { b.onclick = async () => {
+    try {
+      await post(s.link.up, await seal(unb64(s.link.key), { t: 'pick', kind: b.dataset.kind }));
+      store({ pending: { kind: b.dataset.kind, at: Date.now() } });
+      render();
+    } catch (e) { toast(tr('pwa_couldnt_send', { error: e.message })); }
+  }; });
+  app.querySelectorAll('[data-preset]').forEach((b) => { b.onclick = () => {
+    document.getElementById('diet').value = presets().find(([id]) => id === b.dataset.preset)[2];
+    toast(tr('meals_press_save_the_diet_to_keep'));
+  }; });
   document.getElementById('repair').onclick = () => { localStorage.removeItem('cm'); pairScreen(); };
   document.getElementById('save').onclick = async () => {
     const text = document.getElementById('diet').value.trim();
@@ -217,10 +242,7 @@ async function render() {
   try { texts = await (await fetch(`locales/${lang}.json`)).json(); } catch { /* keys stay visible */ }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
-    navigator.serviceWorker.addEventListener('message', async () => {
-      const el = document.getElementById('picks');
-      if (el) el.innerHTML = picksHtml(await picks());
-    });
+    navigator.serviceWorker.addEventListener('message', () => { if (load().link) render(); });
   }
   render();
 })();

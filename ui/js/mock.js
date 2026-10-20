@@ -39,7 +39,7 @@ const cfg = {
 let kind = q.get('kind') || 'full';
 const W = 'https://wolt.com/en/fin/helsinki/restaurant/';
 const mealPicks = {
-  at: t0 - 4 * MIN, meal: '13:00',
+  at: t0 - 4 * MIN, meal: '13:00', kind: 'lunch',
   venues: [
     { name: 'Fafa’s Kamppi', url: `${W}fafas-kamppi`, km: 0.6, eta: '20-30', dishes: [
       { name: L('Боул с курицей', 'Chicken bowl'), price: 1390, currency: 'EUR', url: `${W}fafas-kamppi/itemid-1`, why: L('Белок и овощи, без жарки', 'Protein and vegetables, nothing fried') },

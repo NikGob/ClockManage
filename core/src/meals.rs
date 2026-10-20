@@ -96,6 +96,8 @@ pub struct Picks {
     pub at: Ts,
     /// "13:00", or empty for a pick asked for by hand.
     pub meal: String,
+    /// breakfast, lunch or dinner.
+    pub kind: String,
     pub venues: Vec<PickVenue>,
 }
 
@@ -244,6 +246,37 @@ pub fn dish_url(venue_url: &str, id: &str) -> String {
     format!("{venue_url}/itemid-{id}")
 }
 
+pub const KINDS: [&str; 3] = ["breakfast", "lunch", "dinner"];
+
+/// The meal a time of day is for: breakfast before 11:00, lunch before 16:00, then dinner.
+pub fn kind_at(min: u32) -> &'static str {
+    if min < 11 * 60 {
+        "breakfast"
+    } else if min < 16 * 60 {
+        "lunch"
+    } else {
+        "dinner"
+    }
+}
+
+pub fn kind_name(kind: &str) -> &'static str {
+    match kind {
+        "breakfast" => tr("meals_breakfast"),
+        "lunch" => tr("meals_lunch"),
+        "dinner" => tr("meals_dinner"),
+        _ => tr("meals_food_picks"),
+    }
+}
+
+/// The title of picks: "Lunch · 13:00", or just "Breakfast" for one asked for by hand.
+pub fn picks_title(p: &Picks) -> String {
+    if p.meal.is_empty() {
+        kind_name(&p.kind).to_string()
+    } else {
+        crate::tr!("meals_kind_at", kind = kind_name(&p.kind), time = p.meal)
+    }
+}
+
 /// The meal to pick for now: its start is at most `lead` minutes away and it wasn't picked today.
 pub fn due(times: &[u32], lead: u32, now_min: u32, picked_today: &[u32]) -> Option<u32> {
     times.iter().copied().find(|t| *t >= now_min && *t - now_min <= lead && !picked_today.contains(t))
@@ -272,10 +305,10 @@ pub fn push_payload(p: &Picks, title: &str) -> String {
 }
 
 /// What the agent is told before a meal (English: the model reads it).
-pub fn agent_prompt(meal: &str, lang: &str) -> String {
+pub fn agent_prompt(meal: &str, kind: &str, lang: &str) -> String {
     let when = if meal.is_empty() { "now".to_string() } else { format!("at {meal}") };
     format!(
-        "You run unattended inside ClockManage: nobody will answer questions. The user eats {when}. \
+        "You run unattended inside ClockManage: nobody will answer questions. The user wants {kind} {when}: pick food that suits {kind}. \
          1) Call get_diet. 2) Find food that fits the diet with wolt_search (search dishes or cuisines; try several queries) \
          and look at promising restaurants with wolt_menu. Only restaurants these tools return deliver to the user and are close enough. \
          3) Choose up to 3 restaurants that are open now, and in each 1-4 available dishes that together make a meal fitting the diet. \
@@ -342,6 +375,12 @@ mod tests {
     }
 
     #[test]
+    fn kinds_by_time_of_day() {
+        assert_eq!([kind_at(8 * 60), kind_at(11 * 60), kind_at(15 * 60 + 59), kind_at(19 * 60)], ["breakfast", "lunch", "lunch", "dinner"]);
+        assert!(agent_prompt("", "breakfast", "ru").contains("wants breakfast now"));
+    }
+
+    #[test]
     fn due_once_per_meal_in_the_lead_window() {
         let times = [13 * 60, 19 * 60];
         assert_eq!(due(&times, 30, 12 * 60 + 29, &[]), None);
@@ -355,7 +394,7 @@ mod tests {
     fn push_fits_one_message() {
         let dish = PickDish { name: "Блюдо с длинным названием".repeat(3), price: 1290, currency: "EUR".into(), url: format!("https://wolt.com/en/fin/helsinki/restaurant/{}/itemid-0123456789abcdef01234567", "x".repeat(40)), why: "Белок и овощи, без сахара".repeat(2) };
         let venue = PickVenue { name: "Ресторан".into(), url: "https://wolt.com/en/fin/helsinki/restaurant/x".into(), km: 1.2, eta: "20-30".into(), dishes: vec![dish; 6] };
-        let p = Picks { at: 1, meal: "13:00".into(), venues: vec![venue; 4] };
+        let p = Picks { at: 1, meal: "13:00".into(), kind: "lunch".into(), venues: vec![venue; 4] };
         let out = push_payload(&p, "Обед");
         assert!(out.len() <= MAX_PLAINTEXT, "{}", out.len());
         let v: Value = serde_json::from_str(&out).unwrap();
