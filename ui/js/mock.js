@@ -63,6 +63,7 @@ const mealPicks = {
 let mealsPairing = null;
 const MOCK_QR = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"><rect width="29" height="29" fill="#fff"/>${Array.from({ length: 841 }, (_, i) => ((i * 7919) % 13 < 6 ? `<rect x="${i % 29}" y="${Math.floor(i / 29)}" width="1" height="1"/>` : '')).join('')}</svg>`;
 let phonePin = null;
+let segAccess = false;
 let noteDone = false;
 let dayEnd = 1320;
 
@@ -137,6 +138,7 @@ function snapshot() {
     : STATE === 'idle' ? { blocked: false, base: false, reason: 'not_started', until: null, focus_until }
       : STATE === 'done' ? { blocked: false, base: false, reason: 'completed', until: null, focus_until }
         : access && !focus_until ? { blocked: false, base: true, reason: 'break_access', until: t0 + 7 * MIN, focus_until }
+          : segAccess && STATE === 'segment' ? { blocked: false, base: true, reason: 'segment_access', until: t0 + 25 * MIN, focus_until }
           : { blocked: true, base: true, reason: 'study', until: null, focus_until };
   return {
     view: {
@@ -155,6 +157,7 @@ function snapshot() {
         finish_block: ['work', 'paused', 'break', 'await'].includes(STATE),
         segment: ['break', 'await', 'segment'].includes(STATE), end_segment: STATE === 'segment',
         lay_down: STATE === 'segment' && !!q.get('prep'), segment_mode: STATE === 'segment' && !!q.get('sw'),
+        segment_access: STATE === 'segment' && !q.get('prep') && !segAccess,
       },
     },
     meta: {
@@ -213,6 +216,7 @@ export async function invoke(cmd, args) {
     case 'start_segments': STATE = 'segment'; return null;
     case 'end_segment': STATE = 'await'; return null;
     case 'lay_down': q.delete('prep'); return null;
+    case 'open_segment_access': segAccess = true; return null;
     case 'set_segment_mode': if (args?.stopwatch) q.set('sw', '1'); else q.delete('sw'); return null;
     case 'undo_skip': STATE = 'break'; return null;
     case 'week_stats': return {

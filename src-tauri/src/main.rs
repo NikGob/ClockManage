@@ -91,6 +91,7 @@ fn main() {
             }
             let autostart = cfg.autostart;
             let (mcp_enabled, mcp_port) = (cfg.mcp_enabled, cfg.mcp_port);
+            let phone_theme = store::read_json(&store.dir.join("phone-theme.json"));
 
             let shared = Arc::new(app::Shared {
                 inner: Mutex::new(app::Inner {
@@ -115,6 +116,7 @@ fn main() {
                 finish_token: Mutex::new(None),
                 apk_dir: handle.path().resource_dir().ok().map(|d| d.join("resources").join("android")),
                 meals: Mutex::new(Default::default()),
+                phone_theme: Mutex::new(phone_theme),
             });
             tauri_app.manage(shared.clone());
 
@@ -186,6 +188,7 @@ fn main() {
             app::set_block_note,
             app::start_segments,
             app::end_segment,
+            app::open_segment_access,
             app::lay_down,
             app::set_segment_mode,
             app::drop_queued,
@@ -196,6 +199,7 @@ fn main() {
             meals::meals_unpair,
             meals::meals_geocode,
             meals::open_url,
+            app::set_phone_theme,
             app::check_update,
             app::install_update,
         ])

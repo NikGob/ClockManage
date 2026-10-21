@@ -247,6 +247,7 @@ export function mountToday(root, ctx) {
         } else {
           B('end_segment', p.alarm ? tr('app_im_up') : tr('mini_done_with', { p: p.title.toLowerCase() }), 'filled xl', p.alarm ? 'alarm' : 'check');
         }
+        if (c.segment_access) B('seg_access', tr('today_open_access_until', { time: tsHm(v.now + p.remaining_ms, last.meta.tz_offset_min) }), 'outlined lg', 'lock_open');
         if (c.segment) B('segment', tr('dialog_queue'), 'outlined lg', 'add');
         if (c.segment_mode) B('seg_mode', p.stopwatch ? tr('dialog_timed') : tr('dialog_untimed'), 'text lg', p.stopwatch ? 'schedule' : 'timer');
         break;
@@ -512,6 +513,11 @@ export function mountToday(root, ctx) {
         break;
       }
       case 'end_segment': await run(() => call('end_segment'), b); break;
+      case 'seg_access': {
+        const ok = await run(() => call('open_segment_access').then(() => true), b);
+        if (ok) snack(tr('today_sites_and_apps_are_open_until', { time: tsHm(v.now + v.phase.remaining_ms, last.meta.tz_offset_min) }));
+        break;
+      }
       case 'lay_down': {
         const ok = await run(() => call('lay_down').then(() => true), b);
         if (ok) snack(`${v.phase.title}: ${tr('today_lay_down_countdown_started')}${v.phase.alarm ? tr('today_alarm_at_the_end') : ''}`);

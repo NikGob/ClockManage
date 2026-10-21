@@ -72,6 +72,8 @@ pub struct Shared {
     /// Bundled Android APK + apk.json (version), served to paired phones for self-update.
     pub apk_dir: Option<std::path::PathBuf>,
     pub meals: Mutex<crate::meals::MealsRt>,
+    /// The PC's colours for the phone app (`set_phone_theme`), kept in `phone-theme.json`.
+    pub phone_theme: Mutex<Option<Value>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1508,6 +1510,10 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
         let meals_changed = cfg.meals.enabled != g.cfg.meals.enabled;
         let old = std::mem::replace(&mut g.cfg, cfg.clone());
+        // During the lock what would loosen today waits for tomorrow (an earlier day end).
+        if ctx.locked {
+            g.day.keep_today(&old, &g.cfg);
+        }
         // A site added during the lock is blocked at once, not on the next 30 s check.
         if old.blocklist != g.cfg.blocklist {
             g.resync = true;
@@ -1564,6 +1570,18 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
     let _ = shared.app.emit("state", shared.snapshot());
     let cfg = shared.lock().cfg.clone();
     Ok(cfg)
+}
+
+/// The window's colour scheme, light and dark, as the phone app should draw it: the phone gets
+/// it with its state and looks like the PC. Saved only when it changed.
+#[tauri::command]
+pub fn set_phone_theme(s: S, theme: Value) {
+    let mut cur = s.phone_theme.lock().unwrap_or_else(|e| e.into_inner());
+    if cur.as_ref() == Some(&theme) {
+        return;
+    }
+    let _ = crate::store::write_atomic(&s.store.dir.join("phone-theme.json"), &theme.to_string());
+    *cur = Some(theme);
 }
 
 /// "Check now" in Settings: the check and the download run off the UI thread.
@@ -1721,6 +1739,15 @@ pub fn end_segment(s: S) -> Result<(), String> {
         hide_overlay_window(&s.app);
     }
     r
+}
+
+/// "Открыть доступ" during a segment (a lunch): the block list opens until the segment ends.
+#[tauri::command]
+pub fn open_segment_access(s: S) -> Result<(), String> {
+    s.mutate(|g, now| {
+        let (cfg, day) = (&g.cfg, &mut g.day);
+        day.open_segment_access(now, cfg).map(|_| ())
+    })
 }
 
 /// "Лёг": the nap's countdown and alarm start now.

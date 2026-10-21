@@ -57,7 +57,7 @@ When a break ends the timer **doesn't** quietly carry on: a hand-drawn alarm pop
 | Paths — `youtube.com/shorts` | browser policies only, so the rest of YouTube keeps working |
 | Apps — `Telegram.exe`, `Discord.exe` | can't start (a tiny guard runs instead and says *Nope*); already running ones are closed within a second. On Linux they are closed within a second after they start |
 
-During a study day the block list **can only grow**, the app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler (on Linux, a systemd user service) brings it back within 5 minutes. Want the break between blocks free? **Blocking → Access in breaks** opens everything while that break's timer runs; a pause and the short breaks between the parts of a block stay locked. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
+During a study day the block list **can only grow**, while the time settings stay yours: change the day end, the breaks or the work parts any time — what would loosen today (an earlier day end, longer breaks) starts tomorrow, and today's day end moves on the Today screen. The app can't be quit from the tray, and if the process is killed, `hosts` and policies stay in force while Task Scheduler (on Linux, a systemd user service) brings it back within 5 minutes. Want the break between blocks free? **Blocking → Access in breaks** opens everything while that break's timer runs; a pause and the short breaks between the parts of a block stay locked. Need out for real? **Emergency access** opens everything for 10 minutes after you type a long phrase by hand (pasting is disabled), and it goes to the log.
 
 <div align="center">
   <img src="docs/media/blocking.png" alt="Blocking screen" width="62%">
@@ -66,7 +66,7 @@ During a study day the block list **can only grow**, the app can't be quit from 
 
 ### Lunch, naps and walks
 
-**Segments** are non-study time with a countdown — or untimed, as a stopwatch. Put them in the plan ("lunch after Math") and they start by themselves when the block before them closes. A **nap** waits while you get ready, counts from the moment you press **In bed**, and ends with an alarm that won't stop until you press **I'm up** — even with the sound off. Segments never count as study, but the forecast "does the rest of the plan still fit?" takes them into account.
+**Segments** are non-study time with a countdown — or untimed, as a stopwatch. Put them in the plan ("lunch after Math") and they start by themselves when the block before them closes. A **nap** waits while you get ready, counts from the moment you press **In bed**, and ends with an alarm that won't stop until you press **I'm up** — even with the sound off. Segments never count as study, but the forecast "does the rest of the plan still fit?" takes them into account. Want the PC for lunch? **Open access until 13:45** on a running segment opens sites and apps until it ends — once per segment, and it goes to the log. A segment type can also open access by itself (*Settings → Segments → Access*).
 
 <div align="center">
   <img src="docs/media/nap.png" alt="Getting ready for a nap" width="56%">
@@ -161,7 +161,7 @@ The rules hold for the agent too: it can't erase worked time, can't shrink the b
 
 ## Android companion
 
-A native app under a megabyte. Pair it on the same Wi-Fi: **Settings → Phone → Pair a phone** on the PC, **Find PC** and the PIN on the phone. It shows the timer and the plan, pauses and starts parts, keeps counting when offline, rings at the end of a break, has a home-screen widget — and blocks the chosen apps and the PC's sites on the phone through Accessibility. When you update the desktop app, the phone offers the update itself over Wi-Fi.
+A native app under a megabyte. Pair it on the same Wi-Fi: **Settings → Phone → Pair a phone** on the PC, **Find PC** and the PIN on the phone. It looks like the PC — the same colours, light or dark, the timer in a ring on a card that changes colour with the phase, the plan with the current block highlighted. It shows the timer and the plan, pauses and starts parts, opens access during a lunch, keeps counting when offline, rings at the end of a break, has a home-screen widget — and blocks the chosen apps and the PC's sites on the phone through Accessibility. While the phone's screen is on it stays connected to the PC, so a lock started there closes the app on screen within a second; the autolock and the end of an access window come on time even offline. When you update the desktop app, the phone offers the update itself over Wi-Fi.
 
 ## Install
 

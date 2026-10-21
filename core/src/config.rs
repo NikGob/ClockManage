@@ -603,27 +603,17 @@ impl Config {
         if lower(&self.phone.apps).iter().any(|s| !new_phone.contains(s)) {
             return Err(tr!("config_while_the_lock_is_on_phone"));
         }
-        // Today is pinned in the day state, so the week and the profiles only shape future days.
-        if new.day_end_min < self.day_end_min {
-            return Err(tr!("config_during_the_study_day_the_day"));
-        }
+        // Time settings are templates and change freely: today keeps its work parts and breaks
+        // (the day state holds them), and a day end moved earlier waits for tomorrow
+        // (`Day::keep_today`). Only what opens something earlier or for longer is refused.
         if new.tz_offset_min != self.tz_offset_min {
             return Err(tr!("config_the_time_zone_can_only_be"));
         }
-        if new.timing.work_segment_min != self.timing.work_segment_min {
-            return Err(tr!("config_the_work_part_length_can_only"));
-        }
-        let t = (&new.timing, &self.timing);
-        if t.0.short_break_min > t.1.short_break_min
-            || t.0.between_blocks_min > t.1.between_blocks_min
-            || t.0.lunch_min > t.1.lunch_min
-        {
-            return Err(tr!("config_during_the_study_day_breaks_and"));
-        }
         for t in &new.segments {
             match self.segment_type(&t.name) {
-                Some(old) if t.minutes > old.minutes || t.prep() > old.prep() => {
-                    return Err(tr!("config_during_the_study_day_the_segment", name = old.name));
+                // A segment that opens access would open it for longer.
+                Some(old) if old.open_access && (t.minutes > old.minutes || t.prep() > old.prep()) => {
+                    return Err(tr!("config_during_the_study_day_name_opens", name = old.name));
                 }
                 Some(old) if t.open_access && !old.open_access => {
                     return Err(tr!("config_access_during_a_segment_can_only"));
@@ -831,22 +821,20 @@ mod tests {
     }
 
     #[test]
-    fn locked_rules_only_tighten() {
+    fn locked_time_settings_change_freely() {
         let cfg = Config::default();
         let ctx = EditContext { locked: true };
-        let mut n = cfg.clone();
-        n.day_end_min = 23 * 60;
-        n.timing.short_break_min = 5;
-        n.week[2] = DayKind::Light;
-        assert!(cfg.check_update(&n, ctx).is_ok());
+        // Today keeps its own; these shape the days ahead.
         let mut n = cfg.clone();
         n.day_end_min = 21 * 60;
-        assert!(cfg.check_update(&n, ctx).is_err());
-        let mut n = cfg.clone();
-        n.timing.between_blocks_min = 30;
-        assert!(cfg.check_update(&n, ctx).is_err());
-        let mut n = cfg.clone();
+        n.timing.short_break_min = 25;
+        n.timing.between_blocks_min = 40;
         n.timing.work_segment_min = 30;
+        n.week[2] = DayKind::Light;
+        assert!(cfg.check_update(&n, ctx).is_ok());
+        // The time zone moves every clock of today.
+        let mut n = cfg.clone();
+        n.tz_offset_min += 60;
         assert!(cfg.check_update(&n, ctx).is_err());
     }
 
@@ -892,18 +880,22 @@ mod tests {
         n.segments[0].minutes = 30;
         n.segments.push(SegmentType { name: "Душ".into(), minutes: 10, ..Default::default() });
         assert!(c.check_update(&n, ctx).is_ok());
+        // A segment without access keeps everything closed: it may get longer.
         let mut n = c.clone();
         n.segments[1].minutes = 90;
-        assert!(c.check_update(&n, ctx).is_err());
+        n.segments[1].prep_min = Some(20);
+        assert!(c.check_update(&n, ctx).is_ok());
         let mut n = c.clone();
         n.segments[0].open_access = true;
         assert!(c.check_update(&n, ctx).is_err());
         assert!(c.check_update(&n, EditContext { locked: false }).is_ok());
-        let mut n = c.clone();
-        n.segments[1].prep_min = Some(20);
-        assert!(c.check_update(&n, ctx).is_err());
-        n.segments[1].prep_min = Some(5);
-        assert!(c.check_update(&n, ctx).is_ok());
+        // One with access only gets shorter.
+        let open = n;
+        let mut n = open.clone();
+        n.segments[0].minutes += 15;
+        assert!(open.check_update(&n, ctx).unwrap_err().contains(&open.segments[0].name));
+        n.segments[0].minutes = 10;
+        assert!(open.check_update(&n, ctx).is_ok());
     }
 
     #[test]

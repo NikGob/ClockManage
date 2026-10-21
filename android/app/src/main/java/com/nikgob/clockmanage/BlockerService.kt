@@ -10,12 +10,14 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 
 /**
- * Blocks apps and sites on the phone during the study lock. Purely event driven: Android calls it
- * when a window changes, nothing runs in between. The lock decision comes from the last snapshot
- * of the PC (works offline until the day end).
+ * Blocks apps and sites on the phone during the study lock. Event driven: Android calls it when
+ * a window changes. The lock decision comes from the last snapshot of the PC (works offline
+ * until the day end), and is looked at again:
+ * - at once when a new snapshot arrives (the app on screen is closed, not only the next one);
+ * - when the lock is due to change by itself (an access window ends, the autolock comes).
  *
- * The same service turns the screen-on event into one sync, so the phone catches up with the
- * PC whenever you pick it up — no background polling.
+ * While the screen is on the service keeps a long poll to the PC open, so a lock started there
+ * reaches the phone within a second; with the screen off nothing runs.
  */
 class BlockerService : AccessibilityService() {
 
@@ -26,10 +28,12 @@ class BlockerService : AccessibilityService() {
     private var lastBlock = 0L
     private var lastToast = 0L
     private var lastUrl = ""
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val timed = Runnable { checkNow(); schedule() }
 
-    private val screenOn = object : BroadcastReceiver() {
+    private val screen = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            Sync.kick(ctx)
+            if (intent.action == Intent.ACTION_SCREEN_OFF) Sync.stopLive("screen") else Sync.startLive(ctx, "screen")
         }
     }
 
@@ -39,16 +43,20 @@ class BlockerService : AccessibilityService() {
         reload()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_PRESENT)
         }
         // System broadcasts still arrive with NOT_EXPORTED; other apps can't fake them.
-        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(screenOn, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(screenOn, filter)
-        Sync.kick(this, force = true)
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(screen, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(screen, filter)
+        val power = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (power.isInteractive) Sync.startLive(this, "screen") else Sync.kick(this, force = true)
     }
 
     override fun onDestroy() {
         instance = null
-        try { unregisterReceiver(screenOn) } catch (e: IllegalArgumentException) { }
+        main.removeCallbacks(timed)
+        Sync.stopLive("screen")
+        try { unregisterReceiver(screen) } catch (e: IllegalArgumentException) { }
         super.onDestroy()
     }
 
@@ -57,6 +65,31 @@ class BlockerService : AccessibilityService() {
     private fun reload() {
         snap = store.snapshot()
         syncedAt = store.syncedAt
+        checkNow()
+        schedule()
+    }
+
+    /** Look at the app on screen now: a lock that just began closes it without waiting for a tap. */
+    private fun checkNow() {
+        val s = snap ?: return
+        if (!s.blockedAt(store.now(), syncedAt)) return
+        val pkg = rootInActiveWindow?.packageName?.toString() ?: return
+        if (pkg == packageName) return
+        if (pkg in s.apps) {
+            block(appLabel(pkg), home = true)
+        } else if (pkg in BROWSERS) {
+            val url = urlOf(pkg) ?: return
+            Sites.match(url, s.sites)?.let { block(it, home = false) }
+        }
+    }
+
+    /** Wake up when the lock changes by itself (an access window ends, the autolock comes). */
+    private fun schedule() {
+        main.removeCallbacks(timed)
+        val s = snap ?: return
+        val now = store.now()
+        val at = s.nextChange(now) ?: return
+        main.postDelayed(timed, (at - now).coerceIn(0, 6 * Snapshot.HOUR) + 500)
     }
 
     override fun onAccessibilityEvent(ev: AccessibilityEvent) {
@@ -64,12 +97,13 @@ class BlockerService : AccessibilityService() {
         if (pkg == packageName) return
         val s = snap ?: return
         if (!s.blockedAt(store.now(), syncedAt)) return
+        val now = System.currentTimeMillis()
 
         if (pkg in s.apps) {
-            if (ev.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) block(appLabel(pkg), home = true)
+            // A new window at once; inside an app that was already open, a couple of times a second.
+            if (ev.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || now - lastBlock > 1500) block(appLabel(pkg), home = true)
             return
         }
-        val now = System.currentTimeMillis()
         // Content changes come in bursts (scrolling, typing): look at most a few times a second.
         if (ev.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastCheck < 700) return
         lastCheck = now
