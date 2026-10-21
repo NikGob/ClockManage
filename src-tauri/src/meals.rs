@@ -1,18 +1,21 @@
-//! Meals: Wolt data for the agent, the agent run before each meal, the picks, and the paired
-//! iPhone web app (Web Push out, ntfy.sh relay for its subscription and diet edits).
+//! Meals, an optional feature: delivery service data for the agent, the agent run before each
+//! meal, the picks, and the paired iPhone web app (Web Push out, ntfy.sh relay for its
+//! subscription and diet edits). While Meals is off its thread doesn't even start, or sleeps.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::Thread;
 use std::time::{Duration, Instant};
 
 use clockmanage_core::chrono::NaiveDate;
 use clockmanage_core::clock::{self, Ts};
 use clockmanage_core::mcp::MealPick;
-use clockmanage_core::meals::{self, Dish, PickDish, PickVenue, Picks, Venue};
+use clockmanage_core::meals::{self, Dish, PickDish, PickVenue, Picks, Venue, SERVICES};
 use clockmanage_core::relay::{self, NTFY};
 use clockmanage_core::webpush::{self, Subscription};
+use clockmanage_core::wolt;
 use clockmanage_core::i18n::tr;
 use clockmanage_core::tr;
 use serde::Serialize;
@@ -27,6 +30,9 @@ const AGENT_TIMEOUT: Duration = Duration::from_secs(600);
 const PAIR_MS: Ts = 10 * 60_000;
 const VAPID_SUBJECT: &str = "https://github.com/NikGob/ClockManage";
 
+/// What cached venues were fetched for: the service id, the address and the distance limit.
+type VenuesKey = (&'static str, f64, f64, f64);
+
 #[derive(Default)]
 pub struct MealsRt {
     picks: Option<Picks>,
@@ -34,7 +40,7 @@ pub struct MealsRt {
     running: Option<(String, String, bool)>,
     error: Option<String>,
     pairing: Option<(String, Ts)>,
-    venues: Option<(Ts, (f64, f64, f64), Vec<Venue>)>,
+    venues: Option<(Ts, VenuesKey, Vec<Venue>)>,
     dishes: HashMap<String, Dish>,
     published: Option<(String, Ts)>,
 }
@@ -49,6 +55,10 @@ pub struct PairView {
 
 #[derive(Serialize)]
 pub struct MealsView {
+    /// The brand name of the chosen delivery service.
+    pub service: &'static str,
+    /// Every delivery service: (id, brand name).
+    pub services: Vec<(&'static str, &'static str)>,
     /// Where Claude Code was found; `None` when it isn't installed.
     pub claude: Option<String>,
     pub picks: Option<Picks>,
@@ -74,12 +84,13 @@ fn http() -> &'static reqwest::blocking::Client {
     })
 }
 
-fn get_json(req: reqwest::blocking::RequestBuilder) -> Result<Value, String> {
-    let res = req.send().map_err(|e| tr!("meals_wolt_didnt_answer", error = e))?;
+/// JSON from a delivery service, or the geocoder (`from` names it in the error).
+fn get_json(from: &str, req: reqwest::blocking::RequestBuilder) -> Result<Value, String> {
+    let res = req.send().map_err(|e| tr!("meals_service_didnt_answer", service = from, error = e))?;
     if !res.status().is_success() {
-        return Err(tr!("meals_wolt_didnt_answer", error = res.status()));
+        return Err(tr!("meals_service_didnt_answer", service = from, error = res.status()));
     }
-    res.json().map_err(|e| tr!("meals_wolt_didnt_answer", error = e))
+    res.json().map_err(|e| tr!("meals_service_didnt_answer", service = from, error = e))
 }
 
 fn picks_path(shared: &Shared) -> std::path::PathBuf {
@@ -99,12 +110,43 @@ fn save_cfg(shared: &Shared, f: impl FnOnce(&mut clockmanage_core::meals::Meals)
     let _ = shared.app.emit("config", ());
 }
 
-pub fn start(shared: Arc<Shared>) {
+/// The meals thread, once Meals has been on since the app started.
+static THREAD: OnceLock<Thread> = OnceLock::new();
+
+/// Call at start and after Meals is turned on or off: starts the meals thread the first time
+/// Meals is on and wakes it after a change. While Meals is off there is no thread, or it sleeps.
+pub fn wake(shared: &Arc<Shared>) {
+    if let Some(t) = THREAD.get() {
+        t.unpark();
+    } else if enabled(shared) {
+        THREAD.get_or_init(|| start(shared.clone()));
+    }
+}
+
+fn enabled(shared: &Shared) -> bool {
+    shared.lock().cfg.meals.enabled
+}
+
+/// Refuses while Meals is off (say, a command from a screen left open when it was turned off).
+fn check_on(shared: &Shared) -> Result<(), String> {
+    if enabled(shared) {
+        Ok(())
+    } else {
+        Err(tr("meals_food_picks_are_off_turn_them").to_string())
+    }
+}
+
+fn start(shared: Arc<Shared>) -> Thread {
     rt(&shared).picks = crate::store::read_json(&picks_path(&shared));
-    let _ = std::thread::Builder::new().name("meals".into()).spawn(move || {
+    let handle = std::thread::Builder::new().name("meals".into()).spawn(move || {
         let mut last_poll: Ts = 0;
         loop {
-            std::thread::sleep(Duration::from_secs(5));
+            if !enabled(&shared) {
+                rt(&shared).pairing = None;
+                std::thread::park();
+                continue;
+            }
+            std::thread::park_timeout(Duration::from_secs(5));
             let now = clock::now_ts();
             if let Some(meal) = due_meal(&shared, now) {
                 let _ = run_agent(shared.clone(), Some(meal), meals::kind_at(meal), false);
@@ -126,6 +168,7 @@ pub fn start(shared: Arc<Shared>) {
             }
         }
     });
+    handle.expect("meals thread").thread().clone()
 }
 
 fn due_meal(shared: &Shared, now: Ts) -> Option<u32> {
@@ -153,10 +196,14 @@ fn due_meal(shared: &Shared, now: Ts) -> Option<u32> {
 static TRIED: Mutex<Vec<(NaiveDate, u32)>> = Mutex::new(Vec::new());
 
 pub fn view(shared: &Shared) -> MealsView {
-    let paired = shared.lock().cfg.meals.subscription.is_some();
-    let url_base = shared.lock().cfg.meals.pwa_url.clone();
+    let (paired, url_base, service) = {
+        let g = shared.lock();
+        (g.cfg.meals.subscription.is_some(), g.cfg.meals.pwa_url.clone(), g.cfg.meals.service.clone())
+    };
     let r = rt(shared);
     MealsView {
+        service: meals::service_name(&service),
+        services: SERVICES.to_vec(),
         claude: find_claude().map(|p| p.display().to_string()),
         picks: r.picks.clone(),
         running: r.running.is_some(),
@@ -176,45 +223,113 @@ fn qr_svg(text: &str) -> String {
         .unwrap_or_default()
 }
 
-// ---- Wolt ----
+// ---- delivery services ----
 
-fn nearby(shared: &Shared) -> Result<Vec<Venue>, String> {
-    let (at, max_km) = {
+/// A delivery service Meals picks food from. Wolt is the first. Another one (Yandex Eda,
+/// Samokat, Kuper…) implements this, gets its id in `clockmanage_core::meals::SERVICES` and its
+/// arm in `service()`; its picture host also goes into the CSP `img-src` of `tauri.conf.json`.
+/// Prices are in minor units of the venue's currency (ISO 4217).
+pub trait Service: Sync {
+    /// The brand name, as in `SERVICES`.
+    fn name(&self) -> &'static str;
+    /// Restaurants and grocery stores that deliver to `at` within `max_km`, nearest first.
+    fn nearby(&self, at: (f64, f64), max_km: f64) -> Result<Vec<Venue>, String>;
+    /// Dishes and products matching `query` that deliver to `at` (the distance is checked later).
+    fn search(&self, query: &str, at: (f64, f64)) -> Result<Vec<Dish>, String>;
+    /// The menu of a restaurant; empty for a store that lists none.
+    fn menu(&self, venue: &Venue) -> Result<Vec<Dish>, String>;
+    /// The page of one dish or product.
+    fn item_url(&self, venue: &Venue, id: &str) -> String;
+    /// A picture URL sized for `width` pixels (or as it is).
+    fn image(&self, url: &str, width: u32) -> String;
+    /// Whether the app may open `url` as a page of this service.
+    fn owns(&self, url: &str) -> bool;
+}
+
+/// The service of an id of `SERVICES`.
+fn service(id: &str) -> &'static dyn Service {
+    match id {
+        "wolt" => &Wolt,
+        // An unknown id never stays in the config (`Meals::normalize`).
+        _ => &Wolt,
+    }
+}
+
+struct Wolt;
+
+impl Service for Wolt {
+    fn name(&self) -> &'static str {
+        "Wolt"
+    }
+
+    fn nearby(&self, at: (f64, f64), max_km: f64) -> Result<Vec<Venue>, String> {
+        let page = get_json(self.name(), http().get(format!("https://consumer-api.wolt.com/v1/pages/restaurants?lat={}&lon={}", at.0, at.1)))?;
+        let mut list = wolt::parse_venues(&page, at, max_km);
+        // Stores are not on the restaurants page; a store list that fails leaves just the restaurants.
+        if let Ok(page) = get_json(self.name(), http().get(format!("https://consumer-api.wolt.com/v1/pages/venue-list/category-grocery?lat={}&lon={}", at.0, at.1))) {
+            let stores: Vec<Venue> = wolt::parse_venues(&page, at, max_km).into_iter().filter(|v| v.store && !list.iter().any(|r| r.slug == v.slug)).collect();
+            list.extend(stores);
+        }
+        Ok(list)
+    }
+
+    fn search(&self, query: &str, at: (f64, f64)) -> Result<Vec<Dish>, String> {
+        let page = get_json(self.name(), http().post("https://restaurant-api.wolt.com/v1/pages/search").json(&json!({ "q": query, "target": "items", "lat": at.0, "lon": at.1 })))?;
+        Ok(wolt::parse_search(&page))
+    }
+
+    fn menu(&self, venue: &Venue) -> Result<Vec<Dish>, String> {
+        let page = get_json(self.name(), http().get(format!("https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/{}/assortment", venue.slug)))?;
+        Ok(wolt::parse_menu(&page, &venue.slug, &venue.currency))
+    }
+
+    fn item_url(&self, venue: &Venue, id: &str) -> String {
+        wolt::dish_url(&venue.url, id)
+    }
+
+    fn image(&self, url: &str, width: u32) -> String {
+        wolt::sized(url, width)
+    }
+
+    fn owns(&self, url: &str) -> bool {
+        url.starts_with("https://wolt.com/")
+    }
+}
+
+/// The chosen service and its venues near the address (cached for a few minutes).
+fn nearby(shared: &Shared) -> Result<(&'static dyn Service, Vec<Venue>), String> {
+    let (at, max_km, id) = {
         let g = shared.lock();
-        (g.cfg.meals.location().ok_or(tr("meals_set_the_address_first"))?, g.cfg.meals.max_km)
+        let m = &g.cfg.meals;
+        (m.location().ok_or(tr("meals_set_the_address_first"))?, m.max_km, SERVICES.iter().find(|s| s.0 == m.service).unwrap_or(&SERVICES[0]).0)
     };
-    let key = (at.0, at.1, max_km);
+    let svc = service(id);
+    let key = (id, at.0, at.1, max_km);
     let now = clock::now_ts();
     if let Some((t, k, v)) = &rt(shared).venues {
         if now - t < CACHE_MS && *k == key {
-            return Ok(v.clone());
+            return Ok((svc, v.clone()));
         }
     }
-    let page = get_json(http().get(format!("https://consumer-api.wolt.com/v1/pages/restaurants?lat={}&lon={}", at.0, at.1)))?;
-    let mut list = meals::parse_venues(&page, at, max_km);
-    // Stores are not on the restaurants page; a store list that fails leaves just the restaurants.
-    if let Ok(page) = get_json(http().get(format!("https://consumer-api.wolt.com/v1/pages/venue-list/category-grocery?lat={}&lon={}", at.0, at.1))) {
-        let stores: Vec<Venue> = meals::parse_venues(&page, at, max_km).into_iter().filter(|v| v.store && !list.iter().any(|r| r.slug == v.slug)).collect();
-        list.extend(stores);
-    }
+    let list = svc.nearby(at, max_km)?;
     rt(shared).venues = Some((now, key, list.clone()));
-    Ok(list)
+    Ok((svc, list))
 }
 
-pub fn wolt_search(shared: &Shared, query: Option<&str>) -> Result<Value, String> {
-    let venues = nearby(shared)?;
+pub fn food_search(shared: &Shared, query: Option<&str>) -> Result<Value, String> {
+    let (svc, venues) = nearby(shared)?;
     let Some(q) = query else {
         let list = |store: bool, n: usize| venues.iter().filter(|v| v.store == store && v.online).take(n).map(|v| json!({
             "slug": v.slug, "name": v.name, "km": v.km, "eta": v.eta, "rating": v.rating, "tags": v.tags.iter().take(3).collect::<Vec<_>>()
         })).collect::<Vec<_>>();
-        return Ok(json!({ "restaurants": list(false, 40), "stores": list(true, 15) }));
+        return Ok(json!({ "service": svc.name(), "restaurants": list(false, 40), "stores": list(true, 15) }));
     };
     let at = shared.lock().cfg.meals.location().ok_or(tr("meals_set_the_address_first"))?;
-    let page = get_json(http().post("https://restaurant-api.wolt.com/v1/pages/search").json(&json!({ "q": q, "target": "items", "lat": at.0, "lon": at.1 })))?;
     let near: HashMap<&str, &Venue> = venues.iter().map(|v| (v.slug.as_str(), v)).collect();
     // Results add up in the agent's context over many searches: few per venue, venue facts once.
     let mut per_venue: HashMap<String, usize> = HashMap::new();
-    let found: Vec<Dish> = meals::parse_search(&page)
+    let found: Vec<Dish> = svc
+        .search(q, at)?
         .into_iter()
         .filter(|d| d.available && near.get(d.venue.as_str()).is_some_and(|v| v.online))
         .filter(|d| {
@@ -231,7 +346,7 @@ pub fn wolt_search(shared: &Shared, query: Option<&str>) -> Result<Value, String
     }
     let items: Vec<Value> = found
         .iter()
-        .map(|d| json!({ "id": d.id, "venue": d.venue, "name": d.name, "description": shorter(&d.description), "price": d.price }))
+        .map(|d| json!({ "id": d.id, "venue": d.venue, "name": d.name, "description": meals::short(&d.description, 90), "price": d.price }))
         .collect();
     let currency = found.first().map(|d| d.currency.clone()).unwrap_or_default();
     let venues_out = json!(seen);
@@ -239,28 +354,19 @@ pub fn wolt_search(shared: &Shared, query: Option<&str>) -> Result<Value, String
     for d in found {
         r.dishes.insert(d.id.clone(), d);
     }
-    Ok(json!({ "query": q, "currency": currency, "venues": venues_out, "items": items }))
+    Ok(json!({ "query": q, "service": svc.name(), "currency": currency, "venues": venues_out, "items": items }))
 }
 
-/// Descriptions for the agent: enough to judge a dish, short enough for dozens of results.
-fn shorter(text: &str) -> String {
-    if text.chars().count() <= 90 {
-        text.to_string()
-    } else {
-        format!("{}…", text.chars().take(90).collect::<String>().trim_end())
-    }
-}
-
-pub fn wolt_menu(shared: &Shared, slug: &str) -> Result<Value, String> {
+pub fn food_menu(shared: &Shared, slug: &str) -> Result<Value, String> {
     let max_km = shared.lock().cfg.meals.max_km;
-    let venues = nearby(shared)?;
+    let (svc, venues) = nearby(shared)?;
     let v = venues.iter().find(|v| v.slug == slug).ok_or_else(|| tr!("meals_no_such_restaurant_nearby", venue = slug, km = max_km))?;
-    let page = get_json(http().get(format!("https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/{slug}/assortment")))?;
-    let dishes: Vec<Dish> = meals::parse_menu(&page, slug, &v.currency).into_iter().filter(|d| d.available).take(60).collect();
+    let dishes: Vec<Dish> = svc.menu(v)?.into_iter().filter(|d| d.available).take(60).collect();
     if dishes.is_empty() {
         return Ok(json!({ "venue": v.slug, "name": v.name, "dishes": [], "note": tr("meals_no_menu_here_grocery_stores_list") }));
     }
-    let out: Vec<Value> = dishes.iter().map(|d| json!({ "id": d.id, "name": d.name, "description": shorter(&d.description), "price": d.price })).collect();
+    // Descriptions for the agent: enough to judge a dish, short enough for dozens of results.
+    let out: Vec<Value> = dishes.iter().map(|d| json!({ "id": d.id, "name": d.name, "description": meals::short(&d.description, 90), "price": d.price })).collect();
     let mut r = rt(shared);
     for d in dishes {
         r.dishes.insert(d.id.clone(), d);
@@ -270,7 +376,7 @@ pub fn wolt_menu(shared: &Shared, slug: &str) -> Result<Value, String> {
 
 pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, String> {
     let max_km = shared.lock().cfg.meals.max_km;
-    let venues = nearby(shared)?;
+    let (svc, venues) = nearby(shared)?;
     let mut r = rt(shared);
     let mut out = Vec::new();
     let (mut restaurants, mut stores) = (0, 0);
@@ -283,9 +389,9 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
                 name: d.name.clone(),
                 price: d.price,
                 currency: d.currency.clone(),
-                url: meals::dish_url(&v.url, &d.id),
+                url: svc.item_url(v, &d.id),
                 why: why.clone(),
-                image: meals::sized(&d.image, 160),
+                image: svc.image(&d.image, 160),
             });
         }
         let (count, max) = if v.store { (&mut stores, 5) } else { (&mut restaurants, 5) };
@@ -293,13 +399,13 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
         if *count > max {
             continue;
         }
-        out.push(PickVenue { name: v.name.clone(), store: v.store, url: v.url.clone(), km: v.km, eta: v.eta.clone(), image: meals::sized(&v.image, 600), dishes });
+        out.push(PickVenue { name: v.name.clone(), store: v.store, url: v.url.clone(), km: v.km, eta: v.eta.clone(), image: svc.image(&v.image, 600), dishes });
     }
     let (meal, kind) = match &r.running {
         Some((meal, kind, _)) => (meal.clone(), kind.clone()),
         None => (String::new(), now_kind(shared).to_string()),
     };
-    let picks = Picks { at: clock::now_ts(), meal, kind, venues: out };
+    let picks = Picks { at: clock::now_ts(), meal, kind, service: svc.name().to_string(), venues: out };
     r.picks = Some(picks.clone());
     r.error = None;
     drop(r);
@@ -345,6 +451,7 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone:
         };
         (m.clone(), err, g.cfg.tz_offset_min)
     };
+    check_on(&shared)?;
     let label = meal.map(clockmanage_core::config::fmt_hm).unwrap_or_default();
     if let Some(m) = meal {
         TRIED.lock().unwrap().push((clock::local_date(clock::now_ts(), tz), m));
@@ -542,7 +649,8 @@ fn post_sealed(topic: &str, sealed: &str) -> Result<(), String> {
 }
 
 /// A new pairing: a fresh link, posted under the code's topic for the web app to pick up.
-pub fn pair(shared: &Arc<Shared>) -> PairView {
+pub fn pair(shared: &Arc<Shared>) -> Result<PairView, String> {
+    check_on(shared)?;
     let link = relay::new_link();
     let code = relay::pair_code();
     let vapid = webpush::public_key(&vapid_key(shared)).unwrap_or_default();
@@ -569,7 +677,7 @@ pub fn pair(shared: &Arc<Shared>) -> PairView {
         publish_diet(&s, clock::now_ts());
     });
     emit(shared);
-    view(shared).pairing.expect("pairing just set")
+    Ok(view(shared).pairing.expect("pairing just set"))
 }
 
 pub fn unpair(shared: &Shared) {
@@ -664,13 +772,11 @@ fn poll_phone(shared: &Arc<Shared>) -> Result<(), String> {
 /// "60.17, 24.94" as it is, anything else through OpenStreetMap's geocoder.
 pub fn geocode(address: &str) -> Result<(f64, f64, String), String> {
     let nums: Vec<f64> = address.split([',', ' ', ';']).filter(|s| !s.is_empty()).filter_map(|s| s.parse().ok()).collect();
-    if nums.len() == 2 && address.chars().all(|c| c.is_ascii_digit() || " .,;-+".contains(c)) {
-        if nums[0].abs() <= 90.0 && nums[1].abs() <= 180.0 {
-            return Ok((nums[0], nums[1], address.trim().to_string()));
-        }
+    if nums.len() == 2 && address.chars().all(|c| c.is_ascii_digit() || " .,;-+".contains(c)) && nums[0].abs() <= 90.0 && nums[1].abs() <= 180.0 {
+        return Ok((nums[0], nums[1], address.trim().to_string()));
     }
     let url = reqwest::Url::parse_with_params("https://nominatim.openstreetmap.org/search", &[("q", address), ("format", "jsonv2"), ("limit", "1")]).map_err(|e| e.to_string())?;
-    let list = get_json(http().get(url))?;
+    let list = get_json("OpenStreetMap", http().get(url))?;
     let first = list.get(0).ok_or(tr("meals_address_not_found"))?;
     let num = |k: &str| first[k].as_str().and_then(|s| s.parse::<f64>().ok());
     match (num("lat"), num("lon")) {
@@ -694,7 +800,7 @@ pub fn meals_pick_now(s: S) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn meals_pair(s: S) -> PairView {
+pub fn meals_pair(s: S) -> Result<PairView, String> {
     pair(s.inner())
 }
 
@@ -704,7 +810,8 @@ pub fn meals_unpair(s: S) {
 }
 
 #[tauri::command]
-pub async fn meals_geocode(address: String) -> Result<Value, String> {
+pub async fn meals_geocode(s: S<'_>, address: String) -> Result<Value, String> {
+    check_on(&s)?;
     let (lat, lon, label) = tauri::async_runtime::spawn_blocking(move || geocode(&address)).await.map_err(|e| e.to_string())??;
     Ok(json!({ "lat": lat, "lon": lon, "label": label }))
 }
@@ -714,9 +821,10 @@ pub fn open_url(url: String) -> Result<(), String> {
     open_link(&url)
 }
 
+/// Opens a page of a delivery service in the browser; nothing else opens from here.
 pub fn open_link(url: &str) -> Result<(), String> {
-    if !url.starts_with("https://wolt.com/") || url.contains(['"', '\'', ' ', '\n']) {
-        return Err(tr("meals_only_wolt_links_open_from_here").to_string());
+    if !SERVICES.iter().any(|s| service(s.0).owns(url)) || url.contains(['"', '\'', ' ', '\n']) {
+        return Err(tr("meals_only_delivery_service_links_open_from").to_string());
     }
     #[cfg(windows)]
     {

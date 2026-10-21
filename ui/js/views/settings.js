@@ -151,6 +151,20 @@ export function mountSettings(root, ctx) {
       </section>`;
   }
 
+  // Meals is optional: off, none of it runs, and its screen and MCP tools are hidden.
+  function mealsSection() {
+    const on = cfg.meals.enabled;
+    return `<section class="section">
+        <h2>${tr('main_meals')}</h2>
+        <p class="section-d">${tr('settings_optional_before_each_meal_an')}</p>
+        <div class="surface">
+          <div class="setting"><span class="badge">${icon('restaurant')}</span>
+            <div class="grow"><div class="t">${tr('settings_food_picks')}</div><div class="d">${on ? tr('settings_on_the_meals_screen_is') : tr('settings_off_nothing_of_it_runs')}</div></div>
+            ${on ? `<button class="btn text interactive" id="meals-open">${tr('app_open')}</button>` : ''}${sw('meals.enabled', on, tr('settings_food_picks'))}</div>
+        </div>
+      </section>`;
+  }
+
   function updateRow(u, v) {
     const ver = esc(u.version || '');
     const state = {
@@ -282,12 +296,14 @@ export function mountSettings(root, ctx) {
 
       ${phoneSection(m.phone)}
 
+      ${mealsSection()}
+
       <section class="section">
         <h2>${tr('settings_mcp_for_claude')}</h2>
         <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock, get_diet, set_diet, wolt_search, wolt_menu, set_meal_options.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock${cfg.meals.enabled ? ', get_diet, set_diet, food_search, food_menu, set_meal_options' : ''}.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -477,6 +493,7 @@ export function mountSettings(root, ctx) {
     else if (t.id === 'checkupdate') call('check_update');
     else if (t.id === 'installupdate') await run(() => call('install_update'), t);
     else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
+    else if (t.id === 'meals-open') ctx.navigate('meals');
     else if (t.dataset.segdel !== undefined) {
       const i = Number(t.dataset.segdel);
       save((c) => { c.segments.splice(i, 1); });

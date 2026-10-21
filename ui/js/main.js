@@ -39,8 +39,9 @@ const ctx = {
 installRipples();
 installTooltips();
 
+// Meals is optional: hidden until the state says it is on.
 nav.innerHTML = ROUTES.map((r) => `
-  <button class="dest" data-route="${r.id}" aria-label="${r.label}">
+  <button class="dest" data-route="${r.id}" aria-label="${r.label}" ${r.id === 'meals' ? 'hidden' : ''}>
     <span class="pill interactive">${icon(r.icon)}<span class="badge" hidden></span></span><span>${r.label}</span>
   </button>`).join('')
 ;
@@ -76,7 +77,7 @@ nav.addEventListener('click', (e) => {
 });
 nav.addEventListener('keydown', (e) => {
   if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-  const items = [...nav.querySelectorAll('[data-route]')];
+  const items = [...nav.querySelectorAll('[data-route]:not([hidden])')];
   const i = items.indexOf(document.activeElement);
   if (i < 0) return;
   const d = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1;
@@ -122,6 +123,12 @@ function render(s) {
   // Attention badge on "Сегодня" when the timer waits for a click.
   const badge = nav.querySelector('[data-route="today"] .badge');
   if (badge) badge.hidden = s.view.phase.kind !== 'await';
+  const meals = nav.querySelector('[data-route="meals"]');
+  if (meals.hidden === s.meta.meals) {
+    meals.hidden = !s.meta.meals;
+    if (!s.meta.meals && current === 'meals') go('settings');
+    moveIndicator(false);
+  }
   const problems = [];
   if (!s.meta.admin && s.view.lock.base) problems.push(LINUX ? tr('main_sites_are_not_blocked_the_appimage') : tr('main_clockmanage_runs_without_administrator_right'));
   if (s.meta.blocker_error) problems.push(s.meta.blocker_error);
@@ -142,6 +149,8 @@ on('agent', (p) => snack(`${p.title}: ${p.text}`, 7000));
 (async () => {
   let start = 'today';
   try { start = new URLSearchParams(location.search).get('route') || localStorage.getItem('route') || 'today'; } catch { /* ignore */ }
-  go(start);
-  render(await call('get_state'));
+  // A screen of Meals opens only while Meals is on.
+  const first = start === 'meals' ? await call('get_state') : null;
+  go(first && !first.meta.meals ? 'today' : start);
+  render(first || await call('get_state'));
 })();

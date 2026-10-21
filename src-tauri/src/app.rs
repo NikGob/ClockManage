@@ -98,6 +98,8 @@ pub struct Meta {
     /// The interface language in force ("ru" | "en"): the setting, "auto" resolved.
     pub lang: &'static str,
     pub update: crate::updater::UpdateStatus,
+    /// Meals is on: its screen shows in the menu.
+    pub meals: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -136,6 +138,7 @@ impl Shared {
                 tz_offset_min: g.cfg.tz_offset_min,
                 lang: clockmanage_core::i18n::get().key(),
                 update: self.updates.status(),
+                meals: g.cfg.meals.enabled,
             },
         }
     }
@@ -1124,10 +1127,15 @@ impl McpHost for McpBridge {
         apply_finish(&self.0, Some(&t.block), "mcp")
     }
 
+    fn meals_enabled(&self) -> bool {
+        self.0.lock().cfg.meals.enabled
+    }
+
     fn get_diet(&self) -> Value {
         let m = self.0.lock().cfg.meals.clone();
         json!({
             "diet": m.diet,
+            "service": clockmanage_core::meals::service_name(&m.service),
             "address": m.address,
             "location_set": m.location().is_some(),
             "max_km": m.max_km,
@@ -1149,12 +1157,12 @@ impl McpHost for McpBridge {
         Ok(json!({ "saved": true, "chars": text.trim().chars().count() }))
     }
 
-    fn wolt_search(&self, query: Option<&str>) -> Result<Value, String> {
-        crate::meals::wolt_search(&self.0, query)
+    fn food_search(&self, query: Option<&str>) -> Result<Value, String> {
+        crate::meals::food_search(&self.0, query)
     }
 
-    fn wolt_menu(&self, venue: &str) -> Result<Value, String> {
-        crate::meals::wolt_menu(&self.0, venue)
+    fn food_menu(&self, venue: &str) -> Result<Value, String> {
+        crate::meals::food_menu(&self.0, venue)
     }
 
     fn set_meal_options(&self, picks: Vec<clockmanage_core::mcp::MealPick>) -> Result<Value, String> {
@@ -1482,7 +1490,7 @@ pub fn save_config(s: S, cfg: Config) -> Result<Config, String> {
 pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, String> {
     cfg.normalize();
     let shared = shared.clone();
-    let (autostart_changed, mcp_changed, phone_changed, saved) = shared.mutate(|g, now| {
+    let (autostart_changed, mcp_changed, phone_changed, meals_changed, saved) = shared.mutate(|g, now| {
         // Paired phones are managed by pairing / "forget" only: a settings screen opened before
         // a phone was paired must not drop its token. Plans set ahead for dates come from MCP.
         cfg.phone.devices = g.cfg.phone.devices.clone();
@@ -1498,6 +1506,7 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         let autostart_changed = cfg.autostart != g.cfg.autostart;
         let mcp_changed = cfg.mcp_enabled != g.cfg.mcp_enabled || cfg.mcp_port != g.cfg.mcp_port;
         let phone_changed = cfg.phone.enabled != g.cfg.phone.enabled || cfg.phone.port != g.cfg.phone.port;
+        let meals_changed = cfg.meals.enabled != g.cfg.meals.enabled;
         let old = std::mem::replace(&mut g.cfg, cfg.clone());
         // A site added during the lock is blocked at once, not on the next 30 s check.
         if old.blocklist != g.cfg.blocklist {
@@ -1533,7 +1542,7 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
             }
         }
         shared.store.save_config(&g.cfg);
-        Ok((autostart_changed, mcp_changed, phone_changed, g.cfg.clone()))
+        Ok((autostart_changed, mcp_changed, phone_changed, meals_changed, g.cfg.clone()))
     })?;
     if autostart_changed {
         system::set_autostart(saved.autostart)?;
@@ -1547,6 +1556,9 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
     }
     if phone_changed {
         shared.phone.start(shared.clone(), &saved);
+    }
+    if meals_changed {
+        crate::meals::wake(&shared);
     }
     let _ = shared.app.emit("config", ());
     let _ = shared.app.emit("state", shared.snapshot());

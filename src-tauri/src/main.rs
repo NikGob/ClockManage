@@ -140,7 +140,7 @@ fn main() {
                 }
             });
             app::spawn_ticker(shared.clone());
-            meals::start(shared.clone());
+            meals::wake(&shared);
             updater::spawn(shared.clone());
 
             if !background {

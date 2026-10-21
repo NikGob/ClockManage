@@ -124,6 +124,22 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 - The README: the Languages badge and Good to know.
 - This file: the "today" lists.
 
+## Meals: an optional feature
+
+Meals is off by default (`Config::meals.enabled`, *Settings → Meals*). While it is off nothing of it may run: its thread isn't started (`meals::wake` starts it when it is turned on), it makes no requests, the menu has no Meals screen and MCP neither lists nor runs its tools (`MEAL_TOOLS` in `core/src/mcp.rs`). Keep it that way for anything you add to Meals, and gate new Meals commands with `check_on`.
+
+### Adding a delivery service
+
+Meals picks food from one delivery service at a time, today only Wolt. A new one (Yandex Eda, Samokat, Kuper, …) needs, in the same PR:
+
+- `core/src/meals.rs`: its id and brand name in `SERVICES`.
+- A parser module like `core/src/wolt.rs`, with tests on sample JSON: venues (`Venue`, within `max_km`, nearest first), search results and menus (`Dish`). Prices are in minor units of the currency as ISO 4217 counts them (kopecks for RUB, none for JPY): the UI and the iPhone app format them with `Intl`.
+- `src-tauri/src/meals.rs`: a `Service` implementation and its arm in `service()`. `owns()` decides which links the app opens.
+- `src-tauri/tauri.conf.json`: its picture host in the CSP `img-src`, or the photos don't show.
+- The README: Food that fits your diet (which services) and Good to know (the new internet requests).
+
+Texts never name a service: they take the brand name as `{service}`.
+
 ## README: keep it up to date
 
 `README.md` is the user's manual. It covers the features with pictures, the MCP tool table, settings, install and development.
@@ -142,7 +158,7 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 | build, CI, installer (`.github/workflows/`, `Cargo.toml`, `src-tauri/tauri.conf.json`, `src-tauri/tauri.linux.conf.json`, `scripts/linux-smoke.sh`) | Install, Development |
 | the i18n machinery or a language | the Languages badge, Good to know, the localization paragraph in Development |
 | the phone app (`android/`, `core/src/phone.rs`, `src-tauri/src/phone_server.rs`) | Android companion |
-| meals, Wolt, the iPhone web app (`core/src/meals.rs`, `src-tauri/src/meals.rs`, `pwa/`) | Food that fits your diet, the MCP tool table, Good to know (internet requests) |
+| meals, delivery services, the iPhone web app (`core/src/meals.rs`, `core/src/wolt.rs`, `src-tauri/src/meals.rs`, `pwa/`) | Food that fits your diet, the MCP tool table, Good to know (internet requests) |
 | top-level folders | the folder table in Development |
 
 ### Pictures

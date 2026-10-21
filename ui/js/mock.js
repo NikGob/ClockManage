@@ -29,17 +29,19 @@ const cfg = {
   segments: [{ name: L('Обед', 'Lunch'), minutes: 45, alarm: false, open_access: false, prep_min: 0 }, { name: L('Сон', 'Nap'), minutes: 20, alarm: true, open_access: false, prep_min: 10 }, { name: L('Прогулка', 'Walk'), minutes: 15, alarm: false, open_access: false, prep_min: 0 }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   meals: {
+    // ?meals=0 previews the app with Meals off (its default): no menu item, no MCP tools.
+    enabled: q.get('meals') !== '0', service: 'wolt',
     diet: L('Без сахара и жареного. Белок в каждом приёме пищи, овощи — половина тарелки. Обед до 700 ккал, ужин до 500.', 'No sugar, nothing fried. Protein at every meal, vegetables half the plate. Lunch up to 700 kcal, dinner up to 500.'),
     address: 'Mannerheimintie 16, Helsinki', lat: 60.1699, lon: 24.9384, max_km: 3, times: [780, 1140], lead_min: 30,
     agent: q.get('agent') || 'claude', agent_cmd: '',
-    pwa_url: 'https://danilt2000.github.io/ClockManage/', vapid_key: '', link: q.get('paired') === '0' ? null : { key: '', up: '', down: '' }, subscription: null, relay_seen: 0,
+    pwa_url: 'https://nikgob.github.io/ClockManage/', vapid_key: '', link: q.get('paired') === '0' ? null : { key: '', up: '', down: '' }, subscription: null, relay_seen: 0,
   },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
 let kind = q.get('kind') || 'full';
 const W = 'https://wolt.com/en/fin/helsinki/restaurant/';
 const mealPicks = {
-  at: t0 - 4 * MIN, meal: '13:00', kind: 'lunch',
+  at: t0 - 4 * MIN, meal: '13:00', kind: 'lunch', service: 'Wolt',
   venues: [
     { name: 'Fafa’s Kamppi', url: `${W}fafas-kamppi`, km: 0.6, eta: '20-30', dishes: [
       { name: L('Боул с курицей', 'Chicken bowl'), price: 1390, currency: 'EUR', url: `${W}fafas-kamppi/itemid-1`, why: L('Белок и овощи, без жарки', 'Protein and vegetables, nothing fried') },
@@ -168,6 +170,7 @@ function snapshot() {
       // ?lang=en previews the English interface; "auto" follows the browser.
       lang: cfg.lang === 'auto' ? (/^(ru|uk|be)/i.test(navigator.language) ? 'ru' : 'en') : cfg.lang,
       // ?update=ready previews a downloaded update (also available, checking, downloading, error).
+      meals: cfg.meals.enabled,
       update: { state: update, version: ['available', 'downloading', 'ready'].includes(update) ? '0.5.1' : null, checked_at: t0 - 20 * MIN, error: update === 'error' ? 'error sending request' : null, by_itself: q.get('os') !== 'linux' || q.get('admin') === '0' },
     },
   };
@@ -222,7 +225,7 @@ export async function invoke(cmd, args) {
     case 'install_update': location.reload(); return null;
     case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
-    case 'meals_state': return { claude: q.get('claude') === '0' ? null : 'C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd', picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: q.get('paired') !== '0', pairing: mealsPairing };
+    case 'meals_state': return { service: 'Wolt', services: [['wolt', 'Wolt']], claude: q.get('claude') === '0' ? null : 'C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd', picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: q.get('paired') !== '0', pairing: mealsPairing };
     case 'meals_pick_now': return null;
     case 'meals_pair': mealsPairing = { code: 'K7QM-4XPT', url: `${cfg.meals.pwa_url}?pair=K7QM4XPT`, qr: MOCK_QR, until: Date.now() + 10 * MIN }; return mealsPairing;
     case 'meals_unpair': mealsPairing = null; cfg.meals.link = null; return null;
