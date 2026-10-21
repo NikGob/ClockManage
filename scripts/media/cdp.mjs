@@ -43,6 +43,7 @@ export async function launch(profileDir) {
   await s('Runtime.enable');
 
   const page = {
+    cdp: s,
     async viewport(width, height, scale = 1) {
       await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
     },

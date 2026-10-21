@@ -18,6 +18,9 @@ pub const AGENT_TOOLS: &str = "mcp__clockmanage__get_diet mcp__clockmanage__food
 /// The command of 0.5 builds, before the agent picker: a config holding it means Claude Code.
 const OLD_DEFAULT_AGENT: &str = "claude -p --mcp-config \"{mcp_config}\" --strict-mcp-config --allowedTools \"mcp__clockmanage__get_diet mcp__clockmanage__wolt_search mcp__clockmanage__wolt_menu mcp__clockmanage__set_meal_options\"";
 pub const DEFAULT_PWA: &str = "https://nikgob.github.io/ClockManage/";
+/// The web app's address in builds of the Meals PR, before it moved to the owner's Pages: it
+/// always turns into `DEFAULT_PWA`, so this exact address can't be chosen by hand.
+const OLD_DEFAULT_PWA: &str = "https://danilt2000.github.io/ClockManage/";
 pub const MAX_KM: f64 = 15.0;
 
 /// Delivery services food can come from: (id in the config, the brand name shown). A new one
@@ -109,7 +112,7 @@ impl Meals {
         if !SERVICES.iter().any(|s| s.0 == self.service) {
             self.service = SERVICES[0].0.into();
         }
-        if self.pwa_url.trim().is_empty() {
+        if self.pwa_url.trim().is_empty() || self.pwa_url == OLD_DEFAULT_PWA {
             self.pwa_url = DEFAULT_PWA.into();
         }
     }
@@ -273,15 +276,19 @@ pub fn agent_prompt(meal: &str, kind: &str, lang: &str) -> String {
     let when = if meal.is_empty() { "now".to_string() } else { format!("at {meal}") };
     format!(
         "You run unattended inside ClockManage: nobody will answer questions. The user wants {kind} {when}: pick food that suits {kind}. \
-         1) Call get_diet. 2) Find food that fits the diet with food_search (search dishes or cuisines; try several queries) \
+         1) Call get_diet. The diet is the user's own words and the only measure of what fits. Where it contradicts itself, \
+         a specific rule wins over a general one; otherwise what the user excludes or limits wins over what it recommends. \
+         Judge a grocery product as you judge a dish: if the user doesn't want a food on its own, don't offer a pack of just that food. \
+         2) Find food that fits the diet with food_search (search dishes or cuisines; try several queries) \
          and look at promising restaurants with food_menu. Only restaurants these tools return deliver to the user and are close enough. \
          3) Choose up to 5 restaurants that are open now, and in each 1-4 available dishes that together make a meal fitting the diet. \
          Menus have no nutrition data: judge by names and descriptions, and prefer dishes whose fit is clear. \
          Be economical: at most 20 tool calls in all; one food_search per dish or product idea, and food_menu only for a restaurant you are about to pick. \
          Never pick drinks of any kind (water, juice, soda, coffee, tea, smoothies): the user buys their own. \
-         Also choose up to 5 grocery stores (store: true in food_search) and in each 4-10 products to buy that fit the diet for the next days \
-         (for example berries, nuts, oily fish, leafy greens, eggs, Greek yogurt, olive oil): search for them by name with food_search. \
-         4) Call set_meal_options exactly once with your picks, restaurants and stores together; write each `why` in one short line in this language: {lang}. Then stop."
+         Also choose up to 5 grocery stores (store: true in food_search) and in each 4-10 products to buy for the next days \
+         that the diet calls for: search for them by name with food_search. \
+         4) Before saving, check every dish and product against every rule of the diet and drop the ones that break any. \
+         5) Call set_meal_options exactly once with your picks, restaurants and stores together; write each `why` in one short line in this language: {lang}. Then stop."
     )
 }
 
@@ -313,10 +320,27 @@ mod tests {
     }
 
     #[test]
+    fn the_old_web_app_address_moves_to_the_owners_pages() {
+        let mut m = Meals { pwa_url: OLD_DEFAULT_PWA.into(), ..Meals::default() };
+        m.normalize();
+        assert_eq!(m.pwa_url, DEFAULT_PWA);
+        let mut m = Meals { pwa_url: "https://example.org/cm/".into(), ..Meals::default() };
+        m.normalize();
+        assert_eq!(m.pwa_url, "https://example.org/cm/");
+    }
+
+    #[test]
     fn kinds_by_time_of_day() {
         assert_eq!([kind_at(8 * 60), kind_at(11 * 60), kind_at(15 * 60 + 59), kind_at(19 * 60)], ["breakfast", "lunch", "lunch", "dinner"]);
         assert!(agent_prompt("", "breakfast", "ru").contains("wants breakfast now"));
         assert!(agent_prompt("13:00", "lunch", "en").contains("Never pick drinks"));
+    }
+
+    #[test]
+    fn the_diet_alone_says_what_to_buy() {
+        let p = agent_prompt("13:00", "lunch", "en");
+        assert!(!p.contains("leafy greens") && !p.contains("eggs"), "{p}");
+        assert!(p.contains("excludes or limits wins over what it recommends"));
     }
 
     #[test]
