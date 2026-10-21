@@ -108,6 +108,21 @@ impl McpHost for NoHost {
     fn set_autolock(&self, _: DayKind, _: Option<u32>) -> Result<Value, String> {
         unreachable!()
     }
+    fn get_diet(&self) -> Value {
+        unreachable!()
+    }
+    fn set_diet(&self, _: &str) -> Result<Value, String> {
+        unreachable!()
+    }
+    fn wolt_search(&self, _: Option<&str>) -> Result<Value, String> {
+        unreachable!()
+    }
+    fn wolt_menu(&self, _: &str) -> Result<Value, String> {
+        unreachable!()
+    }
+    fn set_meal_options(&self, _: Vec<mcp::MealPick>) -> Result<Value, String> {
+        unreachable!()
+    }
 }
 
 #[test]

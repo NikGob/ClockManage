@@ -8,11 +8,13 @@ import { mountPlan } from './views/plan.js';
 import { mountBlock } from './views/block.js';
 import { mountLog } from './views/log.js';
 import { mountSettings } from './views/settings.js';
+import { mountMeals } from './views/meals.js';
 import { tr, followLang } from './i18n.js';
 
 const ROUTES = [
   { id: 'today', label: tr('main_today'), icon: 'timer', title: tr('main_today'), mount: mountToday },
   { id: 'plan', label: tr('main_plan'), icon: 'list', title: tr('main_day_plan'), mount: mountPlan },
+  { id: 'meals', label: tr('main_meals'), icon: 'restaurant', title: tr('main_meals'), mount: mountMeals },
   { id: 'block', label: tr('main_blocking'), icon: 'lock', title: tr('main_blocking'), mount: mountBlock },
   { id: 'log', label: tr('main_log'), icon: 'history', title: tr('main_log'), mount: mountLog },
   { id: 'settings', label: tr('main_settings'), icon: 'settings', title: tr('main_settings'), mount: mountSettings },
@@ -132,6 +134,7 @@ function render(s) {
 
 on('state', render);
 on('config', () => screen?.config?.());
+on('meals', () => screen?.meals?.());
 on('navigate', (id) => go(id));
 // Changes made by the agent through MCP, so it is clear they were not mine.
 on('agent', (p) => snack(`${p.title}: ${p.text}`, 7000));

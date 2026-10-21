@@ -22,6 +22,8 @@ Copy-Item target/release/cm-guard.exe src-tauri/binaries/cm-guard-x86_64-pc-wind
 cargo check -p clockmanage
 ```
 
+Don't start the built app from a shell inside the Claude desktop app on Windows: it is an MSIX package, and every process it starts writes AppData into `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming`, so that app sees other settings than the real one started by autostart. Start it from a terminal opened outside Claude.
+
 On Linux (Ubuntu 22.04 or newer, or a container of it, like the Linux CI job) no sidecar is needed: `src-tauri/tauri.linux.conf.json` drops the launch guard.
 
 ```sh
@@ -37,7 +39,7 @@ For UI changes, look at the mock preview **in every language**:
 python -m http.server -d ui
 ```
 
-Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed, then the same with every other language (`&lang=ru`, …). The screens are `today`, `plan`, `block`, `log` and `settings`. Check `overlay.html?demo=await` and `mini.html?state=work` the same way. Always pass `&lang=`: without it the mock follows the browser's language. Texts that differ in the Linux app show with `&os=linux` (`&admin=0`: an app that can't block sites): check those as well when you change them.
+Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed, then the same with every other language (`&lang=ru`, …). The screens are `today`, `plan`, `meals`, `block`, `log` and `settings`. Check `overlay.html?demo=await` and `mini.html?state=work` the same way. Always pass `&lang=`: without it the mock follows the browser's language. Texts that differ in the Linux app show with `&os=linux` (`&admin=0`: an app that can't block sites): check those as well when you change them.
 
 ## Localization: every language, every change
 
@@ -63,7 +65,7 @@ Rules for every text:
    - Follow each language's typography. Russian uses «» and ё.
 2. Call `tr` with a **literal** key:
    - Rust: `tr("key")`, or `tr!("key", name = value)` when the text has placeholders. Imports: `use crate::i18n::tr; use crate::tr;` in `core`, `use clockmanage_core::i18n::tr; use clockmanage_core::tr;` in `src-tauri`. Don't write a path-qualified `i18n::tr(…)`: the checker skips it.
-   - JS: `import { tr } from './i18n.js'`, then `tr('key', { name })`. The arguments must be an object literal.
+   - JS: `import { tr } from './i18n.js'`, then `tr('key', { name })`. The arguments must be an object literal. The iPhone web app in `pwa/` has its own small `tr` with the same call shape and reads the same `ui/locales/` files (the Pages workflow copies them next to it).
    - Kotlin: `tr("key", "name" to value)`.
    - Key chosen at runtime: use a `match` or a lookup object of literal `tr` calls (see `DayKind::label` in `core/src/config.rs` and the tip tables in `ui/js/views/settings.js`). Never `tr(variable)`.
 3. When code goes away, delete its keys from every file. Unused keys fail the test.
@@ -87,7 +89,7 @@ Check those yourself.
 ### Deliberately not translated
 
 - **MCP tool descriptions and server instructions** in `core/src/mcp.rs`: English only, because the model reads them. MCP *results* do go through `tr`. `core/tests/english.rs` rejects Cyrillic in `tools/list` only, so keep the `initialize` instructions English yourself.
-- **User data**: block and segment names, the emergency phrase. Defaults are written in the system language on the first run; while the user hasn't changed them, they follow the interface language (`Config::follow_lang`). A new default name needs its key in the lists there.
+- **User data**: block and segment names, the emergency phrase, the diet. Defaults are written in the system language on the first run; while the user hasn't changed them, they follow the interface language (`Config::follow_lang`). A new default name needs its key in the lists there.
 - **Fixed strings**: config and JSON keys, the brand name, the author's signature *Made by NikGob* at the end of Settings, and the language names in the picker (each written in its own language).
 - **`README.md` and its pictures** in `docs/media/`: English.
 
@@ -112,6 +114,7 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 - `core/src/i18n.rs`: `Lang`, `LangPref`, `from_locale` and `FILES`.
 - `src-tauri/src/system.rs`: map the Windows UI language id to the new `Lang`.
 - `ui/js/i18n.js`: the accepted codes, the `navigator.language` check, `LOCALE`, `dec()` and `followLang`.
+- `pwa/app.js`: the `navigator.language` check and `LOCALE` of the iPhone web app.
 - `android/.../I18n.kt`, plus `res/values-<lang>/strings.xml`.
 - `src-tauri/linux/`: the polkit action's description and message, and the `.desktop` comment.
 - `core/tests/locales.rs`: compare every locale file, not only `ru` and `en`.
@@ -139,6 +142,7 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 | build, CI, installer (`.github/workflows/`, `Cargo.toml`, `src-tauri/tauri.conf.json`, `src-tauri/tauri.linux.conf.json`, `scripts/linux-smoke.sh`) | Install, Development |
 | the i18n machinery or a language | the Languages badge, Good to know, the localization paragraph in Development |
 | the phone app (`android/`, `core/src/phone.rs`, `src-tauri/src/phone_server.rs`) | Android companion |
+| meals, Wolt, the iPhone web app (`core/src/meals.rs`, `src-tauri/src/meals.rs`, `pwa/`) | Food that fits your diet, the MCP tool table, Good to know (internet requests) |
 | top-level folders | the folder table in Development |
 
 ### Pictures

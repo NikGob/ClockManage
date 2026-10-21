@@ -325,7 +325,7 @@ fn follow_lang_names<'a>(names: impl Iterator<Item = &'a mut String>, keys: &[&'
 }
 
 impl Config {
-    /// The defaults (plan names, segment types, the emergency phrase) are written in the
+    /// The defaults (plan names, segment types, the emergency phrase, the diet) are written in the
     /// language of the first run. While the user hasn't changed them they follow the interface
     /// language: a later language switch, or a config from an older version, doesn't leave them
     /// in another language. Returns whether anything changed.
@@ -339,6 +339,10 @@ impl Config {
         changed |= follow_lang_names(self.segments.iter_mut().map(|t| &mut t.name), &SEGMENTS);
         if let Some(to) = default_in_other_lang(&self.emergency_phrase, &["config_i_am_consciously_interrupting_my_study"]) {
             self.emergency_phrase = to.into();
+            changed = true;
+        }
+        if let Some(to) = default_in_other_lang(&self.meals.diet, &["meals_goal_a_clear_steady_mind"]) {
+            self.meals.diet = to.into();
             changed = true;
         }
         changed
@@ -416,6 +420,8 @@ pub struct Config {
     /// Plans set ahead for particular dates (MCP `set_plan` with `date`): that day starts with
     /// it instead of its profile's template. Dropped once that date's day exists.
     pub plan_overrides: BTreeMap<NaiveDate, Vec<PlanBlock>>,
+    /// Diet, address, meal times and the paired iPhone web app.
+    pub meals: crate::meals::Meals,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
     pub study_days: Option<[bool; 7]>,
@@ -461,6 +467,7 @@ impl Default for Config {
             phone: Phone::default(),
             night_start: NightStart::default(),
             plan_overrides: BTreeMap::new(),
+            meals: crate::meals::Meals::default(),
             study_days: None,
             plan_template: None,
         }
@@ -510,6 +517,7 @@ impl Config {
     }
 
     pub fn normalize(&mut self) {
+        self.meals.normalize();
         if let Some(days) = self.study_days.take() {
             self.week = days.map(|d| if d { DayKind::Full } else { DayKind::Off });
         }

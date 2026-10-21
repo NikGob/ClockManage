@@ -522,3 +522,20 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
   .seg-add { flex-wrap: wrap; }
   .seg-add > .grow { flex-basis: 100%; }
 }
+
+/* Meals */
+.meal-venue { margin-bottom: 12px; }
+.meal-sub { display: flex; align-items: center; gap: 8px; font: 500 16px/24px var(--font); margin: 16px 4px 8px; }
+.meal-sub svg { color: var(--md-sys-color-primary); }
+.meal-total .tnum { font-weight: 600; }
+.venue-pic { width: 40px; height: 40px; border-radius: 12px; object-fit: cover; flex: none; }
+.dish-pic { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; flex: none; background: var(--md-sys-color-surface-container-highest); }
+.setting.dish { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.setting.dish .tnum { color: var(--md-sys-color-primary); font-weight: 500; }
+.pair-box { align-items: flex-start; gap: 8px; }
+.pair-box .pin { font: 500 28px/36px var(--font); letter-spacing: .08em; color: var(--md-sys-color-primary); }
+.qr svg { width: 220px; height: 220px; border-radius: var(--shape-s); display: block; }
+.hstack.wrap { flex-wrap: wrap; }
+.chip { font: 500 14px/20px var(--font); padding: 6px 14px; border-radius: 999px; border: 1px solid var(--md-sys-color-outline-variant); background: none; color: var(--md-sys-color-on-surface); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
+input.mono { font: 400 13px/20px ui-monospace, "Cascadia Code", Consolas, monospace; }

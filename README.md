@@ -10,7 +10,7 @@
 [![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20AppImage-FCC624?logo=linux&logoColor=black)](#linux)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
-[![MCP](https://img.shields.io/badge/MCP-16%20tools-6E56CF)](#claude-runs-your-day-mcp)
+[![MCP](https://img.shields.io/badge/MCP-21%20tools-6E56CF)](#claude-runs-your-day-mcp)
 [![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
 [![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
@@ -108,6 +108,14 @@ A small always-on-top pill with the countdown and one button that does the right
 
 Most time gets lost *before* the first block: one more video, one more chat. So on Full and Light days the block list goes on by itself at **13:00** if you haven't pressed **Start day** yet — sites, apps and the paired phone, as during a block. Five minutes before, a notice warns you. It holds until **Start day** (then the day's usual rules take over) or the day end, which meanwhile only moves later; only emergency access opens it early. Start before 13:00 and nothing happens. The day log records when it went on and how many minutes later the day started — the *start delay*. A restart or a power cut doesn't drop it. The time, or off, is set per profile in *Settings → Study day → Autolock before the start*, or ask Claude (`set_autolock`); a day off never has one.
 
+### Food that fits your diet
+
+Out of the box the diet aims at the brain, after the MIND diet: leafy greens, berries and nuts every day, oily fish, slow carbs, no sugar spikes or heavy lunches. Two more ready diets keep the brain rules and add more protein or fewer calories. Pick one, or write your own — or paste yours to Claude and say *"save this as my diet"*. Add the delivery address, how far away food may come from (3 km by default) and your meal times (13:00 and 19:00). Half an hour before each meal ClockManage asks an agent — Claude Code by default — to look through the Wolt restaurants and grocery stores that deliver to you and pick up to five restaurants with dishes that fit (never drinks), plus up to five stores with up to ten products each to buy for the next days (berries, nuts, fish, greens…). The picks land on the **Meals** screen with Wolt's photos: **Open in Wolt** for each restaurant, and every dish is a link straight to it on Wolt, where you add it to the basket and order. ClockManage never fills the basket or orders anything. **Pick now** asks for a pick right away.
+
+Pair an iPhone and the picks come to it as notifications: **Meals → Pair an iPhone** shows a QR code; open it with the camera, add the page to the Home Screen (Share → Add to Home Screen, in Safari or Chrome on iOS 16.4+) and open it from there — it connects by itself (or type the code). The iPhone app is a web app on GitHub Pages: **Breakfast**, **Lunch** or **Dinner** there asks the PC for a pick right away (the PC must be on), and the diet can be edited or switched there too. The PC and the iPhone talk through [ntfy.sh](https://ntfy.sh) with end-to-end encryption, and the PC sends the pushes itself: no account, no keys, no server of your own. The agent is Claude Code by default: ClockManage finds it by itself and runs it on its own login (run `claude` once and `/login`), without your user settings and hooks, allowed only the meal tools. **Meals → Agent → Custom command** runs Codex, Gemini CLI or any other agent with MCP instead: the task comes on stdin, `{mcp_url}` and `{mcp_config}` are filled in.
+
+Wolt has no public API for customers: ClockManage reads the same pages wolt.com does, without logging in. Wolt's terms don't allow automated access, and the pages can change — then picking stops working until ClockManage is updated. Menus carry no nutrition data, so the agent judges dishes by their names and descriptions.
+
 ## Claude runs your day (MCP)
 
 ClockManage runs a local MCP server (`127.0.0.1` only). The exact address and a ready-to-paste command are in **Settings → MCP for Claude**:
@@ -124,6 +132,7 @@ Then just talk:
 > - *"Close the current block, I'm done with math for today."*
 > - *"I get up at 7 — make it night until 7 and hold for 3 seconds."*
 > - *"On Light days lock everything at 11:30 if I haven't started yet."*
+> - *"Here's my diet from the nutritionist — save it. Then find me lunch on Wolt."*
 
 | Tool | What it does |
 |---|---|
@@ -140,6 +149,9 @@ Then just talk:
 | `finish_block` | close the current block at the time worked — two steps, needs your explicit "yes" |
 | `get_blocklist` · `add_to_blocklist` · `remove_from_blocklist` | read and edit the block list (removing only outside the lock) |
 | `start_focus_lock` | block the whole list right now for N minutes; can only be extended |
+| `get_diet` · `set_diet` | read and replace your diet, with the address status, the distance limit and the meal times |
+| `wolt_search` · `wolt_menu` | Wolt dishes and store products (by a query) or the restaurants and stores that deliver to you within the distance limit, and a venue's menu |
+| `set_meal_options` | offer up to 5 restaurants with dishes and up to 5 stores with products: shown on the Meals screen and pushed to the paired iPhone |
 
 The rules hold for the agent too: it can't erase worked time, can't shrink the block list during the lock, and can't close a block without asking you. Every change it makes shows up in the app as *"The agent changed …"*, so you always know it wasn't you.
 
@@ -180,13 +192,13 @@ What works differently from Windows:
 ## Good to know
 
 - **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. On Linux the AppImage does the same where the desktop reports idle time, and a .deb only finds the update (see [Linux](#linux)). *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs the new version at once (outside a study day). The installers are signed, and the app installs nothing else.
-- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows the system language. The default plan names, segment types and emergency phrase switch along until you change them. The time zone is there too (a new install takes the system's).
+- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows the system language. The default plan names, segment types, emergency phrase and diet switch along until you change them. The time zone is there too (a new install takes the system's).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
 - **Autolock**: on Full and Light days the block list goes on at 13:00 when the day hasn't started — see [Autolock before the day starts](#autolock-before-the-day-starts). Once it is on today, changing the setting only affects the days ahead. A phone that has lost the PC learns about it on the next sync.
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
-- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` on Windows, `~/.local/share/com.nikgob.clockmanage` on Linux (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The phone talks to the PC over your local network only, and the only request to the internet is the update check on GitHub.
+- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` on Windows, `~/.local/share/com.nikgob.clockmanage` on Linux (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The Android phone talks to the PC over your local network only. Requests to the internet: the update check on GitHub and, once you use Meals, Wolt's pages (the restaurants near your address), OpenStreetMap's geocoder (when you press **Find** for an address), ntfy.sh (end-to-end encrypted, for the iPhone) and Apple's push service.
 
 ## Development
 
@@ -198,7 +210,7 @@ npx @tauri-apps/cli@2 build                  # NSIS installer on Windows; .deb a
 
 On Linux the app needs WebKitGTK: `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf` (Ubuntu 22.04 or newer), then `cargo test --workspace` runs the app's tests too. `src-tauri/tauri.linux.conf.json` is merged over `tauri.conf.json` on Linux: no launch guard; the .deb's polkit rule and remove script and the menu entry (also used by the AppImage) from `src-tauri/linux/`. `scripts/linux-smoke.sh <deb>` installs a built package and drives the running app over MCP — it changes `/etc/hosts`, so CI runs it on a throwaway runner.
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage).
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=meals` for the Meals screen (`&picks=0` without picks, `&paired=0` without an iPhone), `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage).
 
 | Folder | What's inside |
 |---|---|
@@ -206,6 +218,7 @@ UI preview in a normal browser with a mock backend: `cd ui && python -m http.ser
 | `src-tauri/` | the desktop app for Windows and Linux: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
 | `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler; `ui/locales/` — the texts of every part |
 | `android/` | the phone app, Kotlin with no dependencies: `cd android && gradle assembleRelease` |
+| `pwa/` | the iPhone web app for meal picks — plain JS, served with `ui/locales/` by GitHub Pages (`.github/workflows/pwa.yml`; turn on *Settings → Pages → Source: GitHub Actions*) |
 
 Every push builds the Windows installer, the Linux .deb and AppImage and the APK; the Linux job also runs the smoke test above. A `v*` tag publishes them as one release. With the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, CI signs the installer and the Linux packages and uploads `latest.json` next to them (one entry per platform and package type); installed apps read `releases/latest/download/latest.json` and check the signature against the public key in `src-tauri/tauri.conf.json`. Without the secrets the packages are built unsigned and apps don't see the release. Keep the private key: without it no update can be signed for the apps already installed.
 

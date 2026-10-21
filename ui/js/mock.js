@@ -28,9 +28,38 @@ const cfg = {
   emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47213,
   segments: [{ name: L('Обед', 'Lunch'), minutes: 45, alarm: false, open_access: false, prep_min: 0 }, { name: L('Сон', 'Nap'), minutes: 20, alarm: true, open_access: false, prep_min: 10 }, { name: L('Прогулка', 'Walk'), minutes: 15, alarm: false, open_access: false, prep_min: 0 }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
+  meals: {
+    diet: L('Без сахара и жареного. Белок в каждом приёме пищи, овощи — половина тарелки. Обед до 700 ккал, ужин до 500.', 'No sugar, nothing fried. Protein at every meal, vegetables half the plate. Lunch up to 700 kcal, dinner up to 500.'),
+    address: 'Mannerheimintie 16, Helsinki', lat: 60.1699, lon: 24.9384, max_km: 3, times: [780, 1140], lead_min: 30,
+    agent: q.get('agent') || 'claude', agent_cmd: '',
+    pwa_url: 'https://danilt2000.github.io/ClockManage/', vapid_key: '', link: q.get('paired') === '0' ? null : { key: '', up: '', down: '' }, subscription: null, relay_seen: 0,
+  },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
 let kind = q.get('kind') || 'full';
+const W = 'https://wolt.com/en/fin/helsinki/restaurant/';
+const mealPicks = {
+  at: t0 - 4 * MIN, meal: '13:00', kind: 'lunch',
+  venues: [
+    { name: 'Fafa’s Kamppi', url: `${W}fafas-kamppi`, km: 0.6, eta: '20-30', dishes: [
+      { name: L('Боул с курицей', 'Chicken bowl'), price: 1390, currency: 'EUR', url: `${W}fafas-kamppi/itemid-1`, why: L('Белок и овощи, без жарки', 'Protein and vegetables, nothing fried') },
+      { name: L('Хумус с овощами', 'Hummus with vegetables'), price: 650, currency: 'EUR', url: `${W}fafas-kamppi/itemid-2`, why: L('Клетчатка, мало сахара', 'Fibre, little sugar') },
+    ] },
+    { name: 'Poke Bowl Helsinki', url: `${W}poke-bowl`, km: 1.1, eta: '25-35', dishes: [
+      { name: L('Поке с лососем', 'Salmon poke'), price: 1590, currency: 'EUR', url: `${W}poke-bowl/itemid-3`, why: L('Рыба и рис, соус отдельно', 'Fish and rice, sauce on the side') },
+    ] },
+    { name: 'Wolt Market Holešovice', store: true, url: 'https://wolt.com/en/cze/prague/venue/wolt-market-holesovice', km: 0.4, eta: '15-25', dishes: [
+      { name: L('Черника, 125 г', 'Blueberries, 125 g'), price: 5490, currency: 'CZK', url: 'https://wolt.com/en/cze/prague/venue/wolt-market-holesovice/itemid-6', why: L('Ягоды каждый день', 'Berries every day') },
+      { name: L('Грецкие орехи, 100 г', 'Walnuts, 100 g'), price: 6990, currency: 'CZK', url: 'https://wolt.com/en/cze/prague/venue/wolt-market-holesovice/itemid-7', why: L('Омега-3 на перекус', 'Omega-3 for a snack') },
+    ] },
+    { name: 'Green Kitchen', url: `${W}green-kitchen`, km: 2.4, eta: '30-40', dishes: [
+      { name: L('Салат с тофу', 'Tofu salad'), price: 1290, currency: 'EUR', url: `${W}green-kitchen/itemid-4`, why: L('Лёгкий ужин до 500 ккал', 'A light dinner under 500 kcal') },
+      { name: L('Суп из чечевицы', 'Lentil soup'), price: 890, currency: 'EUR', url: `${W}green-kitchen/itemid-5`, why: L('Белок без мяса', 'Protein without meat') },
+    ] },
+  ],
+};
+let mealsPairing = null;
+const MOCK_QR = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"><rect width="29" height="29" fill="#fff"/>${Array.from({ length: 841 }, (_, i) => ((i * 7919) % 13 < 6 ? `<rect x="${i % 29}" y="${Math.floor(i / 29)}" width="1" height="1"/>` : '')).join('')}</svg>`;
 let phonePin = null;
 let noteDone = false;
 let dayEnd = 1320;
@@ -193,6 +222,12 @@ export async function invoke(cmd, args) {
     case 'install_update': location.reload(); return null;
     case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
+    case 'meals_state': return { claude: q.get('claude') === '0' ? null : 'C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd', picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: q.get('paired') !== '0', pairing: mealsPairing };
+    case 'meals_pick_now': return null;
+    case 'meals_pair': mealsPairing = { code: 'K7QM-4XPT', url: `${cfg.meals.pwa_url}?pair=K7QM4XPT`, qr: MOCK_QR, until: Date.now() + 10 * MIN }; return mealsPairing;
+    case 'meals_unpair': mealsPairing = null; cfg.meals.link = null; return null;
+    case 'meals_geocode': return { lat: 60.1699, lon: 24.9384, label: args.address };
+    case 'open_url': return null;
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
     case 'day_stats': return {

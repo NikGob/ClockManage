@@ -41,6 +41,21 @@ pub trait McpHost {
     fn set_night_start(&self, req: NightStartRequest) -> Result<Value, String>;
     /// "Автоблокировка с …" of a study profile: minutes after midnight, `None` = off.
     fn set_autolock(&self, profile: DayKind, min: Option<u32>) -> Result<Value, String>;
+    /// The diet, the delivery address and the meal times.
+    fn get_diet(&self) -> Value;
+    fn set_diet(&self, text: &str) -> Result<Value, String>;
+    /// Dishes matching `query` near the address; without a query, the nearby restaurants.
+    fn wolt_search(&self, query: Option<&str>) -> Result<Value, String>;
+    fn wolt_menu(&self, venue: &str) -> Result<Value, String>;
+    /// The agent's picks: shown on the Meals screen and pushed to the paired iPhone.
+    fn set_meal_options(&self, picks: Vec<MealPick>) -> Result<Value, String>;
+}
+
+/// One restaurant of `set_meal_options`: its slug and the chosen dishes (id, why).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MealPick {
+    pub venue: String,
+    pub dishes: Vec<(String, String)>,
 }
 
 /// Arguments of `set_night_start`: only the given fields change.
@@ -309,6 +324,82 @@ fn tools() -> Value {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+        },
+        {
+            "name": "get_diet",
+            "title": "Diet and meal times",
+            "description": "The user's diet in their own words (diet; empty when not set yet), whether the delivery address is set (address, location_set), max_km — restaurants farther than this are never offered — and meal_times (HH:MM) with lead_min: that long before each meal ClockManage asks an agent to pick food. Read it before picking food.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_diet",
+            "title": "Save the diet",
+            "description": "Replaces the user's diet with text: rules, allowed and banned foods, portions, goals — in the user's words and language, as plain text (up to 8000 characters). Use it when the user asks to load or change their diet. It shows in ClockManage and on the paired iPhone, and every meal pick follows it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "text": { "type": "string", "maxLength": 8000, "description": "The whole diet; replaces the old one" } },
+                "required": ["text"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
+        },
+        {
+            "name": "wolt_search",
+            "title": "Find food on Wolt nearby",
+            "description": "Wolt food that delivers to the user's address, within max_km. Restaurants and grocery stores both. With query (a dish, a product, an ingredient or a cuisine, e.g. \"chicken salad\", \"poke\", \"blueberries\", \"walnuts\") — up to 20 available items, at most 3 per venue: items[] (id, venue slug, name, description, price in cents), venues{slug: name, store (true for a grocery store), km, eta in minutes} and currency. Without query — the nearby open restaurants and stores: slug, name, km, eta, rating, tags. Run several queries; the data is cached for a few minutes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "query": { "type": "string", "description": "What to search for; omit to list the restaurants" } },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
+        },
+        {
+            "name": "wolt_menu",
+            "title": "A restaurant's menu",
+            "description": "The menu of one nearby restaurant (venue = its slug from wolt_search): up to 60 available dishes with id, name, description, price (cents), plus km, eta and currency. Grocery stores list no menu: search their products with wolt_search. Menus carry no nutrition data: judge by names and descriptions.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "venue": { "type": "string", "description": "Restaurant slug from wolt_search" } },
+                "required": ["venue"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true }
+        },
+        {
+            "name": "set_meal_options",
+            "title": "Offer the meal picks",
+            "description": "Saves the picks for the coming meal and sends them to the user: they show on the Meals screen with links to each restaurant and dish on Wolt, and a notification goes to the paired iPhone. Up to 5 restaurants and up to 5 grocery stores, each with 1-4 dishes (restaurants) or up to 10 products (stores), ids from wolt_search or wolt_menu, and a short why per item in the user's language; never drinks. Replaces the previous picks. The user orders on Wolt themselves; nothing is put in a basket.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "venues": {
+                        "type": "array", "minItems": 1, "maxItems": 10,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "venue": { "type": "string", "description": "Restaurant or store slug" },
+                                "dishes": {
+                                    "type": "array", "minItems": 1, "maxItems": 10,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": { "type": "string", "description": "Dish id" },
+                                            "why": { "type": "string", "maxLength": 160, "description": "Why it fits the diet, one short line" }
+                                        },
+                                        "required": ["id"]
+                                    }
+                                }
+                            },
+                            "required": ["venue", "dishes"]
+                        }
+                    }
+                },
+                "required": ["venues"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
         }
     ])
 }
@@ -491,6 +582,32 @@ fn parse_autolock(args: &Value) -> Result<(DayKind, Option<u32>), String> {
     Ok((kind, min))
 }
 
+fn parse_meal_options(args: &Value) -> Result<Vec<MealPick>, String> {
+    let venues = args.get("venues").and_then(Value::as_array).filter(|v| !v.is_empty()).ok_or(tr("mcp_meals_pick_at_least_one_restaurant"))?;
+    venues
+        .iter()
+        .take(10)
+        .map(|v| {
+            let venue = v.get("venue").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or(tr("mcp_meals_a_restaurant_has_no_slug"))?;
+            let dishes: Vec<(String, String)> = v
+                .get("dishes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(10)
+                .filter_map(|d| {
+                    let id = d.get("id").and_then(Value::as_str)?;
+                    Some((id.to_string(), d.get("why").and_then(Value::as_str).unwrap_or("").chars().take(160).collect()))
+                })
+                .collect();
+            if dishes.is_empty() {
+                return Err(tr!("mcp_meals_no_dishes_for", venue = venue));
+            }
+            Ok(MealPick { venue: venue.to_string(), dishes })
+        })
+        .collect()
+}
+
 fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str);
     let id = msg.get("id").cloned();
@@ -512,7 +629,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": SERVER_NAME, "title": "ClockManage — study timer", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early."
+                    "instructions": "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early. Meals: get_diet — the user's diet, address and meal times; set_diet — save the diet the user gives you; wolt_search and wolt_menu — Wolt dishes and restaurants that deliver to the user (nearby only); set_meal_options — offer up to 5 restaurants with dishes and up to 5 grocery stores with products that fit the diet (shown in the app and pushed to the iPhone; the user orders on Wolt themselves)."
                 }),
             )
         }
@@ -543,6 +660,17 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "remove_from_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(true, s, a)),
                 "set_night_start" => parse_night(&args).and_then(|r| host.set_night_start(r)),
                 "set_autolock" => parse_autolock(&args).and_then(|(k, m)| host.set_autolock(k, m)),
+                "get_diet" => Ok(host.get_diet()),
+                "set_diet" => match args.get("text").and_then(Value::as_str) {
+                    Some(t) => host.set_diet(&t.chars().take(8000).collect::<String>()),
+                    None => Err(tr("mcp_meals_text_is_required").to_string()),
+                },
+                "wolt_search" => host.wolt_search(args.get("query").and_then(Value::as_str).filter(|q| !q.trim().is_empty())),
+                "wolt_menu" => match args.get("venue").and_then(Value::as_str) {
+                    Some(v) => host.wolt_menu(v),
+                    None => Err(tr("mcp_meals_a_restaurant_has_no_slug").to_string()),
+                },
+                "set_meal_options" => parse_meal_options(&args).and_then(|p| host.set_meal_options(p)),
                 "start_focus_lock" => parse_focus(&args).and_then(|m| host.start_focus_lock(m, args.get("reason").and_then(Value::as_str))),
                 _ => return Some(err(&id, -32602, &format!("Unknown tool: {name}"))),
             };
@@ -628,6 +756,21 @@ mod tests {
             self.1.borrow_mut().push(json!({ "enabled": r.enabled, "until_min": r.until_min, "after_day_end": r.after_day_end, "hold_sec": r.hold_sec }));
             Ok(json!({"ok": true}))
         }
+        fn get_diet(&self) -> Value {
+            json!({ "diet": "" })
+        }
+        fn set_diet(&self, t: &str) -> Result<Value, String> {
+            Ok(json!({ "diet": t }))
+        }
+        fn wolt_search(&self, q: Option<&str>) -> Result<Value, String> {
+            Ok(json!({ "query": q }))
+        }
+        fn wolt_menu(&self, v: &str) -> Result<Value, String> {
+            Ok(json!({ "venue": v }))
+        }
+        fn set_meal_options(&self, p: Vec<MealPick>) -> Result<Value, String> {
+            Ok(json!({ "venues": p.iter().map(|p| json!({ "venue": p.venue, "dishes": p.dishes.len() })).collect::<Vec<_>>() }))
+        }
         fn set_autolock(&self, k: DayKind, min: Option<u32>) -> Result<Value, String> {
             self.1.borrow_mut().push(json!({ "autolock": k, "min": min }));
             Ok(json!({"ok": true}))
@@ -649,6 +792,22 @@ mod tests {
         assert_eq!(call(&h, "set_autolock", json!({ "profile": "full", "time": "25:00" }))["isError"], true);
         assert_eq!(call(&h, "set_autolock", json!({ "profile": "full" }))["isError"], true);
         assert_eq!(h.1.borrow().len(), 2);
+    }
+
+    #[test]
+    fn meal_options_args() {
+        let p = parse_meal_options(&json!({ "venues": [
+            { "venue": "salad-bar", "dishes": [{ "id": "a1", "why": "белок" }, { "id": "a2" }, { "why": "no id" }] },
+            { "venue": "b", "dishes": [{ "id": "b1" }] }, { "venue": "c", "dishes": [{ "id": "c1" }] }, { "venue": "d", "dishes": [{ "id": "d1" }] }
+        ]}))
+        .unwrap();
+        assert_eq!(p.len(), 4);
+        assert_eq!(p[0].dishes, vec![("a1".to_string(), "белок".to_string()), ("a2".to_string(), String::new())]);
+        assert!(parse_meal_options(&json!({ "venues": [] })).is_err());
+        assert!(parse_meal_options(&json!({ "venues": [{ "venue": "x", "dishes": [] }] })).unwrap_err().contains('x'));
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = handle(r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"wolt_search","arguments":{"query":"  "}}}"#, &h).unwrap();
+        assert!(r.contains(r#"\"query\": null"#), "{r}");
     }
 
     #[test]

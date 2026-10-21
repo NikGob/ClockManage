@@ -20,6 +20,7 @@ fn untouched_defaults_follow_the_language() {
     assert_eq!(names(DayKind::Light, &c), ["Math", "Физика"]);
     assert_eq!(c.segments.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Lunch", "Nap", "Душ"]);
     assert!(c.emergency_phrase.starts_with("I am consciously"));
+    assert!(c.meals.diet.starts_with("Goal: a clear, steady mind"));
     assert!(!c.follow_lang());
 
     // Back to Russian: the same defaults come back.
