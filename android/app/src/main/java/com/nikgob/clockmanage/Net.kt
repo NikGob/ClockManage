@@ -21,6 +21,8 @@ class Store(ctx: Context) {
     var token: String get() = p.getString("token", "") ?: ""; set(v) = p.edit().putString("token", v).apply()
     var pcName: String get() = p.getString("pc", "") ?: ""; set(v) = p.edit().putString("pc", v).apply()
     var notify: Boolean get() = p.getBoolean("notify", true); set(v) = p.edit().putBoolean("notify", v).apply()
+    /** The PC's colours (`theme` of the state): the app draws itself like the PC. */
+    val theme: String? get() = p.getString("theme", null)
 
     /** PC clock minus phone clock, measured on every sync. */
     var offset: Long get() = p.getLong("offset", 0); private set(v) = p.edit().putLong("offset", v).apply()
@@ -47,7 +49,9 @@ class Store(ctx: Context) {
         val total = (gotAt - sentAt).coerceAtLeast(0)
         val held = if (snap.heldMs >= 0) snap.heldMs.coerceAtMost(total) else total
         val off = snap.serverNow - (gotAt - (total - held) / 2)
-        p.edit().putString("snap", raw).putLong("offset", off).putLong("synced", snap.serverNow).apply()
+        val e = p.edit().putString("snap", raw).putLong("offset", off).putLong("synced", snap.serverNow)
+        JSONObject(raw).optJSONObject("theme")?.let { e.putString("theme", it.toString()) }
+        e.apply()
     }
 
     fun forget() {

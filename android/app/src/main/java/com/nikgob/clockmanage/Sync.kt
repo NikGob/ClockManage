@@ -9,10 +9,11 @@ import java.util.concurrent.Executors
 
 /**
  * Talking to the PC. No polling in the background:
- * - while the timer screen is open, one long-poll request is kept open (the PC answers when the
- *   day changes, at most every 25 s);
- * - otherwise a single sync runs when the screen turns on, at phase transitions (alarms) and
- *   after an action from a notification.
+ * - while the timer screen is open, or the screen is on with the blocker on, one long-poll
+ *   request is kept open (the PC answers at once when the day changes, at most every 25 s), so
+ *   a lock that starts on the PC reaches the phone within a second;
+ * - otherwise a single sync runs at phase transitions (alarms) and after an action from a
+ *   notification.
  */
 object Sync {
     private val io = Executors.newSingleThreadExecutor()
@@ -20,6 +21,8 @@ object Sync {
     private val listeners = mutableSetOf<(Snapshot?, String?) -> Unit>()
 
     @Volatile private var live: Thread? = null
+    /** Who needs the long poll: "app" (the timer on screen), "screen" (the blocker, screen on). */
+    private val owners = mutableSetOf<String>()
     @Volatile var online = false
         private set
     @Volatile var lastError: String? = null
@@ -80,8 +83,10 @@ object Sync {
         }
     }
 
-    /** Keep a long poll open while the timer is on screen. */
-    fun startLive(ctx: Context) {
+    /** Keep a long poll open while [owner] needs it. */
+    @Synchronized
+    fun startLive(ctx: Context, owner: String) {
+        owners += owner
         if (live != null) return
         val app = ctx.applicationContext
         val t = Thread {
@@ -101,13 +106,19 @@ object Sync {
                     backoff = (backoff * 2).coerceAtMost(30_000L)
                 }
             }
+            // Ended by itself (unpaired): the next startLive starts a fresh one.
+            synchronized(Sync) { if (live === Thread.currentThread()) live = null }
         }
         live = t
         t.isDaemon = true
         t.start()
     }
 
-    fun stopLive() {
+    /** [owner] no longer needs the long poll; it stops when nobody does. */
+    @Synchronized
+    fun stopLive(owner: String) {
+        owners -= owner
+        if (owners.isNotEmpty()) return
         val t = live
         live = null
         t?.interrupt()

@@ -133,6 +133,7 @@ impl DayState {
             lay_at: None,
             open_ended: q.open_ended,
             prep_notified: false,
+            opened_until: None,
         });
         self.phase = Phase::Segment { rec: self.segments.len() - 1, next };
         true
@@ -203,6 +204,37 @@ impl DayState {
         }
         self.log(now, "segment_queue", tr!("segment_removed_from_the_queue", name = q.name));
         Ok(())
+    }
+
+    /// "Открыть доступ" during a segment (a lunch): the block list opens until the end the
+    /// segment has now, once. Returns that end.
+    pub fn open_segment_access(&mut self, now: Ts, cfg: &Config) -> Result<Ts, String> {
+        let Phase::Segment { rec, .. } = self.phase else {
+            return Err(tr!("segment_no_segment_is_running"));
+        };
+        if !self.base_lock(now, cfg) {
+            return Err(tr!("day_the_lock_isnt_active_right_now"));
+        }
+        let r = &mut self.segments[rec];
+        if r.in_prep() {
+            return Err(tr!("segment_press_in_bed_first_theres_no"));
+        }
+        if r.access_end(now).is_some() {
+            return Err(tr!("segment_access_is_already_open_during", name = r.name));
+        }
+        let end = r.planned_end();
+        if now >= end {
+            return Err(tr!("segment_is_already_over_access_opens", name = r.name));
+        }
+        r.opened_until = Some(end);
+        let text = tr!("segment_access_opened_during_until", name = r.name, until = crate::clock::hm(end, cfg.tz_offset_min));
+        self.log(now, "segment_access", text);
+        Ok(end)
+    }
+
+    /// "Открыть доступ" can be pressed now.
+    pub fn can_open_segment_access(&self, now: Ts, cfg: &Config) -> bool {
+        self.segment().is_some_and(|r| !r.in_prep() && r.access_end(now).is_none() && now < r.planned_end()) && self.base_lock(now, cfg)
     }
 
     /// "Лёг": the preparation is over, the countdown (and the alarm) starts now.
@@ -508,6 +540,32 @@ mod tests {
         // not during work
         d.start_next(s0 + 5 * SEC).unwrap();
         assert!(d.start_segments(s0 + 6 * SEC, vec![QueuedSegment::of(&c, "Обед", None)]).is_err());
+    }
+
+    #[test]
+    fn access_opened_by_hand_during_lunch_holds_until_its_end() {
+        let c = cfg();
+        let mut d = after_first(&c);
+        let s0 = start() + 46 * MIN;
+        d.start_segments(s0, vec![QueuedSegment::of(&c, "Обед", Some(40))]).unwrap();
+        assert!(d.lock_state(s0 + MIN, &c).blocked);
+        assert!(d.can_open_segment_access(s0 + MIN, &c));
+        assert_eq!(d.open_segment_access(s0 + 5 * MIN, &c).unwrap(), s0 + 40 * MIN);
+        let l = d.lock_state(s0 + 6 * MIN, &c);
+        assert!(!l.blocked);
+        assert_eq!((l.reason.as_str(), l.until), ("segment_access", Some(s0 + 40 * MIN)));
+        // Once per segment; a longer segment doesn't stretch it.
+        assert!(!d.can_open_segment_access(s0 + 7 * MIN, &c));
+        assert!(d.open_segment_access(s0 + 7 * MIN, &c).is_err());
+        d.segments[0].planned_min = 60;
+        assert!(d.lock_state(s0 + 41 * MIN, &c).blocked);
+        assert!(d.events.iter().any(|e| e.kind == "segment_access"));
+        // Not while getting ready for a nap, not outside a segment.
+        let mut d = after_first(&c);
+        d.start_segments(s0, vec![QueuedSegment::of(&c, "Сон", None)]).unwrap();
+        assert!(d.open_segment_access(s0 + MIN, &c).is_err());
+        let mut d = after_first(&c);
+        assert!(d.open_segment_access(s0, &c).is_err());
     }
 
     #[test]

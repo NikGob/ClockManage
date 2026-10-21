@@ -77,7 +77,7 @@ export function mountSettings(root, ctx) {
     `<input type="checkbox" class="switch" role="switch" data-sw="${path}" ${v ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(label)}" ${tipAttr(tip)}>`;
   const get = (path) => path.split('.').reduce((o, k) => o[k], cfg);
   /** − value + for minutes/seconds; snaps to multiples of `step`, single units below it.
-   *  `ceil` caps growth (a locked break can only get shorter). */
+   *  `ceil` caps growth (during the lock a segment with access can only get shorter). */
   const stepper = (path, { min, max, step, unit, label, disabled = false, ceil = Infinity }) => {
     const v = get(path);
     const down = snap(v, -1, step);
@@ -151,6 +151,20 @@ export function mountSettings(root, ctx) {
       </section>`;
   }
 
+  // Meals is optional: off, none of it runs, and its screen and MCP tools are hidden.
+  function mealsSection() {
+    const on = cfg.meals.enabled;
+    return `<section class="section">
+        <h2>${tr('main_meals')}</h2>
+        <p class="section-d">${tr('settings_optional_before_each_meal_an')}</p>
+        <div class="surface">
+          <div class="setting"><span class="badge">${icon('restaurant')}</span>
+            <div class="grow"><div class="t">${tr('settings_food_picks')}</div><div class="d">${on ? tr('settings_on_the_meals_screen_is') : tr('settings_off_nothing_of_it_runs')}</div></div>
+            ${on ? `<button class="btn text interactive" id="meals-open">${tr('app_open')}</button>` : ''}${sw('meals.enabled', on, tr('settings_food_picks'))}</div>
+        </div>
+      </section>`;
+  }
+
   function updateRow(u, v) {
     const ver = esc(u.version || '');
     const state = {
@@ -181,10 +195,9 @@ export function mountSettings(root, ctx) {
     const cmd = `claude mcp add --transport http clockmanage ${mcpUrl}`;
     const custom = !SWATCHES.some(([c]) => c.toLowerCase() === cfg.appearance.seed.toLowerCase());
     const focusKey = keyOf(document.activeElement);
-    const t = cfg.timing;
     const ns = cfg.night_start;
     box.innerHTML = `
-      ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_the')}</div></div>` : ''}
+      ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_time')}</div></div>` : ''}
       ${weekSection(locked, v.weekday)}
 
       <section class="section">
@@ -193,7 +206,7 @@ export function mountSettings(root, ctx) {
         <div class="surface">
           <div class="setting">
             <div class="grow"><div class="t">${tr('dialog_day_end')}${info('dayEnd')}</div><div class="d">${tr('settings_the_lock_lifts_at_this_time')} (${utcLabel(cfg.tz_offset_min)})${v.day_end_changed ? ` · ${tr('settings_today_until')} ${esc(v.day_end)}${v.day_end_next_day ? tr('settings_night') : ''}` : ''}</div></div>
-            <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" ${locked ? `min="${hm(cfg.day_end_min)}"` : ''} aria-label="${tr('dialog_day_end')}" ${tipAttr('dayEnd')}></div>
+            <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" aria-label="${tr('dialog_day_end')}" ${tipAttr('dayEnd')}></div>
           </div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_start_at_night')}${info('night')}</div><div class="d">${ns.enabled ? tr('app_night_start_until_hold', { until: hm(ns.until_min), after: ns.after_day_end ? tr('app_night_start_and_after_the_day_end') : '', hold: ns.hold_sec }) : tr('settings_one_click_starts_the_day_any')}</div></div>
             ${sw('night_start.enabled', ns.enabled, tr('settings_start_at_night'), 'night')}</div>
@@ -212,12 +225,12 @@ export function mountSettings(root, ctx) {
               ${p.autolock ? `<div class="field"><input type="time" data-autolock="${id}" value="${hm(p.autolock_min)}" aria-label="${esc(label)}"></div>` : ''}
               ${sw(`profiles.${id}.autolock`, p.autolock, label, 'autolock')}</div>`;
           }).join('')}
-          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_work_part')}${info('seg')}</div><div class="d">${tr('settings_work_part_example')}</div></div>
-            ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_of_work_per_part'), disabled: locked })}</div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_work_part')}${info('seg')}</div><div class="d">${tr('settings_work_part_example')}</div></div>
+            ${stepper('timing.work_segment_min', { min: 5, max: 240, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_of_work_per_part') })}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_break_between_parts')}${info('short')}</div><div class="d">${tr('settings_between_the_parts_of_one_block')}</div></div>
-            ${stepper('timing.short_break_min', { min: 1, max: 120, step: 5, unit: tr('overlay_min'), label: tr('settings_break_minutes'), ceil: locked ? t.short_break_min : Infinity })}</div>
+            ${stepper('timing.short_break_min', { min: 1, max: 120, step: 5, unit: tr('overlay_min'), label: tr('settings_break_minutes') })}</div>
           <div class="setting"><div class="grow"><div class="t">${tr('view_break_between_blocks')}${info('between')}</div><div class="d">${cfg.break_access ? tr('settings_after_a_closed_block_blocked_things_open') : tr('settings_after_a_closed_block_blocked_things_stay')}</div></div>
-            ${stepper('timing.between_blocks_min', { min: 1, max: 180, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_between_blocks'), ceil: locked ? t.between_blocks_min : Infinity })}</div>
+            ${stepper('timing.between_blocks_min', { min: 1, max: 180, step: 5, unit: tr('overlay_min'), label: tr('settings_minutes_between_blocks') })}</div>
         </div>
       </section>
 
@@ -227,8 +240,8 @@ export function mountSettings(root, ctx) {
           ${cfg.segments.map((sg, i) => `<div class="setting seg-type">
             <span class="badge">${icon(sg.alarm ? 'alarm' : 'coffee')}</span>
             <div class="grow"><input class="seg-name" data-segname="${i}" value="${esc(sg.name)}" maxlength="24" aria-label="${tr('settings_segment_name')}"></div>
-            ${stepper(`segments.${i}.minutes`, { min: 1, max: 240, step: 5, unit: tr('overlay_min'), label: `${tr('settings_minutes')}: ${sg.name}`, ceil: locked ? sg.minutes : Infinity })}
-            <div class="sw-wrap prep-wrap" ${tipAttr('segPrep')}><span class="sw-label">${tr('settings_getting_ready')}</span>${stepper(`segments.${i}.prep_min`, { min: 0, max: 60, step: 5, unit: tr('overlay_min'), label: `${tr('settings_getting_ready')}: ${sg.name}`, ceil: locked ? (sg.prep_min ?? 0) : Infinity })}</div>
+            ${stepper(`segments.${i}.minutes`, { min: 1, max: 240, step: 5, unit: tr('overlay_min'), label: `${tr('settings_minutes')}: ${sg.name}`, ceil: locked && sg.open_access ? sg.minutes : Infinity })}
+            <div class="sw-wrap prep-wrap" ${tipAttr('segPrep')}><span class="sw-label">${tr('settings_getting_ready')}</span>${stepper(`segments.${i}.prep_min`, { min: 0, max: 60, step: 5, unit: tr('overlay_min'), label: `${tr('settings_getting_ready')}: ${sg.name}`, ceil: locked && sg.open_access ? (sg.prep_min ?? 0) : Infinity })}</div>
             <label class="sw-wrap"><span class="sw-label">${tr('settings_alarm')}</span>${sw(`segments.${i}.alarm`, sg.alarm, `${tr('settings_alarm')}: ${sg.name}`, 'segAlarm')}</label>
             <label class="sw-wrap"><span class="sw-label">${tr('log_access')}</span>${sw(`segments.${i}.open_access`, sg.open_access, `${tr('settings_access_during')}: ${sg.name}`, 'segAccess', locked && !sg.open_access)}</label>
             <button class="icon-btn interactive" data-segdel="${i}" aria-label="${tr('plan_remove')} ${esc(sg.name)}" ${cfg.segments.length <= 1 ? 'disabled' : ''}>${icon('delete')}</button>
@@ -282,12 +295,14 @@ export function mountSettings(root, ctx) {
 
       ${phoneSection(m.phone)}
 
+      ${mealsSection()}
+
       <section class="section">
         <h2>${tr('settings_mcp_for_claude')}</h2>
         <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock, get_diet, set_diet, wolt_search, wolt_menu, set_meal_options.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock${cfg.meals.enabled ? ', get_diet, set_diet, food_search, food_menu, set_meal_options' : ''}.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -477,6 +492,7 @@ export function mountSettings(root, ctx) {
     else if (t.id === 'checkupdate') call('check_update');
     else if (t.id === 'installupdate') await run(() => call('install_update'), t);
     else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
+    else if (t.id === 'meals-open') ctx.navigate('meals');
     else if (t.dataset.segdel !== undefined) {
       const i = Number(t.dataset.segdel);
       save((c) => { c.segments.splice(i, 1); });

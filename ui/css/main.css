@@ -539,3 +539,14 @@ table.t td:first-child .body-s { white-space: normal; max-width: 260px; }
 .chip { font: 500 14px/20px var(--font); padding: 6px 14px; border-radius: 999px; border: 1px solid var(--md-sys-color-outline-variant); background: none; color: var(--md-sys-color-on-surface); cursor: pointer; }
 .chip[aria-pressed="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
 input.mono { font: 400 13px/20px ui-monospace, "Cascadia Code", Consolas, monospace; }
+.time-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 2px 2px 14px; border-radius: var(--shape-full); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font: 500 16px/24px var(--font); }
+.time-chip .icon-btn { width: 32px; height: 32px; color: inherit; }
+.time-chip .icon-btn .icon { width: 18px; height: 18px; }
+.setting .d.hstack { gap: 6px; }
+.setting .d.hstack .icon { width: 18px; height: 18px; }
+details.more summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary::after { content: ""; width: 8px; height: 8px; margin-left: 4px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-3px); transition: transform var(--dur-s2) var(--easing, ease); }
+details.more[open] summary::after { transform: rotate(-135deg) translateY(-3px); }
+details.more[open] summary { margin-bottom: 8px; }
+.nav .dest[hidden] { display: none; }

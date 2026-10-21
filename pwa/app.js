@@ -115,11 +115,20 @@ const presets = () => [
   ['light', tr('meals_brain_light'), tr('meals_goal_lose_weight_slowly_while')],
 ];
 
-function money(cents, currency) {
-  const whole = cents % 100 === 0;
-  try {
-    return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: currency || 'EUR', currencyDisplay: 'narrowSymbol', minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(cents / 100);
-  } catch { return (cents / 100).toLocaleString(LOCALE); }
+/** A price in minor units of its currency (ISO 4217: cents, kopecks; yen have none), the same
+ *  as `money` in ui/js/views/meals.js: 1390 EUR → 13,90 €, 54900 RUB → 549 ₽, 980 JPY → ¥980. */
+function money(minor, currency) {
+  const plain = () => (minor / 100).toLocaleString(LOCALE) + (currency ? ` ${currency}` : '');
+  if (!currency) return plain();
+  for (const currencyDisplay of ['narrowSymbol', 'symbol']) {
+    try {
+      const digits = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits;
+      const v = minor / 10 ** digits;
+      const shown = Number.isInteger(v) ? 0 : digits;
+      return new Intl.NumberFormat(LOCALE, { style: 'currency', currency, currencyDisplay, minimumFractionDigits: shown, maximumFractionDigits: shown }).format(v);
+    } catch { /* an old Safari without narrowSymbol, or an unknown code */ }
+  }
+  return plain();
 }
 
 // ---- screens ----
@@ -192,13 +201,13 @@ async function keepPicks(p) {
   } catch { /* storage may be unavailable */ }
 }
 
-function venueHtml(v) {
+function venueHtml(v, service) {
   const sum = v.dishes.reduce((n, d) => n + (d.price || 0), 0);
   return `<article class="venue">
       ${v.image ? `<div class="banner" style="background-image:url('${esc(v.image)}')"></div>` : ''}
       <div class="vhead"><div class="grow"><div class="vname">${esc(v.name)}</div>
         <div class="meta"><span class="pill">${icon('pin')}${esc(tr('meals_km_away', { km: Number(v.km).toLocaleString(LOCALE) }))}</span>${v.eta ? `<span class="pill">${icon('clock')}${esc(tr('meals_eta_min', { eta: v.eta }))}</span>` : ''}</div></div>
-        <a class="open" href="${esc(v.url)}" aria-label="${tr('meals_open_in_wolt')}">Wolt${icon('open')}</a></div>
+        <a class="open" href="${esc(v.url)}" aria-label="${esc(tr('meals_open_in_service', { service }))}">${esc(service)}${icon('open')}</a></div>
       ${v.dishes.map((d) => `<a class="item" href="${esc(d.url)}">${d.image ? `<img class="thumb" src="${esc(d.image)}" alt="" loading="lazy">` : ''}<div class="grow"><div class="iname">${esc(d.name)}</div>${d.why ? `<div class="why">${icon('leaf')}<span>${esc(d.why)}</span></div>` : ''}</div>
         <span class="price">${esc(money(d.price, d.currency))}</span>${icon('chev', 'chev')}</a>`).join('')}
       ${v.dishes.length > 1 ? `<div class="total"><span>${tr('meals_total')}</span><b>${esc(money(sum, v.dishes[0].currency))}</b></div>` : ''}
@@ -211,10 +220,12 @@ function picksHtml(p) {
   const title = p.meal ? tr('meals_kind_at', { kind: kindName(p.kind), time: p.meal }) : kindName(p.kind);
   const food = p.venues.filter((v) => !v.store);
   const shops = p.venues.filter((v) => v.store);
+  // Picks made before the PC named their service are all from Wolt (a brand name: not translated).
+  const service = p.service || 'Wolt';
   return `<div class="picks-head"><h2>${esc(title)}</h2><span class="muted">${esc(time)}</span></div>
-    <p class="muted" style="margin:0 4px">${tr('meals_picked_at_tap_a_dish', { time })}</p>
-    ${food.length ? `<h3>${icon('restaurant')}${tr('meals_restaurants')}</h3>${food.map(venueHtml).join('')}` : ''}
-    ${shops.length ? `<h3>${icon('cart')}${tr('meals_from_stores')}</h3>${shops.map(venueHtml).join('')}` : ''}`;
+    <p class="muted" style="margin:0 4px">${esc(tr('meals_picked_at_tap_a_dish', { time, service }))}</p>
+    ${food.length ? `<h3>${icon('restaurant')}${tr('meals_restaurants')}</h3>${food.map((v) => venueHtml(v, service)).join('')}` : ''}
+    ${shops.length ? `<h3>${icon('cart')}${tr('meals_from_stores')}</h3>${shops.map((v) => venueHtml(v, service)).join('')}` : ''}`;
 }
 
 /** The newest diet and picks the PC sent through the relay. */

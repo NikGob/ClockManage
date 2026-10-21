@@ -82,6 +82,8 @@ class Snapshot(
     val focusUntil: Long?,
     /** The study-day / single-timer lock alone, without the focus lock. */
     val dayLock: Boolean,
+    /** Today's autolock goes on here unless the day starts first (null: none, or an older PC). */
+    val autolockAt: Long?,
     val doneAt: Long?,
     val blocks: List<Block>,
     val timeline: List<Entry>,
@@ -91,6 +93,8 @@ class Snapshot(
     val canStartNext: Boolean,
     val canEditPlan: Boolean,
     val canEndSegment: Boolean,
+    /** "Открыть доступ" until the running segment (a lunch) ends. */
+    val canSegmentAccess: Boolean,
     val sites: List<String>,
     val apps: Set<String>,
 ) {
@@ -108,12 +112,19 @@ class Snapshot(
         if (now - syncedAt > 20 * HOUR) return false
         val accessOpen = lockBase && !lockBlocked && lockUntil != null && now < lockUntil
         if (focusUntil != null && now < focusUntil && !accessOpen) return true
+        // The autolock goes on by itself at its time unless the day starts first.
+        if (!started && autolockAt != null && now >= autolockAt && now < dayEndAt) return true
         if (!dayLock) return false
         if (!lockBase || now >= dayEndAt) return false
         if (doneAt != null && now >= doneAt) return false
         if (!lockBlocked) return lockUntil != null && now >= lockUntil
         return true
     }
+
+    /** The next moment [blockedAt] may change by itself (an access window ends, the autolock or
+     *  the day end comes): the blocker looks at the screen again then. */
+    fun nextChange(now: Long): Long? =
+        listOfNotNull(lockUntil, focusUntil, autolockAt, dayEndAt, doneAt).filter { it > now }.minOrNull()
 
     companion object {
         const val MIN = 60_000L
@@ -168,6 +179,7 @@ class Snapshot(
                 lockUntil = lock.longOrNull("until"),
                 focusUntil = lock.longOrNull("focus_until"),
                 dayLock = lock.optBoolean("day_lock", lock.getBoolean("base")),
+                autolockAt = lock.longOrNull("autolock_at"),
                 doneAt = o.longOrNull("done_at"),
                 blocks = blocks,
                 timeline = timeline,
@@ -177,6 +189,7 @@ class Snapshot(
                 canStartNext = can.getBoolean("start_next"),
                 canEditPlan = can.getBoolean("edit_plan"),
                 canEndSegment = can.optBoolean("end_segment", false),
+                canSegmentAccess = can.optBoolean("segment_access", false),
                 sites = o.getJSONArray("sites").strings(),
                 apps = o.getJSONArray("apps").strings().toSet(),
             )

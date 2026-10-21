@@ -73,6 +73,9 @@ pub struct PhoneLock {
     /// The study-day, single-timer or autolock lock alone, without the focus lock: holds until the
     /// day end, `done_at` or the end of an access window.
     pub day_lock: bool,
+    /// Today's autolock goes on here unless the day starts first: the phone blocks from then
+    /// without waiting for a sync.
+    pub autolock_at: Option<Ts>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -86,6 +89,8 @@ pub struct PhoneCan {
     pub end_segment: bool,
     /// "Лёг": the running segment is getting ready.
     pub lay_down: bool,
+    /// "Открыть доступ" until the running segment ends.
+    pub segment_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -215,7 +220,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
         mode: v.mode,
         day_end: v.day_end,
         day_end_at: v.day_end_at,
-        lock: PhoneLock { base: v.lock.base, blocked: v.lock.blocked, reason: v.lock.reason, until: v.lock.until, focus_until: v.lock.focus_until, day_lock: locked || d.single_lock() || d.autolock_on(now, cfg) },
+        lock: PhoneLock { base: v.lock.base, blocked: v.lock.blocked, reason: v.lock.reason, until: v.lock.until, focus_until: v.lock.focus_until, day_lock: locked || d.single_lock() || d.autolock_on(now, cfg), autolock_at: d.autolock_due(now, cfg) },
         done_at,
         blocks,
         timeline,
@@ -227,6 +232,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
             edit_plan: d.mode == Mode::Plan,
             end_segment: v.can.end_segment,
             lay_down: v.can.lay_down,
+            segment_access: v.can.segment_access,
         },
         sites: cfg.blocklist.sites.clone(),
         apps: cfg.phone.apps.clone(),

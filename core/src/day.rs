@@ -238,6 +238,10 @@ pub struct SegmentRecord {
     /// The "time to lie down" reminder was shown.
     #[serde(default)]
     pub prep_notified: bool,
+    /// "Открыть доступ" pressed during the segment (a lunch): everything is open until here,
+    /// the end the segment had then. Making the segment longer later doesn't stretch it.
+    #[serde(default)]
+    pub opened_until: Option<Ts>,
 }
 
 impl SegmentRecord {
@@ -258,6 +262,16 @@ impl SegmentRecord {
     }
     pub fn planned_end(&self) -> Ts {
         self.countdown_from() + self.planned_ms()
+    }
+    /// Everything is open during this segment at `now`: `Some(until)`, where `until` is `None`
+    /// while getting ready (the end isn't known yet). A type with access opens the whole
+    /// segment; "Открыть доступ" opens it up to `opened_until`.
+    pub fn access_end(&self, now: Ts) -> Option<Option<Ts>> {
+        if self.open_access && self.in_prep() {
+            return Some(None);
+        }
+        let end = if self.open_access { self.planned_end() } else { self.opened_until?.min(self.planned_end()) };
+        (now < end).then_some(Some(end))
     }
     /// Preparation as it ran (0 without one): up to "Лёг", or to the end if never lay down.
     pub fn prep_ms(&self, now: Ts) -> i64 {
@@ -862,6 +876,14 @@ impl DayState {
         self.day_end_min.unwrap_or(cfg.day_end_min)
     }
 
+    /// Settings saved during the lock: what would loosen today starts tomorrow. Breaks and work
+    /// parts already stay as the day started; a day end moved earlier keeps today's where it was.
+    pub fn keep_today(&mut self, old: &Config, new: &Config) {
+        if new.day_end_min < old.day_end_min && self.day_end_min.is_none() {
+            self.day_end_min = Some(old.day_end_min);
+        }
+    }
+
     pub fn day_end_at(&self, cfg: &Config) -> Ts {
         clock::date_minute(self.date, cfg.tz_offset_min, self.day_end(cfg))
     }
@@ -1047,9 +1069,7 @@ impl DayState {
                 };
             }
             if let Phase::Segment { rec, .. } = self.phase {
-                if let Some(r) = self.segments.get(rec).filter(|r| r.open_access && (r.in_prep() || now < r.planned_end())) {
-                    // While getting ready the end is not known yet.
-                    let until = (!r.in_prep()).then(|| r.planned_end());
+                if let Some(until) = self.segments.get(rec).and_then(|r| r.access_end(now)) {
                     return LockState { blocked: false, base: true, reason: "segment_access".into(), until, focus_until };
                 }
             }
@@ -2440,6 +2460,26 @@ mod tests {
         let f = d.forecast(start(), &c);
         assert!(f.fits);
         assert_eq!(f.margin_ms, 65 * MIN);
+    }
+
+    #[test]
+    fn an_earlier_day_end_in_the_settings_waits_for_tomorrow() {
+        let c = cfg();
+        let mut d = DayState::new(start(), &c);
+        d.start_day(start(), &c).unwrap();
+        let mut n = c.clone();
+        n.day_end_min = c.day_end_min - 120;
+        d.keep_today(&c, &n);
+        assert_eq!(d.day_end(&n), c.day_end_min);
+        // Later is fine today too; a day end moved by hand stays as it is.
+        let mut d = DayState::new(start(), &c);
+        n.day_end_min = c.day_end_min + 30;
+        d.keep_today(&c, &n);
+        assert_eq!(d.day_end(&n), c.day_end_min + 30);
+        d.day_end_min = Some(c.day_end_min + 60);
+        n.day_end_min = c.day_end_min - 60;
+        d.keep_today(&c, &n);
+        assert_eq!(d.day_end(&n), c.day_end_min + 60);
     }
 
     #[test]

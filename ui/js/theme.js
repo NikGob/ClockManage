@@ -81,6 +81,22 @@ export function applyTheme({ seed = '#2E7D32', mode = 'system', variant = 'fidel
   el.textContent = css;
   document.documentElement.dataset.mode = mode;
   syncTitlebar();
+  sharePhoneTheme(mode, light, dark);
+}
+
+/** The roles the phone app draws with. */
+const PHONE_ROLES = [
+  'surface', 'on-surface', 'on-surface-variant', 'surface-container', 'surface-container-high', 'surface-container-highest',
+  'primary', 'on-primary', 'primary-container', 'on-primary-container', 'secondary-container', 'on-secondary-container',
+  'tertiary-container', 'on-tertiary-container', 'error', 'outline', 'outline-variant',
+];
+
+/** Hand the colours to the PC app, which passes them to the paired phone: it looks the same. */
+function sharePhoneTheme(mode, light, dark) {
+  const T = window.__TAURI__;
+  if (!T) return;
+  const pick = (vars) => Object.fromEntries(PHONE_ROLES.map((r) => [r, vars[`--md-sys-color-${r}`]]));
+  T.core.invoke('set_phone_theme', { theme: { mode, light: pick(light), dark: pick(dark) } }).catch(() => {});
 }
 
 export function isDark() {

@@ -128,6 +128,8 @@ pub struct Can {
     pub lay_down: bool,
     /// The running segment may switch between a countdown and a stopwatch.
     pub segment_mode: bool,
+    /// "Открыть доступ": open the block list until the running segment ends.
+    pub segment_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -351,6 +353,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         end_segment: matches!(d.phase, Phase::Segment { .. }),
         lay_down: d.segment().is_some_and(|r| r.in_prep()),
         segment_mode: d.segment().is_some_and(|r| !r.in_prep() && !r.alarm),
+        segment_access: d.can_open_segment_access(now, cfg),
         pause: running && !lunch_break,
         resume: paused,
         start_next: matches!(d.phase, Phase::Await { .. } | Phase::Break { .. } | Phase::Lunch { .. }),

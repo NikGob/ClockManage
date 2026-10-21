@@ -288,6 +288,10 @@ fn handle(shared: &Arc<Shared>, mut req: Request) {
                     // The phone app this PC carries: a phone that sees a newer one offers the update
                     // right away instead of waiting for its hourly check.
                     v["apk_code"] = json!(apk_info(shared.apk_dir.as_deref()).code);
+                    // The PC's colours: the phone app draws itself the same.
+                    if let Some(t) = shared.phone_theme.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                        v["theme"] = t;
+                    }
                     reply(req, 200, &v);
                 }
                 (Method::Get, "/api/apk/info") => reply(req, 200, &json!(apk_info(shared.apk_dir.as_deref()))),
@@ -400,6 +404,10 @@ fn action(shared: &Arc<Shared>, b: &Value) -> Result<(), String> {
             "start_next" => g.day.start_next(now),
             "end_segment" => g.day.end_segment(now),
             "lay_down" => g.day.lay_down(now),
+            "segment_access" => {
+                let (cfg, day) = (&g.cfg, &mut g.day);
+                day.open_segment_access(now, cfg).map(|_| ())
+            }
             "segment_stopwatch" => g.day.set_segment_mode(now, true),
             "segment_timer" => g.day.set_segment_mode(now, false),
             _ => Err(tr!("phone_unknown_action")),

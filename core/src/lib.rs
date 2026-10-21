@@ -13,6 +13,7 @@ pub mod segments;
 pub mod stats;
 pub mod view;
 pub mod webpush;
+pub mod wolt;
 
 pub use clock::Ts;
 pub use config::Config;
