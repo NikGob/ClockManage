@@ -204,6 +204,9 @@ export function mountSettings(root, ctx) {
         <h2>${tr('settings_study_day')}</h2>
         <p class="section-d">${tr('settings_when_the_lock_lifts_how_a')}</p>
         <div class="surface">
+    // A time being typed survives a re-render that the state brings meanwhile.
+    const a = document.activeElement;
+    const typing = a?.type === 'time' && box.contains(a) && a.value !== a.defaultValue ? a.value : null;
           <div class="setting">
             <div class="grow"><div class="t">${tr('dialog_day_end')}${info('dayEnd')}</div><div class="d">${tr('settings_the_lock_lifts_at_this_time')} (${utcLabel(cfg.tz_offset_min)})${v.day_end_changed ? ` · ${tr('settings_today_until')} ${esc(v.day_end)}${v.day_end_next_day ? tr('settings_night') : ''}` : ''}</div></div>
             <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" aria-label="${tr('dialog_day_end')}" ${tipAttr('dayEnd')}></div>
@@ -340,7 +343,9 @@ export function mountSettings(root, ctx) {
       el?.closest('.num-step')?.querySelector('.v')?.classList.add('bump');
       pulse = null;
     }
-    if (focusKey) box.querySelector(focusKey)?.focus({ preventScroll: true });
+    const back = focusKey && box.querySelector(focusKey);
+    if (back && typing !== null) back.value = typing;
+    back?.focus({ preventScroll: true });
   }
 
   /** A selector that finds "the same" control after a re-render (keeps keyboard focus). */
@@ -433,20 +438,9 @@ export function mountSettings(root, ctx) {
         render();
       } else if (name) save((c) => { c.segments[i].name = name; });
       else render();
-    } else if (t.id === 'dayend') {
-      const m = minOf(t.value);
-      if (m === null) render();
-      else save((c) => { c.day_end_min = m; });
-    } else if (t.dataset.autolock) {
-      const id = t.dataset.autolock;
-      const m = minOf(t.value);
-      if (m === null) render();
-      else save((c) => { c.profiles[id].autolock_min = m; });
-    } else if (t.id === 'nightuntil') {
-      const m = minOf(t.value);
-      // The backend caps the night at 12:00.
-      if (m === null) render();
-      else save((c) => { c.night_start.until_min = Math.min(720, m); });
+    } else if (t.type === 'time') {
+      // Typing saves on leaving the field; a value picked without focus saves at once.
+      if (document.activeElement !== t) commitTime(t);
     } else if (t.id === 'seed-in') {
       save((c) => { c.appearance.seed = t.value; });
     } else if (t.id === 'tz') {
@@ -467,6 +461,32 @@ export function mountSettings(root, ctx) {
       // Step from the value the save actually applies to (several quick clicks add up).
       save((c) => {
         const v = path.split('.').reduce((o, k) => o[k], c);
+
+  // A time field saves when it is left or on Enter, not on `change`: Chromium fires that after
+  // every typed digit, and the re-render after the save threw the half-typed hour away (14 became 01).
+  function commitTime(t) {
+    const m = minOf(t.value);
+    if (m === null) return render();
+    let cur, set;
+    if (t.id === 'dayend') [cur, set] = [cfg.day_end_min, (c, v) => { c.day_end_min = v; }];
+    else if (t.dataset.autolock) {
+      const id = t.dataset.autolock;
+      [cur, set] = [cfg.profiles[id].autolock_min, (c, v) => { c.profiles[id].autolock_min = v; }];
+    } else if (t.id === 'nightuntil') [cur, set] = [cfg.night_start.until_min, (c, v) => { c.night_start.until_min = v; }];
+    else return;
+    // The backend caps the night at 12:00.
+    const v = t.id === 'nightuntil' ? Math.min(720, m) : m;
+    t.defaultValue = t.value; // committed: a re-render may replace it
+    if (v !== cur) save((c) => set(c, v));
+    else if (hm(cur) !== t.value) render();
+  }
+  box.addEventListener('focusout', (e) => {
+    // A field a re-render removed loses focus too: that is not the user leaving it.
+    if (e.target.type === 'time' && e.target.isConnected) commitTime(e.target);
+  });
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.type === 'time') commitTime(e.target);
+  });
         setPath(c, path, Math.min(Number(hi), Math.max(Number(lo), snap(v, Number(d), Number(sz)))));
       });
     } else if (t.dataset.tpl) {

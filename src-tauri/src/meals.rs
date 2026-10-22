@@ -789,22 +789,22 @@ pub fn geocode(address: &str) -> Result<(f64, f64, String), String> {
 
 type S<'a> = tauri::State<'a, Arc<Shared>>;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn meals_state(s: S) -> MealsView {
     view(&s)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn meals_pick_now(s: S) -> Result<(), String> {
     run_agent(s.inner().clone(), None, now_kind(&s), false)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn meals_pair(s: S) -> Result<PairView, String> {
     pair(s.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn meals_unpair(s: S) {
     unpair(&s);
 }
@@ -816,7 +816,7 @@ pub async fn meals_geocode(s: S<'_>, address: String) -> Result<Value, String> {
     Ok(json!({ "lat": lat, "lon": lon, "label": label }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_url(url: String) -> Result<(), String> {
     open_link(&url)
 }

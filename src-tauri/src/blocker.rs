@@ -43,6 +43,14 @@ pub struct Blocker {
     firefox_restart_pending: bool,
 }
 
+/// What the state shows of the blocker, kept apart from it: `sync` can hold the blocker for
+/// seconds (hosts, DNS flush, a polkit prompt) and the window must not wait for that.
+#[derive(Clone, Default)]
+pub struct Status {
+    pub error: Option<String>,
+    pub active: bool,
+}
+
 /// Remove launch-guard redirects for these exes (only entries pointing at our guard).
 pub fn clear_guard_redirects(exes: &[String]) {
     for e in exes {
@@ -171,6 +179,10 @@ impl Blocker {
         // What we changed in the system: losing it would leave policies nobody removes.
         let applied = crate::store::read_json(&state_file).unwrap_or_default();
         Self { state_file, applied, last_error: None, firefox_restart_pending: false }
+    }
+
+    pub fn status(&self) -> Status {
+        Status { error: self.last_error.clone(), active: self.applied.active }
     }
 
     fn persist(&self) {

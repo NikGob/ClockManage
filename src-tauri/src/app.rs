@@ -59,6 +59,8 @@ pub struct Shared {
     pub inner: Mutex<Inner>,
     pub store: Store,
     pub blocker: Mutex<Blocker>,
+    /// The blocker's last result for the state; the snapshot never waits for the blocker itself.
+    pub blocker_status: Mutex<crate::blocker::Status>,
     pub mcp: McpServer,
     pub phone: PhoneServer,
     pub updates: crate::updater::Updates,
@@ -116,7 +118,7 @@ impl Shared {
     }
 
     pub fn snapshot_locked(&self, g: &Inner, now: Ts) -> Snapshot {
-        let blocker = self.blocker.lock().unwrap_or_else(|e| e.into_inner());
+        let blocker = self.blocker_status.lock().unwrap_or_else(|e| e.into_inner()).clone();
         Snapshot {
             view: view::build(&g.day, &g.cfg, now),
             meta: Meta {
@@ -124,8 +126,8 @@ impl Shared {
                 version: env!("CARGO_PKG_VERSION"),
                 mcp: self.mcp.status.lock().unwrap().clone(),
                 phone: self.phone.status(&g.cfg, self.apk_dir.as_deref()),
-                blocker_error: blocker.last_error.clone(),
-                blocking_applied: blocker.applied.active,
+                blocker_error: blocker.error,
+                blocking_applied: blocker.active,
                 sound: g.cfg.sound,
                 overlay: g.cfg.overlay,
                 break_access: g.cfg.break_access,
@@ -658,11 +660,12 @@ fn ticker(shared: Arc<Shared>) {
 
         // Enforcement: apply on change, verify/repair every 30 s.
         if last_blocked != Some(blocked) || now - last_verify > 30_000 || resync {
-            let note = shared
-                .blocker
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .sync(blocked.then_some(sites.as_slice()), last_blocked.is_none(), restart_ff);
+            let (note, status) = {
+                let mut b = shared.blocker.lock().unwrap_or_else(|e| e.into_inner());
+                let note = b.sync(blocked.then_some(sites.as_slice()), last_blocked.is_none(), restart_ff);
+                (note, b.status())
+            };
+            *shared.blocker_status.lock().unwrap_or_else(|e| e.into_inner()) = status;
             if let Some(n) = note {
                 shared.lock().day.log(now, "firefox", n.clone());
                 shared.notify("Firefox", &n);
@@ -1472,17 +1475,21 @@ pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by:
 
 type S<'a> = State<'a, Arc<Shared>>;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_state(s: S) -> Snapshot {
     s.snapshot()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_config(s: S) -> Config {
     s.lock().cfg.clone()
 }
 
-#[tauri::command]
+// A plain command runs on the window's main thread: one that waits for the state lock or the
+// disk would freeze the window (white, "Not responding"). So commands are `async` (a thread
+// pool); only the ones that move windows stay plain.
+
+#[tauri::command(async)]
 pub fn save_config(s: S, cfg: Config) -> Result<Config, String> {
     apply_config(s.inner(), cfg)
 }
@@ -1620,7 +1627,7 @@ pub struct PinView {
 }
 
 /// Open a 6-digit PIN for pairing a phone (two minutes).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn phone_pin(s: S) -> Result<PinView, String> {
     if !s.lock().cfg.phone.enabled {
         return Err(tr!("app_turn_on_phone_sync_first"));
@@ -1630,7 +1637,7 @@ pub fn phone_pin(s: S) -> Result<PinView, String> {
     Ok(PinView { pin, until })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn phone_forget(s: S, id: String) -> Result<(), String> {
     s.mutate(|g, now| {
         let name = g.cfg.phone.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).ok_or(tr("app_no_such_phone"))?;
@@ -1643,7 +1650,7 @@ pub fn phone_forget(s: S, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 /// `night`: the user confirmed a start at night (see `DayState::night_start`).
 pub fn start_day(s: S, night: Option<bool>) -> Result<(), String> {
     if night == Some(true) {
@@ -1662,7 +1669,7 @@ pub fn set_day_kind(s: S, kind: DayKind) -> Result<(), String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn extend_day_end(s: S, minutes: u32) -> Result<(), String> {
     s.mutate(|g, now| {
         let (cfg, day) = (&g.cfg, &mut g.day);
@@ -1670,7 +1677,7 @@ pub fn extend_day_end(s: S, minutes: u32) -> Result<(), String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pause(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.pause(now, &g.cfg))
 }
@@ -1680,7 +1687,7 @@ pub fn resume(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.resume(now))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
     let r = s.mutate(|g, now| {
         // The button was drawn for a phase; if the timer moved on since (a click queued
@@ -1699,7 +1706,7 @@ pub fn start_next(s: S, expect: Option<String>) -> Result<(), String> {
 }
 
 /// `note: None` = skip ("не сейчас").
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_block_note(s: S, block: usize, note: Option<String>) -> Result<(), String> {
     apply_block_note(s.inner(), Some(block), None, note.as_deref(), "ui").map(|_| ())
 }
@@ -1714,7 +1721,7 @@ pub struct SegmentPick {
 }
 
 /// Start segments now (or queue them behind the running one): lunch → nap.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_segments(s: S, items: Vec<SegmentPick>) -> Result<(), String> {
     let r = s.mutate(|g, now| {
         let items = items
@@ -1732,7 +1739,7 @@ pub fn start_segments(s: S, items: Vec<SegmentPick>) -> Result<(), String> {
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn end_segment(s: S) -> Result<(), String> {
     let r = s.mutate(|g, now| g.day.end_segment(now));
     if r.is_ok() {
@@ -1742,7 +1749,7 @@ pub fn end_segment(s: S) -> Result<(), String> {
 }
 
 /// "Открыть доступ" during a segment (a lunch): the block list opens until the segment ends.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_segment_access(s: S) -> Result<(), String> {
     s.mutate(|g, now| {
         let (cfg, day) = (&g.cfg, &mut g.day);
@@ -1751,7 +1758,7 @@ pub fn open_segment_access(s: S) -> Result<(), String> {
 }
 
 /// "Лёг": the nap's countdown and alarm start now.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lay_down(s: S) -> Result<(), String> {
     let r = s.mutate(|g, now| g.day.lay_down(now));
     if r.is_ok() {
@@ -1761,17 +1768,17 @@ pub fn lay_down(s: S) -> Result<(), String> {
 }
 
 /// The running segment: a stopwatch ("без времени") or back to the countdown.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_segment_mode(s: S, stopwatch: bool) -> Result<(), String> {
     s.mutate(|g, now| g.day.set_segment_mode(now, stopwatch))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn drop_queued(s: S, index: usize) -> Result<(), String> {
     s.mutate(|g, now| g.day.drop_queued(now, index))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undo_skip(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.undo_skip(now))
 }
@@ -1811,42 +1818,42 @@ pub fn primary_action(shared: &Arc<Shared>) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn primary(s: S) -> Result<(), String> {
     primary_action(s.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_single(s: S, cfg: SingleCfg) -> Result<(), String> {
     s.mutate(|g, now| g.day.start_single(now, cfg))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_single(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.stop_single(now))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_plan(s: S, blocks: Vec<PlanBlock>, save_template: bool) -> Result<(), String> {
     apply_plan(s.inner(), blocks, &[], save_template, "ui").map(|_| ())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_day_end(s: S, time: String, reason: Option<String>) -> Result<Value, String> {
     apply_day_end(s.inner(), &time, reason.as_deref(), "ui")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn finish_block(s: S, name: Option<String>) -> Result<Value, String> {
     apply_finish(s.inner(), name.as_deref(), "ui")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn emergency(s: S, phrase: String) -> Result<Ts, String> {
     s.mutate(|g, now| g.day.emergency(now, &g.cfg, &phrase))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn end_access(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.end_access_early(now))
 }
@@ -1867,7 +1874,7 @@ pub struct DaySummary {
     started: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_days(s: S) -> Vec<DaySummary> {
     let now = clock::now_ts();
     let (tz, today) = {
@@ -1902,7 +1909,7 @@ pub fn list_days(s: S) -> Vec<DaySummary> {
     out
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn day_stats(s: S, date: String) -> Result<DayStats, String> {
     let now = clock::now_ts();
     let g = s.lock();
@@ -1946,13 +1953,13 @@ pub struct WeekView {
     tsv: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn week_stats(s: S, date: Option<String>) -> Result<WeekView, String> {
     let (week, tsv) = week(s.inner(), date.as_deref())?;
     Ok(WeekView { week, tsv })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_log(s: S, format: String) -> Result<String, String> {
     let now = clock::now_ts();
     let (tz, today) = {
@@ -1981,19 +1988,19 @@ pub fn export_log(s: S, format: String) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_data_dir(s: S) {
     system::open_path(&s.store.dir);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn test_sound(kind: String) {
     if let Some(k) = Sound::parse(&kind) {
         sound::play(k);
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_overlay(s: S, kind: String) {
     let p = match kind.as_str() {
         "break" => json!({"kind": "break", "passive": true, "auto_hide_ms": 5200, "title": tr("view_break"), "text": tr("app_math_part_1_of_2_done"), "preview": true}),
@@ -2007,7 +2014,7 @@ pub fn preview_overlay(s: S, kind: String) {
     s.lock().cfg.overlay = was;
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_overlay(s: S) -> Option<Value> {
     s.overlay.lock().unwrap().clone()
 }
@@ -2018,12 +2025,12 @@ pub fn hide_overlay_window(app: &AppHandle) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hide_overlay(app: AppHandle) {
     hide_overlay_window(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn show_main(app: AppHandle, route: Option<String>) {
     crate::windows::show_main(&app);
     if let Some(r) = route {
@@ -2031,17 +2038,17 @@ pub fn show_main(app: AppHandle, route: Option<String>) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn toggle_mini(app: AppHandle) {
     crate::windows::toggle_mini(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn style_titlebar(window: tauri::WebviewWindow, bg: String, fg: String, dark: bool) {
     system::style_titlebar(&window, &bg, &fg, dark);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn restart_firefox(s: State<'_, Arc<Shared>>) -> Result<(), String> {
     let shared = s.inner().clone();
     // Restarting waits for Firefox to close and come back: keep it off the UI thread.

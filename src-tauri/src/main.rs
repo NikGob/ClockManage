@@ -92,6 +92,7 @@ fn main() {
             let autostart = cfg.autostart;
             let (mcp_enabled, mcp_port) = (cfg.mcp_enabled, cfg.mcp_port);
             let phone_theme = store::read_json(&store.dir.join("phone-theme.json"));
+            let blocker = blocker::Blocker::new(dir.join("blocker.json"));
 
             let shared = Arc::new(app::Shared {
                 inner: Mutex::new(app::Inner {
@@ -104,7 +105,8 @@ fn main() {
                     resync: false,
                 }),
                 store,
-                blocker: Mutex::new(blocker::Blocker::new(dir.join("blocker.json"))),
+                blocker_status: Mutex::new(blocker.status()),
+                blocker: Mutex::new(blocker),
                 mcp: mcp_server::McpServer::default(),
                 phone: phone_server::PhoneServer::default(),
                 updates: updater::Updates::default(),
