@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::chrono::{self, Datelike, NaiveDate};
-use clockmanage_core::config::{DayKind, EditContext, NightStart, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
+use clockmanage_core::config::{AgentSettings, DayKind, EditContext, NightStart, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
 use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, same_name, worked_min, Event, Forecast, LockState, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
@@ -915,7 +915,7 @@ impl McpHost for McpBridge {
             (g.cfg.clone(), g.day.plan.clone())
         };
         next.profiles.get_mut(profile).plan = plan;
-        let saved = apply_config(&self.0, next)?;
+        let saved = apply_config_as(&self.0, next, true)?;
         let today_updated = self.0.lock().day.plan != before;
         let overridden: Vec<String> = saved
             .plan_overrides
@@ -948,7 +948,7 @@ impl McpHost for McpBridge {
                 next.week[i] = k;
             }
         }
-        let saved = apply_config(&self.0, next)?;
+        let saved = apply_config_as(&self.0, next, true)?;
         let kind_now = self.0.lock().day.kind;
         if !changed.is_empty() {
             self.0.notice(tr("app_the_agent_changed_the_week"), &changed.join(", "));
@@ -980,7 +980,7 @@ impl McpHost for McpBridge {
             "apps": g.cfg.blocklist.apps,
             "phone_apps": g.cfg.phone.apps,
             "blocking": blocking_json(&lock, g.cfg.tz_offset_min),
-            "can_remove": !lock.base,
+            "can_remove": !lock.base || g.cfg.agent_settings == AgentSettings::Always,
             "admin": self.0.admin,
         })
     }
@@ -1032,7 +1032,7 @@ impl McpHost for McpBridge {
         }
         let changed = next.night_start != before;
         if changed {
-            apply_config(&self.0, next)?;
+            apply_config_as(&self.0, next, true)?;
         }
         let g = self.0.lock();
         let ns = g.cfg.night_start.clone();
@@ -1063,7 +1063,7 @@ impl McpHost for McpBridge {
             p.autolock_min = m;
         }
         let changed = next.autolock_min(profile) != self.0.lock().cfg.autolock_min(profile);
-        let saved = if changed { apply_config(&self.0, next)? } else { self.0.lock().cfg.clone() };
+        let saved = if changed { apply_config_as(&self.0, next, true)? } else { self.0.lock().cfg.clone() };
         let time = saved.autolock_min(profile).map(clockmanage_core::config::fmt_hm);
         let (today, held) = {
             let g = self.0.lock();
@@ -1082,6 +1082,39 @@ impl McpHost for McpBridge {
             res["note"] = json!(tr("app_todays_autolock_is_already_on"));
         }
         Ok(res)
+    }
+
+    fn agent_settings(&self) -> AgentSettings {
+        self.0.lock().cfg.agent_settings
+    }
+
+    fn get_settings(&self) -> Value {
+        let g = self.0.lock();
+        let locked = g.day.base_lock(clock::now_ts(), &g.cfg);
+        let access = g.cfg.agent_settings;
+        json!({
+            "settings": g.cfg.agent_view(),
+            "agent_access": access,
+            "can_change_now": access == AgentSettings::Always || (access == AgentSettings::OutsideStudy && !locked),
+            "locked": locked,
+            "fixed": clockmanage_core::config::AGENT_FIXED,
+        })
+    }
+
+    fn set_settings(&self, changes: Value) -> Result<Value, String> {
+        let (next, changed) = {
+            let g = self.0.lock();
+            match g.cfg.agent_settings {
+                AgentSettings::Never => return Err(tr("mcp_the_user_turned_off_settings_changes").into()),
+                AgentSettings::OutsideStudy if g.day.base_lock(clock::now_ts(), &g.cfg) => return Err(tr("app_during_the_lock_the_agent_cant_change").into()),
+                _ => g.cfg.agent_patch(&changes)?,
+            }
+        };
+        let saved = if changed.is_empty() { self.0.lock().cfg.clone() } else { apply_config_as(&self.0, next, true)? };
+        if !changed.is_empty() {
+            self.0.notice(tr("app_the_agent_changed_the_settings"), &changed.join(", "));
+        }
+        Ok(json!({ "ok": true, "changed": changed, "settings": saved.agent_view() }))
     }
 
     fn finish_block(&self, name: Option<&str>, confirm_token: Option<&str>) -> Result<Value, String> {
@@ -1408,7 +1441,8 @@ pub fn apply_blocklist(shared: &Arc<Shared>, remove: bool, sites: &[String], app
         let lock = g.day.lock_state(now, &g.cfg);
         let line = ch.sites.iter().chain(&ch.apps).cloned().collect::<Vec<_>>().join(", ");
         if !ch.is_empty() {
-            g.cfg.check_update(&next, EditContext { locked: lock.base })?;
+            let free = by == "mcp" && g.cfg.agent_settings == AgentSettings::Always;
+            g.cfg.check_update(&next, EditContext { locked: lock.base && !free })?;
             g.cfg = next;
             shared.store.save_config(&g.cfg);
             g.resync = true;
@@ -1475,6 +1509,10 @@ pub fn apply_day_end(shared: &Arc<Shared>, time: &str, reason: Option<&str>, by:
 
 type S<'a> = State<'a, Arc<Shared>>;
 
+// A plain command runs on the window's main thread: one that waits for the state lock or the
+// disk would freeze the window (white, "Not responding"). So commands are `async` (a thread
+// pool); only the ones that move windows stay plain.
+
 #[tauri::command(async)]
 pub fn get_state(s: S) -> Snapshot {
     s.snapshot()
@@ -1485,10 +1523,6 @@ pub fn get_config(s: S) -> Config {
     s.lock().cfg.clone()
 }
 
-// A plain command runs on the window's main thread: one that waits for the state lock or the
-// disk would freeze the window (white, "Not responding"). So commands are `async` (a thread
-// pool); only the ones that move windows stay plain.
-
 #[tauri::command(async)]
 pub fn save_config(s: S, cfg: Config) -> Result<Config, String> {
     apply_config(s.inner(), cfg)
@@ -1496,7 +1530,13 @@ pub fn save_config(s: S, cfg: Config) -> Result<Config, String> {
 
 /// Save a whole config (settings screen, templates, the agent's templates and week) under the
 /// lock rules; today follows a re-assigned weekday or an untouched template.
-pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, String> {
+pub fn apply_config(shared: &Arc<Shared>, cfg: Config) -> Result<Config, String> {
+    apply_config_as(shared, cfg, false)
+}
+
+/// `apply_config` for a change `by_agent`: with the agent's access set to always, the lock rules
+/// don't bind it, and what loosens today applies today.
+pub fn apply_config_as(shared: &Arc<Shared>, mut cfg: Config, by_agent: bool) -> Result<Config, String> {
     cfg.normalize();
     let shared = shared.clone();
     let (autostart_changed, mcp_changed, phone_changed, meals_changed, saved) = shared.mutate(|g, now| {
@@ -1507,7 +1547,8 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
         // The iPhone link and the push keys change only through pairing.
         let m = &g.cfg.meals;
         (cfg.meals.link, cfg.meals.subscription, cfg.meals.vapid_key, cfg.meals.relay_seen) = (m.link.clone(), m.subscription.clone(), m.vapid_key.clone(), m.relay_seen);
-        let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) };
+        let free = by_agent && g.cfg.agent_settings == AgentSettings::Always;
+        let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) && !free };
         g.cfg.check_update(&cfg, ctx)?;
         system::apply_lang(&cfg);
         // A language switch takes the untouched defaults along (today's untouched plan follows below).
@@ -1581,7 +1622,7 @@ pub fn apply_config(shared: &Arc<Shared>, mut cfg: Config) -> Result<Config, Str
 
 /// The window's colour scheme, light and dark, as the phone app should draw it: the phone gets
 /// it with its state and looks like the PC. Saved only when it changed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_phone_theme(s: S, theme: Value) {
     let mut cur = s.phone_theme.lock().unwrap_or_else(|e| e.into_inner());
     if cur.as_ref() == Some(&theme) {
@@ -1592,7 +1633,7 @@ pub fn set_phone_theme(s: S, theme: Value) {
 }
 
 /// "Check now" in Settings: the check and the download run off the UI thread.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn check_update(s: S) {
     let shared = s.inner().clone();
     std::thread::spawn(move || crate::updater::check(&shared, true));
@@ -1605,7 +1646,7 @@ pub async fn install_update(s: State<'_, Arc<Shared>>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || crate::updater::install(&shared, false)).await.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn regenerate_port(s: S) -> Result<u16, String> {
     let shared = s.inner().clone();
     let enabled = shared.lock().cfg.mcp_enabled;
@@ -1660,7 +1701,7 @@ pub fn start_day(s: S, night: Option<bool>) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_day_kind(s: S, kind: DayKind) -> Result<(), String> {
     s.mutate(|g, now| {
         let locked = g.day.plan_lock(now, &g.cfg);
@@ -1682,7 +1723,7 @@ pub fn pause(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.pause(now, &g.cfg))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resume(s: S) -> Result<(), String> {
     s.mutate(|g, now| g.day.resume(now))
 }
@@ -2025,12 +2066,12 @@ pub fn hide_overlay_window(app: &AppHandle) {
     }
 }
 
-#[tauri::command(async)]
+#[tauri::command]
 pub fn hide_overlay(app: AppHandle) {
     hide_overlay_window(&app);
 }
 
-#[tauri::command(async)]
+#[tauri::command]
 pub fn show_main(app: AppHandle, route: Option<String>) {
     crate::windows::show_main(&app);
     if let Some(r) = route {
@@ -2038,17 +2079,17 @@ pub fn show_main(app: AppHandle, route: Option<String>) {
     }
 }
 
-#[tauri::command(async)]
+#[tauri::command]
 pub fn toggle_mini(app: AppHandle) {
     crate::windows::toggle_mini(&app);
 }
 
-#[tauri::command(async)]
+#[tauri::command]
 pub fn style_titlebar(window: tauri::WebviewWindow, bg: String, fg: String, dark: bool) {
     system::style_titlebar(&window, &bg, &fg, dark);
 }
 
-#[tauri::command(async)]
+#[tauri::command]
 pub async fn restart_firefox(s: State<'_, Arc<Shared>>) -> Result<(), String> {
     let shared = s.inner().clone();
     // Restarting waits for Firefox to close and come back: keep it off the UI thread.

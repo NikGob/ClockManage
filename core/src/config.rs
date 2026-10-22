@@ -378,6 +378,39 @@ impl Default for NightStart {
     }
 }
 
+/// How far the agent changes settings over MCP (`set_settings` and the other setting tools).
+/// Ordered by freedom: during the lock the user may only pick a stricter one.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSettings {
+    /// Never: the agent only tells the user what to change.
+    Never,
+    /// Only while no lock is in force.
+    #[default]
+    OutsideStudy,
+    /// Always, even during the lock: the lock rules don't bind the agent.
+    Always,
+}
+
+/// Settings the agent never changes: its own access, its connection, pairings and keys, the
+/// command the app runs for Meals and the page the iPhone opens.
+pub const AGENT_FIXED: [&str; 12] = [
+    "agent_settings",
+    "mcp_enabled",
+    "mcp_port",
+    "plan_overrides",
+    "phone.devices",
+    "meals.agent",
+    "meals.agent_cmd",
+    "meals.pwa_url",
+    "meals.vapid_key",
+    "meals.link",
+    "meals.subscription",
+    "meals.relay_seen",
+];
+/// Left out of what the agent reads: tokens and keys (plans set ahead come with `get_plan`).
+const AGENT_HIDDEN: [&str; 6] = ["plan_overrides", "phone.devices", "meals.vapid_key", "meals.link", "meals.subscription", "meals.relay_seen"];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
@@ -408,6 +441,7 @@ pub struct Config {
     pub auto_update: bool,
     pub mcp_enabled: bool,
     pub mcp_port: u16,
+    pub agent_settings: AgentSettings,
     pub appearance: Appearance,
     /// Interface language; "auto" follows the Windows UI language.
     pub lang: LangPref,
@@ -461,6 +495,7 @@ impl Default for Config {
             auto_update: true,
             mcp_enabled: true,
             mcp_port: 0,
+            agent_settings: AgentSettings::default(),
             appearance: Appearance::default(),
             lang: LangPref::Auto,
             segments: default_segments(45),
@@ -628,7 +663,43 @@ impl Config {
         if !new.autostart && self.autostart {
             return Err(tr!("config_autostart_cant_be_turned_off_during"));
         }
+        if new.agent_settings > self.agent_settings {
+            return Err(tr!("config_during_the_study_day_the_agent"));
+        }
         Ok(())
+    }
+
+    /// The settings as the agent reads them: everything but tokens and keys.
+    pub fn agent_view(&self) -> serde_json::Value {
+        let mut v = serde_json::to_value(self).unwrap_or_default();
+        for path in AGENT_HIDDEN {
+            let (parent, key) = path.rsplit_once('.').map_or((None, path), |(p, k)| (Some(p), k));
+            let obj = match parent {
+                Some(p) => v.get_mut(p),
+                None => Some(&mut v),
+            };
+            if let Some(serde_json::Value::Object(m)) = obj {
+                m.remove(key);
+            }
+        }
+        v
+    }
+
+    /// The agent's `changes` (a JSON merge patch over the settings: objects merge, anything else
+    /// replaces) applied to a copy. Returns the normalized config and the dotted paths that
+    /// actually changed. The lock rules are the caller's.
+    pub fn agent_patch(&self, changes: &serde_json::Value) -> Result<(Config, Vec<String>), String> {
+        // Against the normalized settings: what normalize alone fills in is not the agent's change.
+        let mut base = self.clone();
+        base.normalize();
+        let before = serde_json::to_value(&base).map_err(|e| e.to_string())?;
+        let mut next = before.clone();
+        merge_patch(&mut next, changes, "")?;
+        let mut cfg: Config = serde_json::from_value(next).map_err(|e| tr!("config_a_setting_has_a_wrong_value", e = e))?;
+        cfg.normalize();
+        let mut changed = vec![];
+        diff_paths(&before, &serde_json::to_value(&cfg).map_err(|e| e.to_string())?, "", &mut changed);
+        Ok((cfg, changed))
     }
 
     /// Add `sites` / `apps` to the block list, or take them out. Entries are normalized like the
@@ -638,6 +709,42 @@ impl Config {
         ch.sites = edit_list(&mut self.blocklist.sites, sites, normalize_site, remove, &mut ch);
         ch.apps = edit_list(&mut self.blocklist.apps, apps, normalize_app, remove, &mut ch);
         ch
+    }
+}
+
+/// `patch` merged into `base` (the settings under `path`): a fixed or unknown setting is refused.
+fn merge_patch(base: &mut serde_json::Value, patch: &serde_json::Value, path: &str) -> Result<(), String> {
+    let serde_json::Value::Object(p) = patch else {
+        return Err(tr!("config_changes_must_be_an_object"));
+    };
+    for (k, v) in p {
+        let key = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+        if AGENT_FIXED.contains(&key.as_str()) {
+            return Err(tr!("config_the_agent_cant_change", key = key));
+        }
+        let Some(slot) = base.get_mut(k) else {
+            return Err(tr!("config_there_is_no_setting", key = key));
+        };
+        if v.is_object() && slot.is_object() {
+            merge_patch(slot, v, &key)?;
+        } else {
+            *slot = v.clone();
+        }
+    }
+    Ok(())
+}
+
+/// Dotted paths where `b` differs from `a` (a list counts as one value).
+fn diff_paths(a: &serde_json::Value, b: &serde_json::Value, path: &str, out: &mut Vec<String>) {
+    match (a, b) {
+        (serde_json::Value::Object(x), serde_json::Value::Object(y)) => {
+            for (k, v) in y {
+                let key = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                diff_paths(x.get(k).unwrap_or(&serde_json::Value::Null), v, &key, out);
+            }
+        }
+        _ if a != b => out.push(path.to_string()),
+        _ => {}
     }
 }
 
@@ -944,6 +1051,48 @@ mod tests {
         assert_eq!(c.autolock_min(DayKind::Light), None);
         assert_eq!(c.autolock_min(DayKind::Full), Some(24 * 60 - 1));
         assert_eq!(c.autolock_min(DayKind::Off), None);
+    }
+
+    #[test]
+    fn the_agent_patches_settings_but_not_its_own_access() {
+        let mut c = Config::default();
+        c.phone.devices.push(PhoneDevice { id: "a".into(), token: "t".repeat(20), ..Default::default() });
+        let (next, changed) = c
+            .agent_patch(&serde_json::json!({ "timing": { "short_break_min": 15 }, "profiles": { "full": { "autolock_min": 840 } }, "sound": false }))
+            .unwrap();
+        assert_eq!(next.timing.short_break_min, 15);
+        assert_eq!(next.profiles.full.autolock_min, 840);
+        assert!(!next.sound);
+        assert_eq!(next.timing.work_segment_min, c.timing.work_segment_min);
+        changed.iter().for_each(|p| assert!(["timing.short_break_min", "profiles.full.autolock_min", "sound"].contains(&p.as_str()), "{p}"));
+        assert_eq!(changed.len(), 3);
+        // The same value again changes nothing; normalize still applies.
+        assert!(next.agent_patch(&serde_json::json!({ "sound": false })).unwrap().1.is_empty());
+        assert_eq!(c.agent_patch(&serde_json::json!({ "emergency_min": 500 })).unwrap().0.emergency_min, 60);
+        for fixed in [
+            serde_json::json!({ "agent_settings": "always" }),
+            serde_json::json!({ "mcp_enabled": false }),
+            serde_json::json!({ "phone": { "devices": [] } }),
+            serde_json::json!({ "meals": { "agent_cmd": "calc" } }),
+        ] {
+            assert!(c.agent_patch(&fixed).is_err(), "{fixed}");
+        }
+        assert!(c.agent_patch(&serde_json::json!({ "no_such": 1 })).is_err());
+        assert!(c.agent_patch(&serde_json::json!({ "sound": "loud" })).is_err());
+        // Tokens and keys never reach the agent.
+        let v = c.agent_view();
+        assert!(v["phone"].get("devices").is_none() && v["meals"].get("vapid_key").is_none() && v.get("plan_overrides").is_none());
+        assert_eq!(v["agent_settings"], "outside_study");
+    }
+
+    #[test]
+    fn during_the_lock_the_agents_access_only_gets_stricter() {
+        let c = Config::default();
+        let locked = EditContext { locked: true };
+        let with = |a| Config { agent_settings: a, ..c.clone() };
+        assert!(c.check_update(&with(AgentSettings::Never), locked).is_ok());
+        assert!(c.check_update(&with(AgentSettings::Always), locked).is_err());
+        assert!(c.check_update(&with(AgentSettings::Always), EditContext { locked: false }).is_ok());
     }
 
     #[test]

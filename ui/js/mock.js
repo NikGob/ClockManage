@@ -25,7 +25,7 @@ const cfg = {
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
   break_access: q.get('ba') === '1',
   emergency_phrase: L('Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе', 'I am consciously interrupting my study day, I understand this goes to the log, and I will be back to work in ten minutes'),
-  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47213,
+  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47213, agent_settings: 'outside_study',
   segments: [{ name: L('Обед', 'Lunch'), minutes: 45, alarm: false, open_access: false, prep_min: 0 }, { name: L('Сон', 'Nap'), minutes: 20, alarm: true, open_access: false, prep_min: 10 }, { name: L('Прогулка', 'Walk'), minutes: 15, alarm: false, open_access: false, prep_min: 0 }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   meals: {

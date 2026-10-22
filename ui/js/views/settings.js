@@ -30,10 +30,19 @@ const TIP = {
   contrast: tr('settings_inverted_colours_a_dark_pill_in'),
   phone: tr('settings_the_clockmanage_android_app_sees_the'),
   mcp: tr('settings_a_local_server_for_claude_it'),
+  agent: tr('settings_through_mcp_the_agent_changes_almost'),
   autostart: LINUX ? tr('settings_starts_when_you_sign_in_and_a') : tr('settings_starts_when_you_sign_in_to'),
   lang: LINUX ? tr('settings_auto_follows_the_system_the_language') : tr('settings_the_language_of_the_interface_notifications'),
   tz: tr('settings_the_day_end_dates_and_the'),
   update: LINUX ? tr('settings_clockmanage_looks_for_a_new_version') : tr('settings_every_6_hours_clockmanage_looks_for'),
+};
+// How far the agent changes settings over MCP; during the lock only a stricter one (lower rank).
+const AGENT_RANK = ['never', 'outside_study', 'always'];
+const AGENT_OPTS = [['always', tr('settings_agent_always')], ['outside_study', tr('settings_agent_outside_study')], ['never', tr('settings_agent_never')]];
+const AGENT_DESC = {
+  always: tr('settings_even_during_study_the_lock_rules'),
+  outside_study: tr('settings_only_while_no_lock_is_on'),
+  never: tr('settings_it_only_tells_you_what_to'),
 };
 const MODE_TIP = { system: LINUX ? tr('settings_like_the_system') : tr('settings_like_windows'), light: tr('settings_always_light'), dark: tr('settings_always_dark') };
 const VARIANT_TIP = {
@@ -71,8 +80,8 @@ export function mountSettings(root, ctx) {
 
   const tipAttr = (key) => (TIP[key] ? `data-tip="${esc(TIP[key])}"` : '');
   const info = (key) => `<span class="info" ${tipAttr(key)} tabindex="0">${icon('info')}</span>`;
-  const seg = (name, value, opts, tips = {}) => `<div class="segmented" role="group" data-seg="${name}">${opts.map(([v, l]) =>
-    `<button class="interactive" data-v="${v}" aria-pressed="${v === value}" ${tips[v] ? `data-tip="${esc(tips[v])}"` : ''}>${CHECK}${l}</button>`).join('')}</div>`;
+  const seg = (name, value, opts, tips = {}, off = []) => `<div class="segmented" role="group" data-seg="${name}">${opts.map(([v, l]) =>
+    `<button class="interactive" data-v="${v}" aria-pressed="${v === value}" ${tips[v] ? `data-tip="${esc(tips[v])}"` : ''} ${off.includes(v) ? 'disabled' : ''}>${CHECK}${l}</button>`).join('')}</div>`;
   const sw = (path, v, label, tip, disabled = false) =>
     `<input type="checkbox" class="switch" role="switch" data-sw="${path}" ${v ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(label)}" ${tipAttr(tip)}>`;
   const get = (path) => path.split('.').reduce((o, k) => o[k], cfg);
@@ -195,6 +204,9 @@ export function mountSettings(root, ctx) {
     const cmd = `claude mcp add --transport http clockmanage ${mcpUrl}`;
     const custom = !SWATCHES.some(([c]) => c.toLowerCase() === cfg.appearance.seed.toLowerCase());
     const focusKey = keyOf(document.activeElement);
+    // A time being typed survives a re-render that the state brings meanwhile.
+    const a = document.activeElement;
+    const typing = a?.type === 'time' && box.contains(a) && a.value !== a.defaultValue ? a.value : null;
     const ns = cfg.night_start;
     box.innerHTML = `
       ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_time')}</div></div>` : ''}
@@ -204,9 +216,6 @@ export function mountSettings(root, ctx) {
         <h2>${tr('settings_study_day')}</h2>
         <p class="section-d">${tr('settings_when_the_lock_lifts_how_a')}</p>
         <div class="surface">
-    // A time being typed survives a re-render that the state brings meanwhile.
-    const a = document.activeElement;
-    const typing = a?.type === 'time' && box.contains(a) && a.value !== a.defaultValue ? a.value : null;
           <div class="setting">
             <div class="grow"><div class="t">${tr('dialog_day_end')}${info('dayEnd')}</div><div class="d">${tr('settings_the_lock_lifts_at_this_time')} (${utcLabel(cfg.tz_offset_min)})${v.day_end_changed ? ` · ${tr('settings_today_until')} ${esc(v.day_end)}${v.day_end_next_day ? tr('settings_night') : ''}` : ''}</div></div>
             <div class="field"><input type="time" id="dayend" value="${hm(cfg.day_end_min)}" aria-label="${tr('dialog_day_end')}" ${tipAttr('dayEnd')}></div>
@@ -305,7 +314,7 @@ export function mountSettings(root, ctx) {
         <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock${cfg.meals.enabled ? ', get_diet, set_diet, food_search, food_menu, set_meal_options' : ''}.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock, get_settings, set_settings${cfg.meals.enabled ? ', get_diet, set_diet, food_search, food_menu, set_meal_options' : ''}.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -313,6 +322,8 @@ export function mountSettings(root, ctx) {
             <div class="hstack"><code class="code">${esc(cmd)}</code><button class="icon-btn interactive" data-copy="${esc(cmd)}" aria-label="${tr('settings_copy_the_command')}">${icon('copy')}</button></div>
             <div><button class="btn text interactive" id="newport" data-tip="${tr('settings_if_another_program_uses_the_port')}">${icon('refresh')}${tr('settings_new_random_port')}</button></div>
           </div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_the_agent_changes_settings')}${info('agent')}</div><div class="d">${AGENT_DESC[cfg.agent_settings]}</div></div>
+            ${seg('agent', cfg.agent_settings, AGENT_OPTS, {}, locked ? AGENT_OPTS.map(([v]) => v).filter((v) => AGENT_RANK.indexOf(v) > AGENT_RANK.indexOf(cfg.agent_settings)) : [])}</div>
         </div>
       </section>
 
@@ -450,17 +461,6 @@ export function mountSettings(root, ctx) {
   box.addEventListener('input', (e) => {
     if (e.target.id === 'seed-in') applyTheme({ ...cfg.appearance, seed: e.target.value });
   });
-  box.addEventListener('click', async (e) => {
-    const t = e.target.closest('button');
-    if (!t) return;
-    if (t.dataset.day !== undefined) pickKind(t);
-    else if (t.dataset.step) {
-      const path = t.dataset.step;
-      pulse = `[data-step="${path}"][data-d="${t.dataset.d}"]`;
-      const { d, sz, lo, hi } = t.dataset;
-      // Step from the value the save actually applies to (several quick clicks add up).
-      save((c) => {
-        const v = path.split('.').reduce((o, k) => o[k], c);
 
   // A time field saves when it is left or on Enter, not on `change`: Chromium fires that after
   // every typed digit, and the re-render after the save threw the half-typed hour away (14 became 01).
@@ -487,6 +487,17 @@ export function mountSettings(root, ctx) {
   box.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.type === 'time') commitTime(e.target);
   });
+  box.addEventListener('click', async (e) => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.day !== undefined) pickKind(t);
+    else if (t.dataset.step) {
+      const path = t.dataset.step;
+      pulse = `[data-step="${path}"][data-d="${t.dataset.d}"]`;
+      const { d, sz, lo, hi } = t.dataset;
+      // Step from the value the save actually applies to (several quick clicks add up).
+      save((c) => {
+        const v = path.split('.').reduce((o, k) => o[k], c);
         setPath(c, path, Math.min(Number(hi), Math.max(Number(lo), snap(v, Number(d), Number(sz)))));
       });
     } else if (t.dataset.tpl) {
@@ -501,6 +512,7 @@ export function mountSettings(root, ctx) {
       if (['mode', 'variant'].includes(name)) reveal(t, { ...cfg.appearance, [name]: t.dataset.v });
       // The new language arrives with the state; every window reloads into it.
       else if (name === 'lang') save((c) => { c.lang = t.dataset.v; });
+      else if (name === 'agent') save((c) => { c.agent_settings = t.dataset.v; });
     } else if (t.dataset.sound) call('test_sound', { kind: t.dataset.sound });
     else if (t.dataset.ov) call('preview_overlay', { kind: t.dataset.ov });
     else if (t.dataset.copy) {

@@ -1,7 +1,7 @@
 //! The English interface. A separate test binary: the language is process-wide, and the unit
 //! tests of the crate check the Russian texts.
 
-use clockmanage_core::config::{DayKind, EditContext};
+use clockmanage_core::config::{AgentSettings, DayKind, EditContext};
 use clockmanage_core::day::PlanBlock;
 use clockmanage_core::i18n::{self, Lang};
 use clockmanage_core::mcp::{self, McpHost, NightStartRequest, PlanRequest};
@@ -108,6 +108,15 @@ impl McpHost for NoHost {
     fn set_autolock(&self, _: DayKind, _: Option<u32>) -> Result<Value, String> {
         unreachable!()
     }
+    fn agent_settings(&self) -> AgentSettings {
+        AgentSettings::Never
+    }
+    fn get_settings(&self) -> Value {
+        unreachable!()
+    }
+    fn set_settings(&self, _: Value) -> Result<Value, String> {
+        unreachable!()
+    }
     fn meals_enabled(&self) -> bool {
         true
     }
@@ -137,4 +146,6 @@ fn mcp_speaks_english() {
     assert!(!text.chars().any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()) || ('А'..='Я').contains(&c)), "Cyrillic in tools/list");
     let bad = call(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "start_focus_lock", "arguments": {}}}));
     assert_eq!(bad["result"]["content"][0]["text"], "minutes (or hours) is required: how long to lock for.");
+    let off = call(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "set_settings", "arguments": {"changes": {"sound": false}}}}));
+    assert!(off["result"]["content"][0]["text"].as_str().unwrap().starts_with("The user turned off"));
 }

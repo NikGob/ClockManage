@@ -10,7 +10,7 @@
 [![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20AppImage-FCC624?logo=linux&logoColor=black)](#linux)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
-[![MCP](https://img.shields.io/badge/MCP-21%20tools-6E56CF)](#claude-runs-your-day-mcp)
+[![MCP](https://img.shields.io/badge/MCP-23%20tools-6E56CF)](#claude-runs-your-day-mcp)
 [![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
 [![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
@@ -134,6 +134,7 @@ Then just talk:
 > - *"Close the current block, I'm done with math for today."*
 > - *"I get up at 7 — make it night until 7 and hold for 3 seconds."*
 > - *"On Light days lock everything at 11:30 if I haven't started yet."*
+> - *"Make the breaks between parts 15 minutes and turn the sounds off."*
 > - *"Here's my diet from the nutritionist — save it. Then find me lunch on Wolt."*
 
 | Tool | What it does |
@@ -151,13 +152,14 @@ Then just talk:
 | `finish_block` | close the current block at the time worked — two steps, needs your explicit "yes" |
 | `get_blocklist` · `add_to_blocklist` · `remove_from_blocklist` | read and edit the block list (removing only outside the lock) |
 | `start_focus_lock` | block the whole list right now for N minutes; can only be extended |
+| `get_settings` · `set_settings` | read every setting and change any of them in one step — as far as *The agent changes settings* allows |
 | `get_diet` · `set_diet` | read and replace your diet, with the delivery service, the address status, the distance limit and the meal times |
 | `food_search` · `food_menu` | dishes and store products of the delivery service (by a query) or the restaurants and stores that deliver to you within the distance limit, and a venue's menu |
 | `set_meal_options` | offer up to 5 restaurants with dishes and up to 5 stores with products: shown on the Meals screen and pushed to the paired iPhone |
 
 The last five are there only while [Meals](#food-that-fits-your-diet) is on.
 
-The rules hold for the agent too: it can't erase worked time, can't shrink the block list during the lock, and can't close a block without asking you. Every change it makes shows up in the app as *"The agent changed …"*, so you always know it wasn't you.
+The rules hold for the agent too: it can't erase worked time, can't shrink the block list during the lock, and can't close a block without asking you. How far it changes settings is yours to pick in **Settings → MCP for Claude → The agent changes settings**: *Outside study* (the default) — only while no lock is on; *Always* — even during study, where the lock rules don't bind it; *Never* — it only tells you what to change, and every tool that changes settings refuses. During study you can only make this stricter. The agent never touches this choice, the MCP server, paired phones or the Meals agent command. Every change it makes shows up in the app as *"The agent changed …"*, so you always know it wasn't you.
 
 ## Android companion
 

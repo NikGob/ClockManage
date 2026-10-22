@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 
 use crate::clock;
-use crate::config::{DayKind, MAX_NIGHT_HOLD_SEC, MAX_NIGHT_UNTIL_MIN, WEEKDAYS};
+use crate::config::{AgentSettings, DayKind, MAX_NIGHT_HOLD_SEC, MAX_NIGHT_UNTIL_MIN, WEEKDAYS};
 use crate::day::{PlanBlock, MAX_FOCUS_MIN};
 use crate::i18n::tr;
 use crate::tr;
@@ -41,6 +41,12 @@ pub trait McpHost {
     fn set_night_start(&self, req: NightStartRequest) -> Result<Value, String>;
     /// "Автоблокировка с …" of a study profile: minutes after midnight, `None` = off.
     fn set_autolock(&self, profile: DayKind, min: Option<u32>) -> Result<Value, String>;
+    /// How far the agent may change settings (Settings → MCP for Claude).
+    fn agent_settings(&self) -> AgentSettings;
+    /// The settings without tokens and keys, the agent's access and whether it may change them now.
+    fn get_settings(&self) -> Value;
+    /// A merge patch over the settings (`Config::agent_patch`) under the agent's access.
+    fn set_settings(&self, changes: Value) -> Result<Value, String>;
     /// Meals is an optional feature: while it is off its tools are neither listed nor callable.
     fn meals_enabled(&self) -> bool;
     /// The diet, the delivery address and the meal times.
@@ -308,7 +314,7 @@ fn tools() -> Value {
         {
             "name": "remove_from_blocklist",
             "title": "Remove from the block list",
-            "description": "Removes sites and/or apps from the block list. Outside the lock only — before \"Start day\" (and before the autolock goes on), after the day end or when all blocks are done, with no single timer with the lock and no focus lock (get_blocklist → can_remove). During the lock — refused: the list can only grow. Remove only when the user explicitly asks. Entries are compared case-insensitively after the same cleanup as when adding; youtube.com doesn't remove youtube.com/shorts — they are different entries. The reply has removed, unchanged (wasn't in the list), invalid, the whole blocklist.",
+            "description": "Removes sites and/or apps from the block list. Outside the lock only — before \"Start day\" (and before the autolock goes on), after the day end or when all blocks are done, with no single timer with the lock and no focus lock (get_blocklist → can_remove). During the lock — refused: the list can only grow; unless the user set your access to settings to always (get_settings → agent_access). Remove only when the user explicitly asks. Entries are compared case-insensitively after the same cleanup as when adding; youtube.com doesn't remove youtube.com/shorts — they are different entries. The reply has removed, unchanged (wasn't in the list), invalid, the whole blocklist.",
             "inputSchema": blocklist_schema(),
             "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true }
         },
@@ -326,9 +332,34 @@ fn tools() -> Value {
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false }
+        },
+        {
+            "name": "get_settings",
+            "title": "All settings",
+            "description": "Every setting of the app as it is stored (config.json, without paired phone tokens, keys and plans set ahead — those are in get_plan): week, profiles (plans, block, autolock, autolock_min — minutes after midnight), day_end_min, tz_offset_min, timing (work_segment_min, short_break_min, between_blocks_min, lunch_min), blocklist, break_access, emergency_phrase, emergency_min, reminder_sec, sound, overlay, restart_firefox, autostart, auto_update, appearance, lang, segments, phone (enabled, port, apps), night_start, meals and others. Times are minutes after midnight. Also agent_access — how far the user lets you change settings: always (even during the lock, its rules don't bind you), outside_study (only while no lock is in force), never (you can't change settings: tell the user what to change in Settings); can_change_now; locked — whether a lock is in force now; fixed — settings you never change.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "set_settings",
+            "title": "Change settings",
+            "description": "Changes any settings from get_settings in one step: changes is a JSON merge patch over them — objects merge (only the given keys change), anything else, lists too, replaces the whole value; e.g. {\"timing\": {\"short_break_min\": 15}, \"profiles\": {\"full\": {\"autolock_min\": 840}}, \"sound\": false}. The same checks and limits as the Settings screen apply (values out of range are clamped). Depends on agent_access in get_settings: always — allowed at any time, also during the lock, and the lock rules don't apply (what loosens today applies today); outside_study — refused while a lock is in force (a study day, a single timer with the lock, the autolock, a focus lock): tell the user what to change, or do it after the lock; never — refused: tell the user what to change in Settings. The settings in fixed (get_settings) are never changed. Change only what the user asked for. Everything is checked first: on an error nothing changes. The reply has changed (the dotted paths that changed) and settings. For the plan of today use set_plan; to block right now — start_focus_lock.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "changes": { "type": "object", "minProperties": 1, "description": "A merge patch over the settings from get_settings" }
+                },
+                "required": ["changes"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
         }
     ])
 }
+
+/// Tools that change settings: with the agent's access set to never they all refuse
+/// (`set_night_start` without arguments only reads).
+pub const SETTING_TOOLS: [&str; 7] = ["set_settings", "set_template", "set_week_schedule", "set_night_start", "set_autolock", "add_to_blocklist", "remove_from_blocklist"];
 
 /// The tools of Meals, an optional feature: listed and callable only while it is on.
 pub const MEAL_TOOLS: [&str; 5] = ["get_diet", "set_diet", "food_search", "food_menu", "set_meal_options"];
@@ -633,7 +664,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
         "initialize" => {
             let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOLS[0]);
             let version = if PROTOCOLS.contains(&asked) { asked } else { PROTOCOLS[0] };
-            const INSTRUCTIONS: &str = "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early.";
+            const INSTRUCTIONS: &str = "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early. get_settings — every setting and how far the user lets you change them (agent_access); set_settings — change any of them in one step (a merge patch): with agent_access always even during the lock, with outside_study only while no lock is in force, with never not at all — then every setting tool refuses, and you tell the user what to change in Settings.";
             const MEALS: &str = " Meals: get_diet — the user's diet, delivery service, address and meal times; set_diet — save the diet the user gives you; food_search and food_menu — dishes and restaurants of the user's delivery service that deliver to them (nearby only); set_meal_options — offer up to 5 restaurants with dishes and up to 5 grocery stores with products that fit the diet (shown in the app and pushed to the iPhone; the user orders on the delivery service themselves).";
             let meals = if host.meals_enabled() { MEALS } else { "" };
             ok(
@@ -660,6 +691,10 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
             if MEAL_TOOLS.contains(&name) && !host.meals_enabled() {
                 return Some(ok(&id, tool_result(Err(tr("meals_food_picks_are_off_turn_them").to_string()))));
             }
+            let reads_only = name == "set_night_start" && args.as_object().is_none_or(|a| a.values().all(Value::is_null));
+            if SETTING_TOOLS.contains(&name) && !reads_only && host.agent_settings() == AgentSettings::Never {
+                return Some(ok(&id, tool_result(Err(tr("mcp_the_user_turned_off_settings_changes").to_string()))));
+            }
             let res = match name {
                 "get_session_state" => Ok(host.session_state()),
                 "get_today_stats" => host.day_stats(args.get("date").and_then(Value::as_str)),
@@ -682,6 +717,11 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "remove_from_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(true, s, a)),
                 "set_night_start" => parse_night(&args).and_then(|r| host.set_night_start(r)),
                 "set_autolock" => parse_autolock(&args).and_then(|(k, m)| host.set_autolock(k, m)),
+                "get_settings" => Ok(host.get_settings()),
+                "set_settings" => match args.get("changes") {
+                    Some(c @ Value::Object(m)) if !m.is_empty() => host.set_settings(c.clone()),
+                    _ => Err(tr!("mcp_changes_is_required_an_object_of")),
+                },
                 "get_diet" => Ok(host.get_diet()),
                 "set_diet" => match args.get("text").and_then(Value::as_str) {
                     Some(t) => host.set_diet(&t.chars().take(8000).collect::<String>()),
@@ -803,6 +843,41 @@ mod tests {
             self.1.borrow_mut().push(json!({ "autolock": k, "min": min }));
             Ok(json!({"ok": true}))
         }
+        fn agent_settings(&self) -> AgentSettings {
+            AGENT.get()
+        }
+        fn get_settings(&self) -> Value {
+            json!({ "agent_access": AGENT.get() })
+        }
+        fn set_settings(&self, c: Value) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "settings": c }));
+            Ok(json!({"ok": true}))
+        }
+    }
+
+    thread_local! {
+        static AGENT: std::cell::Cell<AgentSettings> = const { std::cell::Cell::new(AgentSettings::OutsideStudy) };
+    }
+
+    #[test]
+    fn settings_tools_refuse_when_the_agents_access_is_off() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        let r = handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, &h).unwrap();
+        assert!(r.contains("\"get_settings\"") && r.contains("\"set_settings\""));
+        assert_eq!(call(&h, "set_settings", json!({ "changes": { "sound": false } }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap(), &json!({ "settings": { "sound": false } }));
+        assert_eq!(call(&h, "set_settings", json!({ "changes": {} }))["isError"], true);
+        assert_eq!(call(&h, "set_settings", json!({ "changes": [1] }))["isError"], true);
+        AGENT.set(AgentSettings::Never);
+        let args = json!({ "changes": { "sound": false }, "profile": "full", "time": "13:00", "days": { "mon": "full" }, "blocks": [], "sites": ["a.com"], "enabled": false });
+        for t in SETTING_TOOLS {
+            assert_eq!(call(&h, t, args.clone())["isError"], true, "{t}");
+        }
+        // Reading stays: get_settings, and set_night_start without arguments.
+        assert_eq!(call(&h, "get_settings", json!({}))["isError"], false);
+        assert_eq!(call(&h, "set_night_start", json!({}))["isError"], false);
+        assert_eq!(call(&h, "set_plan", json!({ "blocks": [{ "name": "A", "minutes": 30 }] }))["isError"], false);
+        AGENT.set(AgentSettings::OutsideStudy);
     }
 
     #[test]
