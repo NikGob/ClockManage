@@ -1,6 +1,6 @@
 [package]
 name = "clockmanage"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Study mode for Windows and Linux: distraction blocking, block timer, log"
 
