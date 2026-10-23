@@ -760,7 +760,7 @@
   "pwa_no_picks_yet_they_come_before": "No picks yet: they come before each meal.",
   "pwa_notifications_are_off_turn_them": "Notifications are off: turn them on in Settings → Notifications → ClockManage.",
   "pwa_notifications_only_work_from_the": "Notifications only work from the Home Screen: tap Share (in Safari at the bottom, in Chrome in the address bar) → Add to Home Screen, then open ClockManage from there.",
-  "pwa_on_the_pc_open_clockmanage_meals": "On the PC open ClockManage → Meals → Pair an iPhone, then scan the QR code or type the code here.",
+  "pwa_on_the_pc_open_clockmanage_meals": "On the PC open ClockManage → Meals → Settings → iPhone → Pair an iPhone, then scan the QR code or type the code here.",
   "pwa_order_now": "Order now",
   "pwa_pairing_code": "Pairing code",
   "pwa_picking_a_notification_comes_in": "Picking: {meal}. A notification comes in 1–3 minutes; nothing after 5 minutes — check that the PC is on.",

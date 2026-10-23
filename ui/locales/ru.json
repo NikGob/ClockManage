@@ -760,7 +760,7 @@
   "pwa_no_picks_yet_they_come_before": "Подборок пока нет: они приходят перед каждым приёмом пищи.",
   "pwa_notifications_are_off_turn_them": "Уведомления выключены: включите их в «Настройки» → «Уведомления» → ClockManage.",
   "pwa_notifications_only_work_from_the": "Уведомления работают только с экрана «Домой»: нажмите «Поделиться» (в Safari — внизу, в Chrome — в адресной строке) → «На экран „Домой“» и откройте ClockManage оттуда.",
-  "pwa_on_the_pc_open_clockmanage_meals": "На ПК откройте ClockManage → Еда → «Подключить iPhone», затем отсканируйте QR-код или введите код здесь.",
+  "pwa_on_the_pc_open_clockmanage_meals": "На ПК откройте ClockManage → Еда → Настройки → iPhone → «Подключить iPhone», затем отсканируйте QR-код или введите код здесь.",
   "pwa_order_now": "Заказать сейчас",
   "pwa_pairing_code": "Код подключения",
   "pwa_picking_a_notification_comes_in": "Подбираю: {meal}. Уведомление придёт через 1–3 минуты; если через 5 минут ничего нет — проверьте, что ПК включён.",
