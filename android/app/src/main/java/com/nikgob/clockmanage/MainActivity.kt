@@ -608,7 +608,7 @@ class MainActivity : Activity() {
         // with an older PC), or a fixed one. The language names are written in their own language.
         val langCard = card(p)
         langCard.addWithMargins(label(tr("settings_language"), 18f, p.text))
-        val choices = Flow(this)
+        val choices = Flow(this).apply { centred = false }
         listOf("" to tr("android_main_like_the_pc"), "ru" to "Русский", "en" to "English").forEach { (code, name) ->
             val on = store.langPref == code
             val chip = pillIn(name, if (on) p.secondary else Color.TRANSPARENT, if (on) p.onSecondary else p.text, if (on) 0 else p.outline, if (on) R.drawable.ic_check else 0) {

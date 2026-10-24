@@ -225,9 +225,10 @@ fun LinearLayout.addFill(v: View, start: Int = 0) {
     addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = start })
 }
 
-/** Children side by side and centred, wrapping to a new line when they don't fit (the timer's buttons). */
+/** Children side by side, wrapping to a new line when they don't fit: centred (the timer's buttons) or from the start (choices). */
 class Flow(ctx: Context) : ViewGroup(ctx) {
     private val gap = ctx.dp(8)
+    var centred = true
 
     private fun lines(max: Int): List<List<View>> {
         val out = mutableListOf<MutableList<View>>()
@@ -260,7 +261,7 @@ class Flow(ctx: Context) : ViewGroup(ctx) {
         var y = 0
         for (line in lines(r - l)) {
             val lineH = line.maxOf { it.measuredHeight }
-            var x = (r - l - (line.sumOf { it.measuredWidth } + gap * (line.size - 1))) / 2
+            var x = if (centred) (r - l - (line.sumOf { it.measuredWidth } + gap * (line.size - 1))) / 2 else 0
             for (v in line) {
                 v.layout(x, y, x + v.measuredWidth, y + v.measuredHeight)
                 x += v.measuredWidth + gap
