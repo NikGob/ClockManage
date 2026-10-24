@@ -5,11 +5,15 @@ import org.json.JSONObject
 
 /**
  * Texts: the same flat JSON files as the PC (`ui/locales/<lang>.json`, packed into the APK as
- * Java resources by build.gradle.kts). The language is the phone's own — Russian for ru/uk/be,
- * English otherwise: tr("android_main_find_pc"), tr("android_main_paired_with", "name" to pc).
+ * Java resources by build.gradle.kts). The language is the paired PC's interface language, so
+ * the phone speaks like the PC; before pairing (or with an older PC) the phone's own — Russian
+ * for ru/uk/be, English otherwise: tr("android_main_find_pc"), tr("android_main_paired_with", "name" to pc).
  */
 object I18n {
-    val ru: Boolean get() = Locale.getDefault().language in setOf("ru", "uk", "be")
+    /** The paired PC's language ("ru", "en"), set by [App] and on every sync; null: the phone's. */
+    @Volatile var pc: String? = null
+
+    val ru: Boolean get() = pc?.let { it == "ru" } ?: (Locale.getDefault().language in setOf("ru", "uk", "be"))
 
     private fun load(name: String): Map<String, String> = runCatching {
         val text = I18n::class.java.getResourceAsStream("/$name.json")!!.bufferedReader().use { it.readText() }

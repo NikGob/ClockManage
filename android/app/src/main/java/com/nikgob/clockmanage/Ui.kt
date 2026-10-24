@@ -1,25 +1,40 @@
 package com.nikgob.clockmanage
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Build
+import android.os.SystemClock
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import org.json.JSONObject
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sin
 
 /**
  * Colours: the PC's own scheme when it sent one (the app looks like the PC, light or dark as set
@@ -66,6 +81,7 @@ fun withAlpha(c: Int, alpha: Float): Int = (c and 0x00FFFFFF) or ((alpha * 255).
 
 fun Context.dp(v: Float): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics).toInt()
 fun Context.dp(v: Int): Int = dp(v.toFloat())
+fun Context.sp(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
 fun rounded(color: Int, radius: Float, stroke: Int = 0, strokeColor: Int = 0) = GradientDrawable().apply {
     setColor(color)
@@ -84,6 +100,12 @@ fun Context.label(text: String, sp: Float, color: Int, bold: Boolean = false): T
 fun Context.iconView(res: Int, color: Int, size: Int = 24): ImageView = ImageView(this).apply {
     setImageResource(res)
     imageTintList = ColorStateList.valueOf(color)
+    layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+}
+
+/** A small filled circle: the connection light, a plan row's mark. */
+fun Context.dot(color: Int, size: Int = 8): View = View(this).apply {
+    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
     layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
 }
 
@@ -109,7 +131,7 @@ fun Context.pillIn(text: String, bgc: Int, fg: Int, stroke: Int = 0, icon: Int =
     minimumHeight = dp(48)
     minWidth = 0
     minimumWidth = 0
-    setPadding(dp(if (icon != 0) 16 else 20), 0, dp(20), 0)
+    setPadding(dp(if (icon != 0) 16 else 24), 0, dp(24), 0)
     if (icon != 0) {
         setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
         compoundDrawablePadding = dp(8)
@@ -119,6 +141,32 @@ fun Context.pillIn(text: String, bgc: Int, fg: Int, stroke: Int = 0, icon: Int =
     background = RippleDrawable(ColorStateList.valueOf(withAlpha(fg, 0.2f)), rounded(bgc, r, if (stroke != 0) dp(1) else 0, stroke), rounded(Color.WHITE, r))
     setOnClickListener(onClick)
     pressBounce()
+}
+
+/** A round icon button (the plan's − and +). */
+fun Context.iconButton(text: String, bgc: Int, fg: Int, onClick: (View) -> Unit): Button = pillIn(text, bgc, fg, onClick = onClick).apply {
+    setPadding(0, 0, 0, 0)
+    textSize = 20f
+    minHeight = dp(40)
+    minimumHeight = dp(40)
+}
+
+/** An M3 outlined text field: the outline turns primary and thicker while it has focus. */
+fun Context.field(hint: String, p: Palette, type: Int = InputType.TYPE_CLASS_TEXT): EditText = EditText(this).apply {
+    this.hint = hint
+    inputType = type
+    setSingleLine()
+    setTextColor(p.text)
+    setHintTextColor(p.muted)
+    textSize = 16f
+    minHeight = dp(56)
+    setPadding(dp(16), 0, dp(16), 0)
+    val r = dp(12).toFloat()
+    background = StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_focused), rounded(Color.TRANSPARENT, r, dp(2), p.primary))
+        addState(intArrayOf(), rounded(Color.TRANSPARENT, r, dp(1), p.outline))
+    }
+    if (Build.VERSION.SDK_INT >= 29) textCursorDrawable = rounded(p.primary, 0f).apply { setSize(dp(2), dp(20)) }
 }
 
 /** Press: sink a little; release: spring back with a small overshoot. Never eats the touch. */
@@ -155,7 +203,7 @@ fun View.riseIn(delay: Long = 0) {
 fun Context.card(p: Palette): LinearLayout = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
     background = rounded(p.card, dp(28).toFloat())
-    setPadding(dp(20), dp(18), dp(20), dp(18))
+    setPadding(dp(20), dp(20), dp(20), dp(20))
     smoothChanges()
 }
 
@@ -172,28 +220,182 @@ fun Context.row(): LinearLayout = LinearLayout(this).apply {
     gravity = Gravity.CENTER_VERTICAL
 }
 
-/** The timer's ring, like the PC's dial: a faint track and the part already done. */
-class Ring(ctx: Context) : View(ctx) {
-    private val stroke = ctx.dp(10).toFloat()
-    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = stroke }
-    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND }
-    private val box = RectF()
+/** [v] in a row with the rest of the width: `row.addFill(text)`. */
+fun LinearLayout.addFill(v: View, start: Int = 0) {
+    addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = start })
+}
 
-    /** 0..1 of the circle; below 0 hides the arc. */
-    var fraction = -1f
+/** Children side by side and centred, wrapping to a new line when they don't fit (the timer's buttons). */
+class Flow(ctx: Context) : ViewGroup(ctx) {
+    private val gap = ctx.dp(8)
+
+    private fun lines(max: Int): List<List<View>> {
+        val out = mutableListOf<MutableList<View>>()
+        var used = 0
+        for (i in 0 until childCount) {
+            val v = getChildAt(i)
+            if (v.visibility == GONE) continue
+            if (out.isEmpty() || used + gap + v.measuredWidth > max) {
+                out += mutableListOf(v)
+                used = v.measuredWidth
+            } else {
+                out.last() += v
+                used += gap + v.measuredWidth
+            }
+        }
+        return out
+    }
+
+    override fun onMeasure(w: Int, h: Int) {
+        val max = MeasureSpec.getSize(w)
+        for (i in 0 until childCount) {
+            getChildAt(i).measure(MeasureSpec.makeMeasureSpec(max, MeasureSpec.AT_MOST), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        }
+        val ls = lines(max)
+        val height = ls.sumOf { line -> line.maxOf { it.measuredHeight } } + gap * (ls.size - 1).coerceAtLeast(0)
+        setMeasuredDimension(max, height)
+    }
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        var y = 0
+        for (line in lines(r - l)) {
+            val lineH = line.maxOf { it.measuredHeight }
+            var x = (r - l - (line.sumOf { it.measuredWidth } + gap * (line.size - 1))) / 2
+            for (v in line) {
+                v.layout(x, y, x + v.measuredWidth, y + v.measuredHeight)
+                x += v.measuredWidth + gap
+            }
+            y += lineH + gap
+        }
+    }
+}
+
+/**
+ * The timer dial, as on the PC: a wavy ring (M3 Expressive — the part done is a travelling wave
+ * while the timer runs and flat when it stands, the rest a flat track after a small gap) with the
+ * state and the time in its centre. Everything is drawn here, centred on the view, so the time
+ * sits exactly in the middle of the ring.
+ */
+class Dial(ctx: Context) : View(ctx) {
+    private val maxSize = ctx.dp(300)
+    private val minState = ctx.sp(11f)
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val wave = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val stateText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        letterSpacing = 0.12f
+    }
+    private val timeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+        fontFeatureSettings = "tnum"
+    }
+    private val path = Path()
+    private val box = RectF()
+    private val bounds = Rect()
+
+    /** Small caps above the time: "WORK", "BREAK"… */
+    var state = ""
+        set(v) { if (field != v) { field = v; invalidate() } }
+    var time = ""
+        set(v) { if (field != v) { field = v; invalidate() } }
+    /** The time's size against the ring: below 1 for longer texts ("1:05:00", the plan's hours). */
+    var timeScale = 1f
+        set(v) { if (field != v) { field = v; invalidate() } }
+    /** The time in another colour (a segment over its time); 0: the text colour. */
+    var timeColor = 0
         set(v) { if (field != v) { field = v; invalidate() } }
 
-    fun colors(arcColor: Int, trackColor: Int) {
-        arc.color = arcColor
-        track.color = trackColor
+    private var target = 0f
+    private var shown = 0f
+    private var amp = 0f
+    private var targetAmp = 0f
+    private var phase = 0f
+    private var last = 0L
+
+    /** The part done (0..1, below 0: no arc), and whether it moves now (the wave runs). */
+    fun progress(fraction: Float, running: Boolean) {
+        target = fraction
+        targetAmp = if (running && fraction >= 0f) 1f else 0f
         invalidate()
     }
 
+    fun colors(arc: Int, trackColor: Int, text: Int) {
+        wave.color = arc
+        track.color = trackColor
+        stateText.color = text
+        invalidate()
+    }
+
+    override fun onMeasure(w: Int, h: Int) {
+        val width = MeasureSpec.getSize(w)
+        setMeasuredDimension(width, min(width, maxSize))
+    }
+
     override fun onDraw(c: Canvas) {
-        val half = stroke / 2
-        box.set(half, half, width - half, height - half)
-        c.drawOval(box, track)
-        if (fraction > 0f) c.drawArc(box, -90f, 360f * fraction.coerceAtMost(1f), false, arc)
+        val now = SystemClock.uptimeMillis()
+        val dt = if (last == 0L) 16f else min(64L, now - last).toFloat()
+        last = now
+        val motion = ValueAnimator.areAnimatorsEnabled()
+        val k = if (motion) 1f - 0.001f.pow(dt / 600f) else 1f
+        val goal = target.coerceIn(0f, 1f)
+        shown += (goal - shown) * (if (abs(goal - shown) > 0.5f) 1f else k)
+        amp += ((if (motion) targetAmp else 0f) - amp) * k
+        if (motion) phase += dt * 0.0022f
+
+        val size = height.toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        val stroke = size * 0.035f
+        val r = size / 2f - stroke
+        track.strokeWidth = stroke
+        wave.strokeWidth = stroke
+        box.set(cx - r, cy - r, cx + r, cy + r)
+
+        // The track: flat, after the part done, with a gap on both sides.
+        val p = shown
+        val gap = if (p > 0.001f && p < 0.999f) 0.09f else 0f
+        val a0 = p * 2 * PI.toFloat() + gap
+        val a1 = 2 * PI.toFloat() - gap
+        if (a1 - a0 > 0.01f) c.drawArc(box, -90f + Math.toDegrees(a0.toDouble()).toFloat(), Math.toDegrees((a1 - a0).toDouble()).toFloat(), false, track)
+
+        // The part done: a wave tapered at both ends, so the round caps stay on the track.
+        if (p > 0.001f) {
+            val end = p * 2 * PI.toFloat()
+            val steps = max(8, ceil(end / (PI.toFloat() / 90f)).toInt())
+            val waveH = r * 1.9f / 88f * amp
+            path.reset()
+            for (i in 0..steps) {
+                val a = i.toFloat() / steps * end
+                val taper = min(1f, min(a / 0.35f, (end - a) / 0.35f))
+                val rr = r + waveH * taper * sin(a * 22f - phase * 6f)
+                val x = cx + rr * sin(a)
+                val y = cy - rr * cos(a)
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            c.drawPath(path, wave)
+        }
+
+        // State and time, centred as one block on the ring's centre (by the height of capitals and digits).
+        timeText.textSize = size * 0.22f * timeScale
+        timeText.color = if (timeColor != 0) timeColor else stateText.color
+        stateText.textSize = max(size * 0.042f, minState)
+        timeText.getTextBounds("0", 0, 1, bounds)
+        val digits = bounds.height().toFloat()
+        if (state.isEmpty()) {
+            c.drawText(time, cx, cy + digits / 2f, timeText)
+        } else {
+            stateText.getTextBounds("A", 0, 1, bounds)
+            val caps = bounds.height().toFloat()
+            val between = size * 0.05f
+            val top = cy - (caps + between + digits) / 2f
+            c.drawText(state, cx, top + caps, stateText)
+            c.drawText(time, cx, top + caps + between + digits, timeText)
+        }
+
+        val moving = abs(goal - shown) > 0.0005f || abs(targetAmp - amp) > 0.01f || (motion && targetAmp > 0f)
+        if (moving) postInvalidateOnAnimation() else last = 0L
     }
 }
 
