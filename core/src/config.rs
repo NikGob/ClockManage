@@ -413,22 +413,12 @@ pub enum AgentSettings {
 
 /// Settings the agent never changes: its own access, its connection, pairings and keys, the
 /// command the app runs for Meals and the page the iPhone opens.
-pub const AGENT_FIXED: [&str; 12] = [
-    "agent_settings",
-    "mcp_enabled",
-    "mcp_port",
-    "plan_overrides",
-    "phone.devices",
-    "meals.agent",
-    "meals.agent_cmd",
-    "meals.pwa_url",
-    "meals.vapid_key",
-    "meals.link",
-    "meals.subscription",
-    "meals.relay_seen",
-];
+pub const AGENT_FIXED: [&str; 7] = ["agent_settings", "mcp_enabled", "mcp_port", "plan_overrides", "phone.devices", "meals.agent", "meals.agent_cmd"];
+/// The paired iPhone: never changed by the agent (`iphone` is fixed as a whole) and left out of
+/// what it reads (its keys).
+const AGENT_IPHONE: &str = "iphone";
 /// Left out of what the agent reads: tokens and keys (plans set ahead come with `get_plan`).
-const AGENT_HIDDEN: [&str; 6] = ["plan_overrides", "phone.devices", "meals.vapid_key", "meals.link", "meals.subscription", "meals.relay_seen"];
+const AGENT_HIDDEN: [&str; 3] = ["plan_overrides", "phone.devices", AGENT_IPHONE];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -476,8 +466,10 @@ pub struct Config {
     /// Time off: every day of it is a day off with no plan, no lock and no autolock, whatever the
     /// week schedule says. Sorted, never overlapping; past ones stay for the journal.
     pub time_off: Vec<TimeOff>,
-    /// Diet, address, meal times and the paired iPhone web app.
+    /// Diet, address and meal times.
     pub meals: crate::meals::Meals,
+    /// The paired iPhone web app.
+    pub iphone: crate::iphone::Iphone,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
     #[serde(skip_serializing)]
     pub study_days: Option<[bool; 7]>,
@@ -526,6 +518,7 @@ impl Default for Config {
             plan_overrides: BTreeMap::new(),
             time_off: vec![],
             meals: crate::meals::Meals::default(),
+            iphone: crate::iphone::Iphone::default(),
             study_days: None,
             plan_template: None,
         }
@@ -580,6 +573,23 @@ impl Config {
     }
 
     /// Sorted, each at most [`MAX_TIME_OFF_DAYS`] long, overlapping and adjacent ones merged.
+    /// An iPhone paired before 0.7 (under `meals`) stays paired: its link moves to `iphone`.
+    fn migrate_iphone(&mut self) {
+        let m = &mut self.meals;
+        let (url, key, link, sub, seen) = (m.old_pwa_url.take(), m.old_vapid_key.take(), m.old_link.take(), m.old_subscription.take(), m.old_relay_seen.take());
+        let to = &mut self.iphone;
+        if let Some(u) = url.filter(|u| !u.trim().is_empty()) {
+            to.pwa_url = u;
+        }
+        if let Some(k) = key.filter(|k| !k.is_empty()) {
+            to.vapid_key = k;
+        }
+        if link.is_none() || to.link.is_some() {
+            return;
+        }
+        (to.link, to.subscription, to.relay_seen) = (link, sub, seen.unwrap_or(0));
+    }
+
     fn normalize_time_off(&mut self) {
         let mut v: Vec<TimeOff> = self
             .time_off
@@ -652,6 +662,8 @@ impl Config {
 
     pub fn normalize(&mut self) {
         self.meals.normalize();
+        self.migrate_iphone();
+        self.iphone.normalize();
         if let Some(days) = self.study_days.take() {
             self.week = days.map(|d| if d { DayKind::Full } else { DayKind::Off });
         }
@@ -819,7 +831,7 @@ fn merge_patch(base: &mut serde_json::Value, patch: &serde_json::Value, path: &s
     };
     for (k, v) in p {
         let key = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
-        if AGENT_FIXED.contains(&key.as_str()) {
+        if AGENT_FIXED.contains(&key.as_str()) || key == AGENT_IPHONE {
             return Err(tr!("config_the_agent_cant_change", key = key));
         }
         let Some(slot) = base.get_mut(k) else {
@@ -1174,6 +1186,7 @@ mod tests {
             serde_json::json!({ "mcp_enabled": false }),
             serde_json::json!({ "phone": { "devices": [] } }),
             serde_json::json!({ "meals": { "agent_cmd": "calc" } }),
+            serde_json::json!({ "iphone": { "pwa_url": "https://example.org/" } }),
         ] {
             assert!(c.agent_patch(&fixed).is_err(), "{fixed}");
         }
@@ -1181,8 +1194,24 @@ mod tests {
         assert!(c.agent_patch(&serde_json::json!({ "sound": "loud" })).is_err());
         // Tokens and keys never reach the agent.
         let v = c.agent_view();
-        assert!(v["phone"].get("devices").is_none() && v["meals"].get("vapid_key").is_none() && v.get("plan_overrides").is_none());
+        assert!(v["phone"].get("devices").is_none() && v.get("iphone").is_none() && v.get("plan_overrides").is_none());
         assert_eq!(v["agent_settings"], "outside_study");
+    }
+
+    #[test]
+    fn an_iphone_paired_under_meals_stays_paired() {
+        let old = serde_json::json!({ "meals": { "enabled": false, "pwa_url": "https://example.org/cm/", "vapid_key": "k", "link": { "up": "u", "down": "d", "key": "s" }, "relay_seen": 7 } });
+        let mut c: Config = serde_json::from_value(old).unwrap();
+        c.normalize();
+        let link = c.iphone.link.as_ref().unwrap();
+        assert_eq!((link.up.as_str(), link.down.as_str(), c.iphone.vapid_key.as_str(), c.iphone.relay_seen), ("u", "d", "k", 7));
+        assert_eq!(c.iphone.pwa_url, "https://example.org/cm/");
+        // Saved under `iphone` only.
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v["meals"].get("link").is_none() && v["meals"].get("pwa_url").is_none());
+        let mut again: Config = serde_json::from_value(v).unwrap();
+        again.normalize();
+        assert_eq!(again.iphone, c.iphone);
     }
 
     #[test]

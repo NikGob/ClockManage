@@ -36,8 +36,9 @@ const cfg = {
     diet: L('Без сахара и жареного. Белок в каждом приёме пищи, овощи — половина тарелки. Обед до 700 ккал, ужин до 500.', 'No sugar, nothing fried. Protein at every meal, vegetables half the plate. Lunch up to 700 kcal, dinner up to 500.'),
     address: 'Mannerheimintie 16, Helsinki', lat: 60.1699, lon: 24.9384, max_km: 3, times: [780, 1140], lead_min: 30,
     agent: q.get('agent') || 'claude', agent_cmd: '',
-    pwa_url: 'https://nikgob.github.io/ClockManage/', vapid_key: '', link: q.get('paired') === '0' ? null : { key: '', up: '', down: '' }, subscription: null, relay_seen: 0,
   },
+  // ?paired=0 previews it without an iPhone.
+  iphone: { pwa_url: 'https://nikgob.github.io/ClockManage/', vapid_key: '', link: q.get('paired') === '0' ? null : { key: '', up: '', down: '' }, subscription: null, relay_seen: 0 },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
 let kind = q.get('kind') || (q.get('off') === '1' ? 'off' : 'full');
@@ -62,7 +63,7 @@ const mealPicks = {
     ] },
   ],
 };
-let mealsPairing = null;
+let iphonePairing = null;
 const MOCK_QR = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"><rect width="29" height="29" fill="#fff"/>${Array.from({ length: 841 }, (_, i) => ((i * 7919) % 13 < 6 ? `<rect x="${i % 29}" y="${Math.floor(i / 29)}" width="1" height="1"/>` : '')).join('')}</svg>`;
 let phonePin = null;
 let segAccess = false;
@@ -231,12 +232,13 @@ export async function invoke(cmd, args) {
     case 'install_update': location.reload(); return null;
     case 'drop_queued': return null;
     case 'finish_block': return { ok: true, block: args.name };
-    case 'meals_state': return { service: 'Wolt', services: [['wolt', 'Wolt']], claude: q.get('claude') === '0' ? null : 'C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd', picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: q.get('paired') !== '0', pairing: mealsPairing };
+    case 'meals_state': return { service: 'Wolt', services: [['wolt', 'Wolt']], claude: q.get('claude') === '0' ? null : 'C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd', picks: q.get('picks') === '0' ? null : mealPicks, running: false, error: null, paired: !!cfg.iphone.link };
     case 'meals_pick_now': return null;
-    case 'meals_pair': mealsPairing = { code: 'K7QM-4XPT', url: `${cfg.meals.pwa_url}?pair=K7QM4XPT`, qr: MOCK_QR, until: Date.now() + 10 * MIN }; return mealsPairing;
-    case 'meals_unpair': mealsPairing = null; cfg.meals.link = null; return null;
     case 'meals_geocode': return { lat: 60.1699, lon: 24.9384, label: args.address };
     case 'open_url': return null;
+    case 'iphone_state': return { paired: !!cfg.iphone.link && !iphonePairing, linked: !!cfg.iphone.link, pairing: iphonePairing, error: null };
+    case 'iphone_pair': iphonePairing = { code: 'K7QM-4XPT', url: `${cfg.iphone.pwa_url}?pair=K7QM4XPT`, qr: MOCK_QR, until: Date.now() + 10 * MIN }; cfg.iphone.link = { key: '', up: '', down: '' }; return iphonePairing;
+    case 'iphone_unpair': iphonePairing = null; cfg.iphone.link = null; return null;
     case 'phone_pin': phonePin = '482913'; return { pin: phonePin, until: Date.now() + 2 * MIN };
     case 'captcha_new': return { id: 1, problems: ['47 × 8', '512 + 389', '742 − 118 × 4'], wait_ms: 15000 };
     case 'day_stats': return {

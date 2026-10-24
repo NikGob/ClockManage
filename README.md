@@ -12,9 +12,10 @@
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
 [![MCP](https://img.shields.io/badge/MCP-24%20tools-6E56CF)](#claude-runs-your-day-mcp)
 [![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
+[![iPhone](https://img.shields.io/badge/iPhone-web%20app-555?logo=apple&logoColor=white)](#iphone-companion)
 [![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
-[Install](#install) · [Features](#features) · [MCP](#claude-runs-your-day-mcp) · [Android](#android-companion) · [Development](#development)
+[Install](#install) · [Features](#features) · [MCP](#claude-runs-your-day-mcp) · [Android](#android-companion) · [iPhone](#iphone-companion) · [Development](#development)
 
 </div>
 
@@ -120,21 +121,7 @@ Out of the box the diet aims at the brain, after the MIND diet: leafy greens, be
 
 The agent is Claude Code by default: ClockManage finds it by itself and runs it on its own login (run `claude` once and `/login`), without your user settings and hooks, allowed only the meal tools. **Meals → Settings → Agent → Custom command** runs Codex, Gemini CLI or any other agent with MCP instead: the task comes on stdin, `{mcp_url}` and `{mcp_config}` are filled in.
 
-#### On the iPhone
-
-The picks come to an iPhone as notifications. The iPhone app is a web app at **[nikgob.github.io/ClockManage](https://nikgob.github.io/ClockManage/)**, served by GitHub Pages: nothing to install from the App Store, no account.
-
-1. On the PC open **Meals → Settings → iPhone → Pair an iPhone**. It shows a QR code and an 8-character code for 10 minutes.
-2. Scan the QR code with the iPhone camera: the web app opens with the code in its link.
-3. Tap **Share → Add to Home Screen** (in Safari or Chrome; notifications need iOS 16.4 or newer) and open ClockManage from the Home Screen. It connects by itself; or type the code there.
-4. Tap **Allow notifications**. iOS sends notifications only to a web app opened from the Home Screen.
-
-<div align="center">
-  <img src="docs/media/iphone-picks.png" alt="The iPhone web app: Order now and the picks" width="32%">
-  <img src="docs/media/iphone-diet.png" alt="The iPhone web app: a store's products and the diet" width="32%">
-</div>
-
-Before each meal a notification brings the picks; every dish opens on Wolt, where you order. **Breakfast**, **Lunch** or **Dinner** under *Order now* asks the PC for a pick right away: the PC must be on, and the notification comes in 1–3 minutes. Under *Diet* pick a ready diet or edit your own, then **Save the diet**: the PC takes it within a minute. **Pair again** starts over with a new code from the PC. The PC and the iPhone talk through [ntfy.sh](https://ntfy.sh) with end-to-end encryption, and the PC sends the pushes itself: no account, no keys, no server of your own. A fork can serve its own copy of the web app: in the fork turn on *Settings → Pages → Source: GitHub Actions*, allow workflows on the *Actions* tab and run *Actions → pwa → Run workflow*, then set *Meals → Settings → iPhone → Web app address* to `https://<user>.github.io/ClockManage/`.
+The picks also come to the paired iPhone as notifications, and its **Meals** page orders a pick and edits the diet: see [iPhone companion](#iphone-companion).
 
 Wolt has no public API for customers: ClockManage reads the same pages wolt.com does, without logging in. Wolt's terms don't allow automated access, and the pages can change — then picking stops working until ClockManage is updated. Menus carry no nutrition data, so the agent judges dishes by their names and descriptions. Prices show in the venue's own currency (euro, koruna, złoty, ruble…).
 
@@ -187,6 +174,24 @@ The rules hold for the agent too: it can't erase worked time, can't shrink the b
 
 A native app under a megabyte. Pair it on the same Wi-Fi: **Settings → Phone → Pair a phone** on the PC, **Find PC** and the PIN on the phone. It looks like the PC and speaks its language — the same colours, light or dark, and four pages under a navigation bar (swipe or tap): **Today** with the timer in a wavy ring on a card that changes colour with the phase, **Plan** with the current block highlighted, **Blocking** and **Settings** (the PC, notifications, the language, the version). It shows the timer and the plan, pauses and starts parts, opens access during a lunch, keeps counting when offline, rings at the end of a break, has a home-screen widget — and blocks the chosen apps and the PC's sites on the phone through Accessibility (the app walks you through turning it on, including Android 13+'s *Allow restricted settings* for an app installed outside Google Play). While the phone's screen is on it stays connected to the PC, so a lock started there closes the app on screen within a second; the autolock and the end of an access window come on time even offline. When you update the desktop app, the phone offers the update itself over Wi-Fi.
 
+## iPhone companion
+
+A web app at **[nikgob.github.io/ClockManage](https://nikgob.github.io/ClockManage/)**, served by GitHub Pages: nothing to install from the App Store, no account. It looks like the Android app, in the PC's colours and language: pages under a bar at the bottom (tap or swipe) — **Today** with the timer in a wavy ring on a card that changes colour with the phase, **Plan** with the current block highlighted, **Meals** while Meals is on, and **Settings** (the PC, notifications, **Pair again**). It only shows the day: no buttons, and nothing on the iPhone is blocked — a web app can't close other apps.
+
+1. On the PC open **Settings → Phone → Pair an iPhone**. It shows a QR code and an 8-character code for 10 minutes.
+2. Scan the QR code with the iPhone camera: the web app opens with the code in its link.
+3. Tap **Share → Add to Home Screen** (in Safari or Chrome; notifications need iOS 16.4 or newer) and open ClockManage from the Home Screen. It connects by itself; or type the code there.
+4. Tap **Allow notifications** (in *Settings*, or on *Meals*). iOS sends notifications only to a web app opened from the Home Screen.
+
+<div align="center">
+  <img src="docs/media/iphone-today.png" alt="The iPhone web app: Today, the timer in a wavy ring" width="24%">
+  <img src="docs/media/iphone-plan.png" alt="The iPhone web app: the day plan" width="24%">
+  <img src="docs/media/iphone-picks.png" alt="The iPhone web app: Order now and the picks" width="24%">
+  <img src="docs/media/iphone-diet.png" alt="The iPhone web app: a store's products and the diet" width="24%">
+</div>
+
+The PC sends the day when it changes (a block starts, a pause, a new plan) and every 10 hours; in between the iPhone counts the timer by itself, and *Today* says when the last update came. While Meals is on, a notification brings the picks before each meal; every dish opens on Wolt, where you order. **Breakfast**, **Lunch** or **Dinner** under *Order now* asks the PC for a pick right away: the PC must be on, and the notification comes in 1–3 minutes. Under *Diet* pick a ready diet or edit your own, then **Save the diet**: the PC takes it within a minute. **Pair again** starts over with a new code from the PC. The PC and the iPhone talk through [ntfy.sh](https://ntfy.sh) with end-to-end encryption, and the PC sends the pushes itself: no account, no keys, no server of your own. A fork can serve its own copy of the web app: in the fork turn on *Settings → Pages → Source: GitHub Actions*, allow workflows on the *Actions* tab and run *Actions → pwa → Run workflow*, then set *Settings → Phone → Web app address* to `https://<user>.github.io/ClockManage/`.
+
 ## Install
 
 1. Download `ClockManage_<version>_x64-setup.exe` from [Releases](https://github.com/NikGob/ClockManage/releases) or from the latest run in [Actions → build](https://github.com/NikGob/ClockManage/actions/workflows/build.yml) (artifact `ClockManage-<version>-setup`; the Android APK is next to it).
@@ -220,14 +225,14 @@ What works differently from Windows:
 ## Good to know
 
 - **Updates** come by themselves, like in Discord: every 6 hours ClockManage looks at the latest GitHub release, downloads a new version in the background and installs it when no study day or lock is running, the window is closed and nobody has touched the PC for 5 minutes. The app comes back on its own, in the tray. On Linux the AppImage does the same where the desktop reports idle time, and a .deb only finds the update (see [Linux](#linux)). *Settings → About ClockManage → Automatic updates* turns this off; **Check** looks right now, and **Restart and update** installs the new version at once (outside a study day). The installers are signed, and the app installs nothing else.
-- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows the system language. The default plan names, segment types, emergency phrase and diet switch along until you change them. The paired phone speaks the PC's language (before pairing, its own), unless you pick one in its *Settings*. The time zone is there too (a new install takes the system's).
+- **Language**: English and Russian, in *Settings → System → Language* — *Auto* follows the system language. The default plan names, segment types, emergency phrase and diet switch along until you change them. The paired phone speaks the PC's language (before pairing, its own), unless you pick one in its *Settings*; the iPhone web app speaks it too. The time zone is there too (a new install takes the system's).
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
 - **Time off** (*Settings → Week*, or `set_time_off`) runs from one date through another, up to a year at once; stretches that overlap or touch merge into one, and taking out days in the middle leaves two. Time off that takes in today turns today into a day off only while it hasn't started; a running day, or one the autolock holds, stays as it is. A plan set ahead for a date in time off waits until those days are taken out.
 - **Autolock**: on Full and Light days the block list goes on at 13:00 when the day hasn't started — see [Autolock before the day starts](#autolock-before-the-day-starts). Once it is on today, changing the setting only affects the days ahead. A phone that has lost the PC learns about it on the next sync.
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
-- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` on Windows, `~/.local/share/com.nikgob.clockmanage` on Linux (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The Android phone talks to the PC over your local network only. Requests to the internet: the update check on GitHub and, once you turn on Meals, Wolt's pages (the restaurants near your address), OpenStreetMap's geocoder (when you press **Find** for an address), ntfy.sh (end-to-end encrypted, for the iPhone) and Apple's push service.
+- Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` on Windows, `~/.local/share/com.nikgob.clockmanage` on Linux (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The Android phone talks to the PC over your local network only. Requests to the internet: the update check on GitHub; once you turn on Meals, Wolt's pages (the restaurants near your address) and OpenStreetMap's geocoder (when you press **Find** for an address); once you pair an iPhone, ntfy.sh (end-to-end encrypted: the day, and the picks and the diet while Meals is on) and Apple's push service.
 
 ## Development
 
@@ -239,7 +244,7 @@ npx @tauri-apps/cli@2 build                  # NSIS installer on Windows; .deb a
 
 On Linux the app needs WebKitGTK: `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf` (Ubuntu 22.04 or newer), then `cargo test --workspace` runs the app's tests too. `src-tauri/tauri.linux.conf.json` is merged over `tauri.conf.json` on Linux: no launch guard; the .deb's polkit rule and remove script and the menu entry (also used by the AppImage) from `src-tauri/linux/`. `scripts/linux-smoke.sh <deb>` installs a built package and drives the running app over MCP — it changes `/etc/hosts`, so CI runs it on a throwaway runner.
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=idle&off=1` for time off, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=meals` for the Meals screen (`&picks=0` without picks, `&paired=0` without an iPhone, `&meals=0` with Meals off), `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage).
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=idle&off=1` for time off, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=meals` for the Meals screen (`&picks=0` without picks, `&paired=0` without an iPhone — in Settings too, `&meals=0` with Meals off), `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage). The iPhone web app: `node scripts/media/pwa-server.mjs` serves it as GitHub Pages does, at `http://localhost:8767/`; `scripts/media/iphone-day.mjs` has a made-up day to put in its `localStorage`.
 
 | Folder | What's inside |
 |---|---|
@@ -247,7 +252,7 @@ UI preview in a normal browser with a mock backend: `cd ui && python -m http.ser
 | `src-tauri/` | the desktop app for Windows and Linux: ticker, blocker (hosts, policies, processes), synthesized sounds, MCP and phone servers, tray and windows |
 | `ui/` | main window, mini timer and alarm overlay — plain JS modules, no bundler; `ui/locales/` — the texts of every part |
 | `android/` | the phone app, Kotlin with no dependencies: `cd android && gradle assembleRelease` |
-| `pwa/` | the iPhone web app for meal picks — plain JS, served with `ui/locales/` by GitHub Pages (`.github/workflows/pwa.yml`; turn on *Settings → Pages → Source: GitHub Actions*) |
+| `pwa/` | the iPhone web app: the day and the meal picks — plain JS, served with `ui/locales/` by GitHub Pages (`.github/workflows/pwa.yml`; turn on *Settings → Pages → Source: GitHub Actions*) |
 
 Every push builds the Windows installer, the Linux .deb and AppImage and the APK; the Linux job also runs the smoke test above. A `v*` tag publishes them as one release. With the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, CI signs the installer and the Linux packages and uploads `latest.json` next to them (one entry per platform and package type); installed apps read `releases/latest/download/latest.json` and check the signature against the public key in `src-tauri/tauri.conf.json`. Without the secrets the packages are built unsigned and apps don't see the release. Keep the private key: without it no update can be signed for the apps already installed.
 

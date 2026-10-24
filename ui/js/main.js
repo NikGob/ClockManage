@@ -142,6 +142,7 @@ function render(s) {
 on('state', render);
 on('config', () => screen?.config?.());
 on('meals', () => screen?.meals?.());
+on('iphone', () => screen?.iphone?.());
 on('navigate', (id) => go(id));
 // Changes made by the agent through MCP, so it is clear they were not mine.
 on('agent', (p) => snack(`${p.title}: ${p.text}`, 7000));

@@ -92,24 +92,6 @@ export function mountMeals(root, ctx) {
     </div>`;
   }
 
-  function phoneRows() {
-    const pr = st.pairing;
-    if (pr) {
-      return `<div class="setting col pair-box">
-        <div class="t">${tr('meals_scan_with_the_iphone_camera')}</div>
-        <div class="qr">${pr.qr}</div>
-        <div class="d">${tr('meals_then_share_add_to_home_screen')}</div>
-        <div class="hstack"><span class="d">${tr('meals_or_type_the_code_in_the')}</span><span class="pin tnum">${esc(pr.code)}</span></div>
-        <div class="d">${tr('meals_the_code_works_until', { time: new Date(pr.until).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) })}</div>
-        <div class="hstack"><code class="code">${esc(pr.url)}</code><button class="icon-btn interactive" data-copy="${esc(pr.url)}" aria-label="${tr('settings_copied')}">${icon('copy')}</button></div>
-      </div>`;
-    }
-    return `<div class="setting"><span class="badge">${icon('phone')}</span>
-        <div class="grow"><div class="t">${st.paired ? tr('meals_iphone_connected') : tr('meals_no_iphone_yet')}</div><div class="d">${tr('meals_picks_come_to_the_iphone_as')}</div></div>
-        ${cfg.meals.link ? `<button class="btn text interactive" id="unpair">${tr('settings_unpair')}</button>` : ''}
-        <button class="btn tonal interactive" id="pair">${icon('add')}${st.paired ? tr('meals_pair_again') : tr('meals_pair_an_iphone')}</button></div>`;
-  }
-
   function settingsTab() {
     const m = cfg.meals;
     const diet = draft ?? m.diet;
@@ -151,9 +133,8 @@ export function mountMeals(root, ctx) {
       <section class="section">
         <h2>${tr('meals_iphone')}</h2>
         <div class="surface">
-          ${phoneRows()}
-          <details class="setting col more"><summary class="t interactive">${tr('meals_web_app_address')}</summary>
-            <div class="field"><input id="pwa" value="${esc(m.pwa_url)}" spellcheck="false" aria-label="${tr('meals_web_app_address')}"></div></details>
+          <div class="setting"><span class="badge">${icon('phone')}</span>
+            <div class="grow"><div class="t">${st.paired ? tr('meals_iphone_connected') : tr('meals_no_iphone_yet')}</div><div class="d">${tr('meals_picks_also_come_as_notifications_to')}</div></div></div>
         </div>
       </section>
       <section class="section">
@@ -216,8 +197,7 @@ export function mountMeals(root, ctx) {
   });
   box.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.id === 'pwa') save((m) => { m.pwa_url = t.value.trim(); });
-    else if (t.id === 'agent') save((m) => { m.agent_cmd = t.value.trim(); });
+    if (t.id === 'agent') save((m) => { m.agent_cmd = t.value.trim(); });
   });
   box.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
@@ -235,8 +215,6 @@ export function mountMeals(root, ctx) {
     else if (b.dataset.preset) {
       draft = presets().find(([id]) => id === b.dataset.preset)[2];
       render();
-    } else if (b.dataset.copy) {
-      try { await navigator.clipboard.writeText(b.dataset.copy); snack(tr('settings_copied')); } catch { snack(tr('log_couldnt_copy')); }
     } else if (b.id === 'diet-save') {
       const text = box.querySelector('#diet').value.trim();
       if (await save((m) => { m.diet = text; }, tr('meals_the_diet_was_updated'))) { draft = null; render(); }
@@ -262,8 +240,6 @@ export function mountMeals(root, ctx) {
       save((m) => { m.times = m.times.filter((x) => x !== t); });
     } else if (b.dataset.service) save((m) => { m.service = b.dataset.service; });
     else if (b.dataset.agent) save((m) => { m.agent = b.dataset.agent; });
-    else if (b.id === 'pair') { const p = await run(() => call('meals_pair'), b); if (p) await refresh(); }
-    else if (b.id === 'unpair') { await run(() => call('meals_unpair'), b); await reload(); }
   });
 
   async function refresh() {

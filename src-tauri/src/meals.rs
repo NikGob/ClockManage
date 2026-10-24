@@ -1,6 +1,6 @@
 //! Meals, an optional feature: delivery service data for the agent, the agent run before each
-//! meal, the picks, and the paired iPhone web app (Web Push out, ntfy.sh relay for its
-//! subscription and diet edits). While Meals is off its thread doesn't even start, or sleeps.
+//! meal and the picks, which also go to the paired iPhone (`crate::iphone`). While Meals is off
+//! its thread doesn't even start, or sleeps.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -13,8 +13,6 @@ use clockmanage_core::chrono::NaiveDate;
 use clockmanage_core::clock::{self, Ts};
 use clockmanage_core::mcp::MealPick;
 use clockmanage_core::meals::{self, Dish, PickDish, PickVenue, Picks, Venue, SERVICES};
-use clockmanage_core::relay::{self, NTFY};
-use clockmanage_core::webpush::{self, Subscription};
 use clockmanage_core::wolt;
 use clockmanage_core::i18n::tr;
 use clockmanage_core::tr;
@@ -27,8 +25,6 @@ use crate::app::Shared;
 
 const CACHE_MS: Ts = 10 * 60_000;
 const AGENT_TIMEOUT: Duration = Duration::from_secs(600);
-const PAIR_MS: Ts = 10 * 60_000;
-const VAPID_SUBJECT: &str = "https://github.com/NikGob/ClockManage";
 
 /// What cached venues were fetched for: the service id, the address and the distance limit.
 type VenuesKey = (&'static str, f64, f64, f64);
@@ -39,18 +35,9 @@ pub struct MealsRt {
     /// The run now: its meal time ("" by hand), kind, and whether the iPhone asked for it.
     running: Option<(String, String, bool)>,
     error: Option<String>,
-    pairing: Option<(String, Ts)>,
     venues: Option<(Ts, VenuesKey, Vec<Venue>)>,
     dishes: HashMap<String, Dish>,
     published: Option<(String, Ts)>,
-}
-
-#[derive(Serialize)]
-pub struct PairView {
-    pub code: String,
-    pub url: String,
-    pub qr: String,
-    pub until: Ts,
 }
 
 #[derive(Serialize)]
@@ -64,15 +51,15 @@ pub struct MealsView {
     pub picks: Option<Picks>,
     pub running: bool,
     pub error: Option<String>,
+    /// An iPhone takes the picks as notifications (paired in Settings → Phone).
     pub paired: bool,
-    pub pairing: Option<PairView>,
 }
 
 fn rt(shared: &Shared) -> std::sync::MutexGuard<'_, MealsRt> {
     shared.meals.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn http() -> &'static reqwest::blocking::Client {
+pub(crate) fn http() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -139,10 +126,8 @@ fn check_on(shared: &Shared) -> Result<(), String> {
 fn start(shared: Arc<Shared>) -> Thread {
     rt(&shared).picks = crate::store::read_json(&picks_path(&shared));
     let handle = std::thread::Builder::new().name("meals".into()).spawn(move || {
-        let mut last_poll: Ts = 0;
         loop {
             if !enabled(&shared) {
-                rt(&shared).pairing = None;
                 std::thread::park();
                 continue;
             }
@@ -150,21 +135,6 @@ fn start(shared: Arc<Shared>) -> Thread {
             let now = clock::now_ts();
             if let Some(meal) = due_meal(&shared, now) {
                 let _ = run_agent(shared.clone(), Some(meal), meals::kind_at(meal), false);
-            }
-            let linked = shared.lock().cfg.meals.link.is_some();
-            let pairing = rt(&shared).pairing.is_some();
-            if linked && now - last_poll >= if pairing { 5_000 } else { 15_000 } {
-                last_poll = now;
-                if let Err(e) = poll_phone(&shared) {
-                    eprintln!("meals relay: {e}");
-                }
-                publish_diet(&shared, now);
-            }
-            let mut r = rt(&shared);
-            if r.pairing.as_ref().is_some_and(|p| p.1 < now) {
-                r.pairing = None;
-                drop(r);
-                emit(&shared);
             }
         }
     });
@@ -196,9 +166,9 @@ fn due_meal(shared: &Shared, now: Ts) -> Option<u32> {
 static TRIED: Mutex<Vec<(NaiveDate, u32)>> = Mutex::new(Vec::new());
 
 pub fn view(shared: &Shared) -> MealsView {
-    let (paired, url_base, service) = {
+    let (paired, service) = {
         let g = shared.lock();
-        (g.cfg.meals.subscription.is_some(), g.cfg.meals.pwa_url.clone(), g.cfg.meals.service.clone())
+        (g.cfg.iphone.subscription.is_some(), g.cfg.meals.service.clone())
     };
     let r = rt(shared);
     MealsView {
@@ -209,18 +179,7 @@ pub fn view(shared: &Shared) -> MealsView {
         running: r.running.is_some(),
         error: r.error.clone(),
         paired,
-        pairing: r.pairing.as_ref().map(|(code, until)| {
-            let url = format!("{url_base}?pair={}", code.replace('-', ""));
-            PairView { code: code.clone(), qr: qr_svg(&url), url, until: *until }
-        }),
     }
-}
-
-fn qr_svg(text: &str) -> String {
-    use qrcode::render::svg;
-    qrcode::QrCode::new(text.as_bytes())
-        .map(|q| q.render::<svg::Color>().min_dimensions(220, 220).dark_color(svg::Color("#000000")).light_color(svg::Color("#ffffff")).build())
-        .unwrap_or_default()
 }
 
 // ---- delivery services ----
@@ -415,7 +374,7 @@ pub fn set_meal_options(shared: &Shared, picks: Vec<MealPick>) -> Result<Value, 
     let title = meals::picks_title(&picks);
     let body = picks.venues.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(" · ");
     let _ = shared.app.notification().builder().title(&title).body(&body).show();
-    let pushed = match push(shared, &meals::push_payload(&picks, &title)) {
+    let pushed = match crate::iphone::push(shared, &meals::push_payload(&picks, &title)) {
         Ok(sent) => sent,
         Err(e) => {
             rt(shared).error = Some(e.clone());
@@ -435,7 +394,7 @@ fn now_kind(shared: &Shared) -> &'static str {
 
 /// A notification on the iPhone that its pick failed (it would wait for nothing otherwise).
 fn push_failure(shared: &Shared, error: &str) {
-    let _ = push(shared, &json!({ "title": tr("meals_couldnt_pick_food"), "body": error }).to_string());
+    let _ = crate::iphone::push(shared, &json!({ "title": tr("meals_couldnt_pick_food"), "body": error }).to_string());
 }
 
 pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone: bool) -> Result<(), String> {
@@ -601,170 +560,49 @@ fn spawn_and_wait(line: &str, prompt: &str) -> Result<String, String> {
 
 // ---- the iPhone ----
 
-fn vapid_key(shared: &Shared) -> String {
-    let key = shared.lock().cfg.meals.vapid_key.clone();
-    if !key.is_empty() {
-        return key;
-    }
-    let key = webpush::new_key();
-    let k = key.clone();
-    save_cfg(shared, |m| m.vapid_key = k);
-    key
-}
-
-/// Sends a push to the paired iPhone; `Ok(false)` when there is none.
-fn push(shared: &Shared, payload: &str) -> Result<bool, String> {
-    let Some(sub) = shared.lock().cfg.meals.subscription.clone() else { return Ok(false) };
-    let key = vapid_key(shared);
-    let body = webpush::encrypt(&sub, payload.as_bytes()).map_err(|e| tr!("meals_couldnt_send_to_the_iphone", error = e))?;
-    let auth = webpush::vapid_auth(&key, &sub.endpoint, VAPID_SUBJECT, clock::now_ts() / 1000).map_err(|e| tr!("meals_couldnt_send_to_the_iphone", error = e))?;
-    let res = http()
-        .post(&sub.endpoint)
-        .header("Authorization", auth)
-        .header("Content-Encoding", "aes128gcm")
-        .header("Content-Type", "application/octet-stream")
-        .header("TTL", "7200")
-        .header("Urgency", "high")
-        .body(body)
-        .send()
-        .map_err(|e| tr!("meals_couldnt_send_to_the_iphone", error = e))?;
-    match res.status().as_u16() {
-        200..=299 => Ok(true),
-        404 | 410 => {
-            save_cfg(shared, |m| m.subscription = None);
-            Err(tr("meals_the_iphone_turned_notifications_off").to_string())
-        }
-        code => Err(tr!("meals_couldnt_send_to_the_iphone", error = format!("HTTP {code} {}", res.text().unwrap_or_default().chars().take(120).collect::<String>()))),
-    }
-}
-
-fn post_sealed(topic: &str, sealed: &str) -> Result<(), String> {
-    for part in relay::parts(sealed) {
-        let res = http().post(format!("{NTFY}/{topic}")).body(part).send().map_err(|e| e.to_string())?;
-        if !res.status().is_success() {
-            return Err(format!("ntfy: HTTP {}", res.status()));
-        }
-    }
-    Ok(())
-}
-
-/// A new pairing: a fresh link, posted under the code's topic for the web app to pick up.
-pub fn pair(shared: &Arc<Shared>) -> Result<PairView, String> {
-    check_on(shared)?;
-    let link = relay::new_link();
-    let code = relay::pair_code();
-    let vapid = webpush::public_key(&vapid_key(shared)).unwrap_or_default();
-    let l = link.clone();
-    save_cfg(shared, |m| {
-        m.link = Some(l);
-        m.subscription = None;
-        m.relay_seen = clock::now_ts() / 1000;
-    });
-    {
-        let mut r = rt(shared);
-        r.pairing = Some((code.clone(), clock::now_ts() + PAIR_MS));
-        r.published = None;
-    }
-    let msg = json!({ "up": link.up, "down": link.down, "key": link.key, "vapid": vapid, "pc": crate::system::pc_name() }).to_string();
-    let sealed = relay::seal(&relay::pair_key(&code), msg.as_bytes());
-    let topic = relay::pair_topic(&code);
-    let s = shared.clone();
-    std::thread::spawn(move || {
-        if let Err(e) = post_sealed(&topic, &sealed) {
-            rt(&s).error = Some(tr!("meals_couldnt_send_to_the_iphone", error = e));
-            emit(&s);
-        }
-        publish_diet(&s, clock::now_ts());
-    });
-    emit(shared);
-    Ok(view(shared).pairing.expect("pairing just set"))
-}
-
-pub fn unpair(shared: &Shared) {
-    save_cfg(shared, |m| {
-        m.link = None;
-        m.subscription = None;
-    });
-    rt(shared).pairing = None;
-    emit(shared);
-}
-
 /// The whole picks for the web app: a push holds 4 KB, so it may carry fewer of them.
 fn publish_picks(shared: &Shared, picks: &Picks) {
-    let Some(link) = shared.lock().cfg.meals.link.clone() else { return };
-    let Ok(key) = webpush::unb64(&link.key) else { return };
-    let sealed = relay::seal(&key, json!({ "t": "picks", "picks": picks }).to_string().as_bytes());
-    let _ = post_sealed(&link.down, &sealed);
+    let _ = crate::iphone::send(shared, &json!({ "t": "picks", "picks": picks }));
 }
 
-/// Sends the diet to the web app when it changed, and every 10 hours (ntfy keeps messages 12 h).
-fn publish_diet(shared: &Shared, now: Ts) {
-    let (link, diet) = {
-        let g = shared.lock();
-        (g.cfg.meals.link.clone(), g.cfg.meals.diet.clone())
-    };
-    let Some(link) = link else { return };
+/// Sends the diet to the web app while Meals is on, when it changed and every 10 hours (ntfy
+/// keeps messages 12 h). Called by the iPhone thread.
+pub fn publish_diet(shared: &Shared, now: Ts) {
+    if !enabled(shared) {
+        return;
+    }
+    let diet = shared.lock().cfg.meals.diet.clone();
     if rt(shared).published.as_ref().is_some_and(|(d, at)| *d == diet && now - at < 10 * 3_600_000) {
         return;
     }
-    let Ok(key) = webpush::unb64(&link.key) else { return };
-    let sealed = relay::seal(&key, json!({ "t": "diet", "text": diet, "at": now }).to_string().as_bytes());
-    if post_sealed(&link.down, &sealed).is_ok() {
+    if crate::iphone::send(shared, &json!({ "t": "diet", "text": diet, "at": now })) == Ok(true) {
         rt(shared).published = Some((diet, now));
     }
 }
 
-/// Applies what the web app sent: its push subscription, a diet edit.
-fn poll_phone(shared: &Arc<Shared>) -> Result<(), String> {
-    let (link, seen) = {
-        let g = shared.lock();
-        (g.cfg.meals.link.clone(), g.cfg.meals.relay_seen)
-    };
-    let Some(link) = link else { return Ok(()) };
-    let key = webpush::unb64(&link.key)?;
-    let text = http().get(format!("{NTFY}/{}/json?poll=1&since=12h", link.up)).send().and_then(|r| r.text()).map_err(|e| e.to_string())?;
-    let bodies: Vec<(i64, String)> = text
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|v| v["event"] == "message")
-        .filter_map(|v| Some((v["time"].as_i64()?, v["message"].as_str()?.to_string())))
-        .collect();
-    for (time, sealed) in relay::assemble(&bodies) {
-        if time <= seen {
-            continue;
-        }
-        let msg: Option<Value> = relay::open(&key, &sealed).ok().and_then(|b| serde_json::from_slice(&b).ok());
-        save_cfg(shared, |m| m.relay_seen = time);
-        let Some(msg) = msg else { continue };
-        match msg["t"].as_str() {
-            Some("sub") => {
-                let Ok(sub) = serde_json::from_value::<Subscription>(msg["sub"].clone()) else { continue };
-                save_cfg(shared, |m| m.subscription = Some(sub));
-                rt(shared).pairing = None;
-                emit(shared);
-                let title = tr("meals_iphone_connected");
-                let body = tr("meals_meal_picks_will_come_to_it");
-                let _ = shared.app.notification().builder().title(title).body(body).show();
-                let hello = json!({ "title": title, "body": body }).to_string();
-                if let Err(e) = push(shared, &hello) {
-                    rt(shared).error = Some(e);
-                    emit(shared);
-                }
-            }
-            Some("pick") => {
-                if let Some(kind) = meals::KINDS.into_iter().find(|k| msg["kind"].as_str() == Some(*k)) {
-                    let _ = run_agent(shared.clone(), None, kind, true);
-                }
-            }
-            Some("diet") => {
-                let text: String = msg["text"].as_str().unwrap_or("").chars().take(8000).collect();
-                save_cfg(shared, |m| m.diet = text);
-                emit(shared);
-            }
-            _ => {}
-        }
+/// A new iPhone: it gets the diet again.
+pub fn forget_published(shared: &Shared) {
+    rt(shared).published = None;
+}
+
+/// What the web app sent for Meals: a pick asked for, a diet edit. Ignored while Meals is off.
+pub fn from_phone(shared: &Arc<Shared>, msg: &Value) {
+    if !enabled(shared) {
+        return;
     }
-    Ok(())
+    match msg["t"].as_str() {
+        Some("pick") => {
+            if let Some(kind) = meals::KINDS.into_iter().find(|k| msg["kind"].as_str() == Some(*k)) {
+                let _ = run_agent(shared.clone(), None, kind, true);
+            }
+        }
+        Some("diet") => {
+            let text: String = msg["text"].as_str().unwrap_or("").chars().take(8000).collect();
+            save_cfg(shared, |m| m.diet = text);
+            emit(shared);
+        }
+        _ => {}
+    }
 }
 
 // ---- address ----
@@ -797,16 +635,6 @@ pub fn meals_state(s: S) -> MealsView {
 #[tauri::command(async)]
 pub fn meals_pick_now(s: S) -> Result<(), String> {
     run_agent(s.inner().clone(), None, now_kind(&s), false)
-}
-
-#[tauri::command(async)]
-pub fn meals_pair(s: S) -> Result<PairView, String> {
-    pair(s.inner())
-}
-
-#[tauri::command(async)]
-pub fn meals_unpair(s: S) {
-    unpair(&s);
 }
 
 #[tauri::command]

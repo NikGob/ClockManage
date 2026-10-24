@@ -2,7 +2,7 @@ import os, sys
 from PIL import Image, ImageDraw, ImageFilter
 # stills.py src_dir dst_dir — copy the stills (optimized) and build the light/dark cover.
 src, dst = sys.argv[1], sys.argv[2]
-names = ['today-light', 'plan', 'blocking', 'log', 'week', 'nap', 'meals', 'iphone-picks', 'iphone-diet', 'mini-dark', 'mini-light']
+names = ['today-light', 'plan', 'blocking', 'log', 'week', 'nap', 'meals', 'iphone-today', 'iphone-plan', 'iphone-picks', 'iphone-diet', 'mini-dark', 'mini-light']
 for n in names:
     im = Image.open(os.path.join(src, n + '.png'))
     if not n.startswith('mini'):
