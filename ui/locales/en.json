@@ -32,6 +32,7 @@
   "android_main_find_the_pc_or_enter_its": "Find the PC or enter its address first",
   "android_main_from_the_pc_over_wi_fi": "From the PC over Wi-Fi, {size} MB. Settings and pairing are kept.",
   "android_main_if_the_switch_is_grey_restricted": "If the switch is grey (“Restricted setting”): open App info, tap ⋮ at the top right → “Allow restricted settings”.",
+  "android_main_like_the_pc": "Like the PC",
   "android_main_lock_autolock": "Autolock",
   "android_main_lock_until_or_until_the_plan": "until {day_end} or until the plan is done",
   "android_main_lock_until_start_day_on_the_pc": "until “Start day” on the PC",

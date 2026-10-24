@@ -6,6 +6,8 @@ import android.app.Application
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
-        I18n.pc = Store(this).lang
+        val store = Store(this)
+        I18n.pc = store.lang
+        I18n.fixed = store.langPref.ifEmpty { null }
     }
 }

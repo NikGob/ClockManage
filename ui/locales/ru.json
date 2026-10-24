@@ -32,6 +32,7 @@
   "android_main_find_the_pc_or_enter_its": "Сначала найди ПК или введи адрес",
   "android_main_from_the_pc_over_wi_fi": "С ПК по Wi-Fi, {size} МБ. Настройки и подключение сохранятся.",
   "android_main_if_the_switch_is_grey_restricted": "Если переключатель серый («Ограниченная настройка»): открой «О приложении», нажми ⋮ справа сверху → «Разрешить ограниченные настройки».",
+  "android_main_like_the_pc": "Как на ПК",
   "android_main_lock_autolock": "Автоблокировка",
   "android_main_lock_until_or_until_the_plan": "до {day_end} или до конца плана",
   "android_main_lock_until_start_day_on_the_pc": "до «Начать день» на ПК",

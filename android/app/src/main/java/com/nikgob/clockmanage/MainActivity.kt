@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -197,11 +198,11 @@ class MainActivity : Activity() {
         return col
     }
 
-    /** Status and navigation bars in the screen's colour, with icons that read on it. */
+    /** Status and navigation bars in the screen's colours ([nav] under the gesture bar), with icons that read on them. */
     @Suppress("DEPRECATION")
-    private fun systemBars() {
+    private fun systemBars(nav: Int = p.bg) {
         window.statusBarColor = p.bg
-        window.navigationBarColor = p.bg
+        window.navigationBarColor = nav
         if (Build.VERSION.SDK_INT >= 30) {
             val light = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             window.insetsController?.setSystemBarsAppearance(if (p.dark) 0 else light, light)
@@ -214,6 +215,7 @@ class MainActivity : Activity() {
 
     private fun showPair() {
         ui.removeCallbacks(tick)
+        pages.clear()
         shownRu = I18n.ru
         val col = page()
         col.gravity = Gravity.CENTER_HORIZONTAL
@@ -332,14 +334,146 @@ class MainActivity : Activity() {
         setOnClickListener(onPick)
     }
 
-    // ---------------- timer ----------------
+    // ---------------- the day: four pages under a navigation bar ----------------
+
+    /** The page on screen: 0 today, 1 the plan, 2 blocking, 3 settings. Kept when the screen is built anew. */
+    private var tab = 0
+    private val pages = mutableListOf<View>()
+    /** Per navigation item: its pill indicator, icon and label. */
+    private val navItems = mutableListOf<Triple<View, ImageView, TextView>>()
+
+    /** A horizontal fling flips to the next or previous page. */
+    private val swipe by lazy {
+        android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, vx: Float, vy: Float): Boolean {
+                if (e1 == null || pages.isEmpty()) return false
+                val dx = e2.x - e1.x
+                if (kotlin.math.abs(dx) < dp(80) || kotlin.math.abs(dx) < kotlin.math.abs(e2.y - e1.y) * 2) return false
+                val to = (tab + if (dx < 0) 1 else -1).coerceIn(0, pages.size - 1)
+                if (to != tab) select(to)
+                return to != tab
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (store.paired && pages.isNotEmpty()) swipe.onTouchEvent(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    @Deprecated("Back on another page goes to Today first")
+    override fun onBackPressed() {
+        if (store.paired && pages.isNotEmpty() && tab != 0) select(0) else @Suppress("DEPRECATION") super.onBackPressed()
+    }
 
     private fun showTimer() {
         shownRu = I18n.ru
-        val col = page()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(p.bg)
+        }
+        setContentView(root)
+        window.setBackgroundDrawable(ColorDrawable(p.bg))
+        systemBars(nav = p.card)
+        val frame = FrameLayout(this)
+        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val nav = row().apply { setBackgroundColor(p.card) }
+        root.addWithMargins(nav)
+        // Edge to edge: the pages clear the status bar, the navigation bar reaches under the gesture bar.
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            @Suppress("DEPRECATION")
+            frame.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, 0)
+            @Suppress("DEPRECATION")
+            nav.setPadding(insets.systemWindowInsetLeft, 0, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            insets
+        }
 
-        // The title and the link to the PC, like the PC's top bar.
-        col.addWithMargins(label(tr("main_today"), 28f, p.text), top = dp(12))
+        pages.clear()
+        pages += todayPage()
+        pages += planPage()
+        pages += blockingPage()
+        pages += settingsPage()
+        pages.forEach { frame.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
+        navItems.clear()
+        listOf(
+            R.drawable.ic_timer to tr("main_today"),
+            R.drawable.ic_list to tr("main_plan"),
+            R.drawable.ic_lock to tr("main_blocking"),
+            R.drawable.ic_settings to tr("main_settings"),
+        ).forEachIndexed { i, (icon, text) -> nav.addFill(navItem(i, icon, text)) }
+
+        snap = store.snapshot()
+        shownVersion = ""
+        shownKind = ""
+        shownBlocker = null
+        render()
+        renderBlocker()
+        select(tab, first = true)
+    }
+
+    /** One navigation item, M3 style: the icon in a pill that lights up, the label under it. */
+    private fun navItem(i: Int, icon: Int, text: String): View {
+        val item = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(12), 0, dp(14))
+            setOnClickListener { select(i) }
+        }
+        val pill = FrameLayout(this)
+        val img = iconView(icon, p.muted)
+        pill.addView(img, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+        item.addView(pill, LinearLayout.LayoutParams(dp(64), dp(32)))
+        val name = label(text, 12f, p.muted, bold = true).apply { gravity = Gravity.CENTER; maxLines = 1 }
+        item.addWithMargins(name, top = dp(4))
+        navItems += Triple(pill, img, name)
+        return item
+    }
+
+    private fun select(i: Int, first: Boolean = false) {
+        val changed = i != tab
+        tab = i
+        navItems.forEachIndexed { k, (pill, img, name) ->
+            val on = k == i
+            pill.background = if (on) rounded(p.secondary, dp(16).toFloat()) else null
+            img.imageTintList = ColorStateList.valueOf(if (on) p.onSecondary else p.muted)
+            name.setTextColor(if (on) p.text else p.muted)
+            if (on && changed) {
+                pill.scaleX = 0.5f
+                pill.animate().scaleX(1f).setDuration(300).setInterpolator(android.view.animation.OvershootInterpolator(1.5f)).start()
+            }
+        }
+        pages.forEachIndexed { k, v -> v.visibility = if (k == i) View.VISIBLE else View.GONE }
+        val page = pages[i]
+        if (first) {
+            // The screen opens in a cascade.
+            val col = (page as ViewGroup).getChildAt(0) as ViewGroup
+            (0 until col.childCount).forEach { col.getChildAt(it).riseIn(it * 45L) }
+        } else if (changed) {
+            page.alpha = 0f
+            page.translationY = dp(12).toFloat()
+            page.animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        }
+        if (i == 2) renderBlocker()
+    }
+
+    /** A page: a column that scrolls when it is taller than the screen, its title on top. */
+    private fun scrollPage(title: String?): Pair<ScrollView, LinearLayout> {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(16))
+        }
+        if (title != null) col.addWithMargins(label(title, 28f, p.text), top = dp(12))
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            addView(col)
+        }
+        return scroll to col
+    }
+
+    /** Today: the link to the PC, an update when there is one, and the timer card filling the page. */
+    private fun todayPage(): View {
+        val (page, col) = scrollPage(tr("main_today"))
         val link = row()
         statusDot = dot(p.primary)
         status = label("", 13f, p.muted)
@@ -356,7 +490,8 @@ class MainActivity : Activity() {
         col.addWithMargins(updateBox, top = dp(16))
         col.smoothChanges()
 
-        // The timer card, like the PC's: the lock on top, the dial with the time, the buttons.
+        // The timer card, like the PC's: the lock on top, the dial, the title and the buttons in
+        // the middle of what is left of the page.
         hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(20), dp(20), dp(24))
@@ -372,6 +507,7 @@ class MainActivity : Activity() {
         lockRow.addFill(lockText, start = dp(10))
         hero.addWithMargins(lockRow)
 
+        hero.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
         dial = Dial(this)
         hero.addWithMargins(dial, top = dp(16))
         title = label("", 24f, p.text).apply { gravity = Gravity.CENTER }
@@ -380,18 +516,31 @@ class MainActivity : Activity() {
         hero.addWithMargins(sub, top = dp(4))
         actions = Flow(this)
         hero.addWithMargins(actions, top = dp(20))
-        col.addWithMargins(hero, top = dp(16))
+        hero.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        col.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(16) })
+        return page
+    }
 
-        val plan = card(p)
-        plan.addWithMargins(label(tr("main_day_plan"), 22f, p.text))
+    /** The plan: how much of the day's study is done, and the blocks. */
+    private fun planPage(): View {
+        val (page, col) = scrollPage(tr("main_day_plan"))
         total = label("", 14f, p.muted, bold = true)
-        plan.addWithMargins(total, top = dp(4))
+        col.addWithMargins(total, top = dp(4))
         totalBar = Bar(this).apply { colors(p.primary, p.outlineVariant) }
-        plan.addWithMargins(totalBar, top = dp(10))
-        rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        plan.addWithMargins(rows, top = dp(8))
-        col.addWithMargins(plan, top = dp(12))
+        col.addWithMargins(totalBar, top = dp(10))
+        // Little padding on the card: the current block's highlight reaches almost to its edges.
+        rows = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.card, dp(28).toFloat())
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        col.addWithMargins(rows, top = dp(16))
+        return page
+    }
 
+    /** Blocking on the phone: whether it works (or how to turn it on) and the blocked apps. */
+    private fun blockingPage(): View {
+        val (page, col) = scrollPage(tr("main_blocking"))
         val bl = card(p)
         val blHead = row()
         blHead.addView(iconView(R.drawable.ic_shield, p.primary))
@@ -403,11 +552,45 @@ class MainActivity : Activity() {
         bl.addWithMargins(blocker, top = dp(12))
         steps = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         bl.addWithMargins(steps)
-        appsBtn = pill(tr("blocking_apps"), p, "tonal", R.drawable.ic_phone) { startActivity(Intent(this, AppsActivity::class.java)) }
-        bl.addWithMargins(appsBtn, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
+        col.addWithMargins(bl, top = dp(16))
+
+        val apps = card(p)
+        val appsHead = row()
+        appsHead.addView(iconView(R.drawable.ic_phone, p.primary))
+        appsHead.addFill(label(tr("blocking_phone_apps"), 18f, p.text), start = dp(12))
+        apps.addWithMargins(appsHead)
+        apps.addWithMargins(label(tr("android_apps_during_study_the_checked_apps_close"), 14f, p.muted), top = dp(12))
+        appsBtn = pill(tr("blocking_apps"), p, "tonal") { startActivity(Intent(this, AppsActivity::class.java)) }
+        apps.addWithMargins(appsBtn, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
+        col.addWithMargins(apps, top = dp(12))
+        return page
+    }
+
+    /** Settings: the PC, notifications, the language and the version. */
+    private fun settingsPage(): View {
+        val (page, col) = scrollPage(tr("main_settings"))
+
+        val pc = card(p)
+        val pcHead = row()
+        pcHead.addView(iconView(R.drawable.ic_computer, p.primary))
+        val pcText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        pcText.addView(label(store.pcName.ifEmpty { store.host }, 18f, p.text))
+        pcText.addView(label("${store.host}:${store.port}", 13f, p.muted))
+        pcHead.addFill(pcText, start = dp(12))
+        pc.addWithMargins(pcHead)
+        pc.addWithMargins(pill(tr("android_main_unpair_from_the_pc"), p, "outlined", R.drawable.ic_logout) {
+            store.forget()
+            store.host = ""
+            Sync.stopLive("app")
+            pages.clear()
+            showPair()
+        }, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
+        col.addWithMargins(pc, top = dp(16))
+
+        val notifyCard = card(p)
         val notify = Switch(this).apply {
             text = tr("android_main_notifications_the_countdown_in_the_shade")
-            textSize = 14f
+            textSize = 16f
             setTextColor(p.text)
             val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
             thumbTintList = ColorStateList(states, intArrayOf(p.onPrimary, p.outline))
@@ -418,31 +601,42 @@ class MainActivity : Activity() {
                 store.snapshot()?.let { Alarms.schedule(this@MainActivity, it) }
             }
         }
-        bl.addWithMargins(notify, top = dp(12))
-        col.addWithMargins(bl, top = dp(12))
+        notifyCard.addWithMargins(notify)
+        col.addWithMargins(notifyCard, top = dp(12))
 
-        // The version (tap: look for an update now) and unpairing.
-        val foot = row()
-        foot.addFill(label(tr("android_main_version", "v" to Updater.currentName(this)), 12f, p.muted).apply {
-            setPadding(dp(4), dp(12), 0, dp(12))
-            setOnClickListener { checkUpdate(true); Toast.makeText(this@MainActivity, tr("android_main_checking_the_pc_for_an_update"), Toast.LENGTH_SHORT).show() }
-        })
-        foot.addView(pill(tr("android_main_unpair_from_the_pc"), p, "text", R.drawable.ic_logout) {
-            store.forget()
-            store.host = ""
-            Sync.stopLive("app")
-            showPair()
-        })
-        col.addWithMargins(foot, top = dp(8))
+        // The language: like the PC (its interface language; the phone's own before pairing or
+        // with an older PC), or a fixed one. The language names are written in their own language.
+        val langCard = card(p)
+        langCard.addWithMargins(label(tr("settings_language"), 18f, p.text))
+        val choices = Flow(this)
+        listOf("" to tr("android_main_like_the_pc"), "ru" to "Русский", "en" to "English").forEach { (code, name) ->
+            val on = store.langPref == code
+            val chip = pillIn(name, if (on) p.secondary else Color.TRANSPARENT, if (on) p.onSecondary else p.text, if (on) 0 else p.outline, if (on) R.drawable.ic_check else 0) {
+                if (store.langPref == code) return@pillIn
+                store.langPref = code
+                I18n.fixed = code.ifEmpty { null }
+                Alarms.channels(this)
+                store.snapshot()?.let { Alarms.schedule(this, it) }
+                showTimer()
+            }
+            chip.minHeight = dp(40)
+            chip.minimumHeight = dp(40)
+            choices.addView(chip)
+        }
+        langCard.addWithMargins(choices, top = dp(12))
+        col.addWithMargins(langCard, top = dp(12))
 
-        snap = store.snapshot()
-        shownVersion = ""
-        shownKind = ""
-        shownBlocker = null
-        render()
-        renderBlocker()
-        // The screen opens in a cascade.
-        (0 until col.childCount).forEach { col.getChildAt(it).riseIn(it * 45L) }
+        val about = card(p)
+        val aboutHead = row()
+        aboutHead.addFill(label(tr("android_main_version", "v" to Updater.currentName(this)), 16f, p.text))
+        aboutHead.addView(pill(tr("settings_check"), p, "tonal") {
+            checkUpdate(true)
+            Toast.makeText(this, tr("android_main_checking_the_pc_for_an_update"), Toast.LENGTH_SHORT).show()
+            select(0)
+        })
+        about.addWithMargins(aboutHead)
+        col.addWithMargins(about, top = dp(12))
+        return page
     }
 
     private fun renderBlocker() {
@@ -716,12 +910,11 @@ class MainActivity : Activity() {
     private fun buildRows(s: Snapshot, current: Int?) {
         rows.removeAllViews()
         rowViews.clear()
-        if (s.blocks.isEmpty()) rows.addWithMargins(label(tr("android_main_todays_plan_is_empty_make_it"), 14f, p.muted), top = dp(8))
+        if (s.blocks.isEmpty()) rows.addWithMargins(label(tr("android_main_todays_plan_is_empty_make_it"), 14f, p.muted).apply { setPadding(dp(12), dp(12), dp(12), dp(12)) })
         val editable = s.canEditPlan && Sync.online
         s.blocks.forEachIndexed { i, b ->
             val now = i == current && !b.done
-            // The block running now stands out, like the PC's highlighted row; the rows reach
-            // a little past the card's padding so the highlight has room around the text.
+            // The block running now stands out, like the PC's highlighted row.
             val item = row().apply {
                 setPadding(dp(12), dp(10), dp(12), dp(10))
                 if (now) background = rounded(p.secondary, dp(20).toFloat())
@@ -751,11 +944,7 @@ class MainActivity : Activity() {
                 }
                 item.addView(step, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) })
             }
-            rows.addView(item, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(4)
-                marginStart = -dp(12)
-                marginEnd = -dp(12)
-            })
+            rows.addWithMargins(item, top = if (i == 0) 0 else dp(4))
             rowViews += meta to bar
         }
     }

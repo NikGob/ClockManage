@@ -25,6 +25,8 @@ class Store(ctx: Context) {
     val theme: String? get() = p.getString("theme", null)
     /** The PC's interface language (`lang` of the state): the app speaks it too. */
     val lang: String? get() = p.getString("lang", null)
+    /** The language chosen in the app's settings ("ru", "en"); empty: like the PC. */
+    var langPref: String get() = p.getString("lang_pref", "") ?: ""; set(v) = p.edit().putString("lang_pref", v).apply()
 
     /** PC clock minus phone clock, measured on every sync. */
     var offset: Long get() = p.getLong("offset", 0); private set(v) = p.edit().putLong("offset", v).apply()
