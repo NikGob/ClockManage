@@ -1,7 +1,7 @@
 import { call, esc, minutes } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { doodle, play } from '../doodles.js';
-import { run, snack, dateLabel, kindLabel, countUp, WEEKDAYS } from '../ui.js';
+import { run, snack, dateLabel, kindLabel, WEEKDAYS } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
 
 const fmtMin = (m) => minutes(Math.round(m));
@@ -13,7 +13,7 @@ export function mountLog(root, ctx) {
   let mode = 'days';
   let weekOf = null; // any date of the shown week; null = this week
   let weekTsv = '';
-  let weekTotalShown = null;
+  let weekReq = 0; // the latest week asked for: an older answer arriving late is dropped
   const DAYS_HTML = `<div class="log" id="log">
       <section class="surface days" aria-label="${tr('log_days')}"><div id="days" role="listbox" aria-label="${tr('log_days')}"></div></section>
       <section class="surface detail" id="detail" aria-live="polite"></section>
@@ -108,29 +108,33 @@ export function mountLog(root, ctx) {
   };
 
   async function loadWeek() {
+    const req = ++weekReq;
     let r;
-    try { r = await call('week_stats', { date: weekOf }); } catch (e) { $('logbody').innerHTML = `<p class="body-l">${esc(e)}</p>`; return; }
+    try { r = await call('week_stats', { date: weekOf }); } catch (e) { if (req === weekReq) $('logbody').innerHTML = `<p class="body-l">${esc(e)}</p>`; return; }
+    if (req !== weekReq || mode !== 'week') return;
     const w = r.week;
     weekTsv = r.tsv;
     const today = localIso();
-    const head = w.days.map((d, i) => `<th class="r${d === today ? ' is-today' : ''}">${WEEKDAYS[i]}<br><span class="muted">${d.slice(8, 10)}</span></th>`).join('');
+    // Days of time off carry its mark under the date.
+    const off = w.time_off || [];
+    const head = w.days.map((d, i) => `<th class="r${d === today ? ' is-today' : ''}"${off[i] ? ` data-tip="${tr('settings_time_off')}"` : ''}>${WEEKDAYS[i]}<br><span class="muted">${d.slice(8, 10)}</span>${off[i] ? `<span style="display:flex;justify-content:flex-end">${icon('weekend', 's18')}</span>` : ''}</th>`).join('');
     const rows = w.subjects.map((s) => `<tr><td>${esc(s.name)}</td>${s.hours.map((h) => `<td class="r tnum">${hours(h)}</td>`).join('')}<td class="r tnum"><b>${hours(s.total)}</b></td></tr>`).join('');
     $('logbody').innerHTML = `<section class="surface week-card">
       <div class="wk-nav">
         <button class="icon-btn interactive" data-week="-7" aria-label="${tr('log_previous_week')}">${icon('up')}</button>
         <h2 class="title-l">${esc(shortDate(w.days[0]))} – ${esc(shortDate(w.days[6]))}</h2>
         <button class="icon-btn interactive" data-week="7" aria-label="${tr('log_next_week')}">${icon('down')}</button>
+        ${off.some(Boolean) ? `<span class="chip input">${icon('weekend')}${tr('settings_time_off')}</span>` : ''}
         <span class="grow"></span>
         <button class="btn tonal interactive" data-copy-week ${w.subjects.length ? '' : 'disabled'}>${icon('copy')}${tr('log_copy_as_a_table')}</button>
       </div>
       ${w.subjects.length ? `<div class="scroll-x"><table class="t wk-t"><thead><tr><th>${tr('stats_subject')}</th>${head}<th class="r">${tr('stats_tsv_total_row')}</th></tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr><td><b>${tr('stats_tsv_total_row')}</b></td>${w.day_totals.map((h) => `<td class="r tnum"><b>${hours(h)}</b></td>`).join('')}<td class="r tnum"><b id="wk-total">${hours(w.total)}</b></td></tr></tfoot></table></div>
+        <tfoot><tr><td><b>${tr('stats_tsv_total_row')}</b></td>${w.day_totals.map((h) => `<td class="r tnum"><b>${hours(h)}</b></td>`).join('')}<td class="r tnum"><b>${hours(w.total)}</b></td></tr></tfoot></table></div>
         <p class="body-s muted">${tr('log_journal_hours_every_block_is_rounded')} ${fmtMin(w.actual_min)}${tr('log_lunch_naps_and_other_segments_are')}</p>`
-        : `<p class="body-l muted">${tr('log_no_study_hours_this_week')}</p>`}
+        : `<p class="body-l muted">${off.every(Boolean) ? tr('log_time_off_no_study_and_no') : tr('log_no_study_hours_this_week')}</p>`}
     </section>`;
     $('logbody').querySelectorAll('[data-week]').forEach((b) => b.querySelector('svg')?.style.setProperty('transform', 'rotate(-90deg)'));
-    if (weekTotalShown !== w.total) { countUp($('wk-total'), w.total, hours); weekTotalShown = w.total; }
   }
 
   function setMode(m) {

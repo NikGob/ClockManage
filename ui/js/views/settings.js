@@ -1,7 +1,7 @@
 import { call, esc, hm as clock, LINUX } from '../api.js';
 import { icon, CHECK } from '../icons.js';
 import { applyTheme } from '../theme.js';
-import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm } from '../ui.js';
+import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm, isoShift, rangeLabel } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
 import { NIKGOB } from '../logo.js';
 
@@ -17,6 +17,7 @@ const TIP = {
   dayEnd: tr('settings_when_the_lock_lifts_by_itself'),
   night: tr('settings_at_night_start_day_works_only'),
   autolock: tr('settings_sites_apps_and_the_phone_are'),
+  timeOff: tr('settings_every_day_of_time_off_is'),
   seg: tr('settings_a_block_is_cut_into_parts'),
   short: tr('settings_rest_between_the_parts_of_one'),
   between: tr('settings_rest_after_a_closed_block_before'),
@@ -98,6 +99,54 @@ export function mountSettings(root, ctx) {
     </div>`;
   };
 
+  // The dates typed for new time off survive a re-render until they are added.
+  let offFrom = null;
+  let offTo = null;
+
+  function timeOffRows(v) {
+    // Past time off stays in the config for the journal; here only what isn't over yet.
+    const now = cfg.time_off.filter((t) => t.to >= v.date);
+    const chips = now.map((t) => `<span class="chip input removable">${esc(rangeLabel(t.from, t.to))}<button class="x interactive" data-off-del="${t.from}" aria-label="${esc(tr('settings_take_out_time_off', { range: rangeLabel(t.from, t.to) }))}">${icon('close')}</button></span>`).join('');
+    const from = offFrom || v.date;
+    const to = offTo && offTo >= from ? offTo : isoShift(from, 6);
+    return `<div class="setting time-off">
+        <span class="badge">${icon('weekend')}</span>
+        <div class="grow"><div class="t">${tr('settings_time_off')}${info('timeOff')}</div>
+          ${now.length ? `<div class="chips">${chips}</div>` : `<div class="d">${tr('settings_pick_days_to_rest_from_study')}</div>`}</div>
+      </div>
+      <div class="setting sub">
+        <span class="t">${tr('settings_from')}</span>
+        <div class="field"><input type="date" id="off-from" value="${from}" min="${v.date}" aria-label="${tr('settings_first_day_of_time_off')}"></div>
+        <span class="t">${tr('settings_to')}</span>
+        <div class="field"><input type="date" id="off-to" value="${to}" min="${from}" aria-label="${tr('settings_last_day_of_time_off')}"></div>
+        <span class="grow"></span>
+        <button class="btn tonal interactive" id="off-add">${icon('add')}${tr('blocking_add')}</button>
+      </div>`;
+  }
+
+  async function addTimeOff() {
+    const v = last.view;
+    const from = box.querySelector('#off-from')?.value;
+    const to = box.querySelector('#off-to')?.value;
+    if (!from || !to) { snack(tr('settings_pick_both_dates')); return; }
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    if (b < v.date) { snack(tr('settings_these_days_have_passed')); return; }
+    pulse = '#off-add';
+    const ok = await save((c) => { c.time_off = [...c.time_off, { from: a, to: b }]; });
+    if (!ok) return;
+    offFrom = offTo = null;
+    render();
+    // Today follows unless its day already runs (or the autolock holds it).
+    if (a > v.date || b < v.date) snack(tr('settings_time_off_saved', { range: rangeLabel(a, b) }));
+    else if (!v.started && v.can.lighter_kind) snack(tr('settings_time_off_from_today_today_is'));
+    else snack(tr('settings_today_stays_as_it_is_time'));
+  }
+
+  function dropTimeOff(from) {
+    const t = cfg.time_off.find((x) => x.from === from);
+    if (t) save((c) => { c.time_off = c.time_off.filter((x) => x.from !== from); }, tr('settings_time_off_taken_out', { range: rangeLabel(t.from, t.to) }));
+  }
+
   function weekSection(locked, todayIdx) {
     const tiles = WEEKDAYS.map((d, i) => {
       const k = cfg.week[i];
@@ -125,6 +174,7 @@ export function mountSettings(root, ctx) {
               <span class="grow"></span><span>${locked ? tr('settings_today_is_running_changes_apply_to') : tr('settings_click_a_day_to_pick_its')}</span></div>
           </div>
           ${profiles}
+          ${timeOffRows(last.view)}
         </div>
       </section>`;
   }
@@ -314,7 +364,7 @@ export function mountSettings(root, ctx) {
         <p class="section-d">${tr('settings_a_local_server_for_claude_it')}</p>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_local_mcp_server')}</div>
-            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock, get_settings, set_settings${cfg.meals.enabled ? ', get_diet, set_diet, food_search, food_menu, set_meal_options' : ''}.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
+            <div class="d">${m.mcp.running ? `${tr('settings_running_on')} 127.0.0.1:${m.mcp.port}` : m.mcp.enabled ? `${tr('settings_mcp_not_running')}${m.mcp.error ? ': ' + esc(m.mcp.error) : ''}` : tr('settings_mcp_off')}. ${tr('settings_tools')}: get_session_state, get_today_stats, get_week_stats, get_plan, set_plan, set_template, set_week_schedule, set_day_end, set_night_start, set_autolock, set_time_off, set_block_note, finish_block, get_blocklist, add_to_blocklist, remove_from_blocklist, start_focus_lock, get_settings, set_settings${cfg.meals.enabled ? ', get_diet, set_diet, food_search, food_menu, set_meal_options' : ''}.</div></div>${sw('mcp_enabled', cfg.mcp_enabled, tr('settings_mcp_server'), 'mcp')}</div>
           <div class="setting col">
             <div class="t">${tr('settings_address')}</div>
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
@@ -437,7 +487,12 @@ export function mountSettings(root, ctx) {
 
   box.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.dataset.sw) {
+    if (t.id === 'off-from' || t.id === 'off-to') {
+      if (t.id === 'off-from') offFrom = t.value || null; else offTo = t.value || null;
+      // The last day follows the first: never before it.
+      const to = box.querySelector('#off-to');
+      if (to && offFrom) { to.min = offFrom; if (to.value < offFrom) { to.value = offFrom; offTo = offFrom; } }
+    } else if (t.dataset.sw) {
       pulse = `[data-sw="${t.dataset.sw}"]`;
       save((c) => setPath(c, t.dataset.sw, t.checked));
     } else if (t.dataset.segname !== undefined) {
@@ -491,6 +546,8 @@ export function mountSettings(root, ctx) {
     const t = e.target.closest('button');
     if (!t) return;
     if (t.dataset.day !== undefined) pickKind(t);
+    else if (t.id === 'off-add') addTimeOff();
+    else if (t.dataset.offDel) dropTimeOff(t.dataset.offDel);
     else if (t.dataset.step) {
       const path = t.dataset.step;
       pulse = `[data-step="${path}"][data-d="${t.dataset.d}"]`;

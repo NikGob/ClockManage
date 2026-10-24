@@ -658,7 +658,7 @@ impl DayState {
         Self {
             date,
             kind,
-            study_day: cfg.profile(kind).block,
+            study_day: cfg.blocks_on(kind, date),
             progress: vec![BlockProgress::default(); plan.len()],
             plan,
             timing: cfg.timing.clone(),
@@ -747,7 +747,7 @@ impl DayState {
     /// Whether a day not started yet is a study day by its profile. Once the autolock went on
     /// it stays one: turning the profile's lock off only shapes the days ahead.
     pub fn blocks_by_profile(&self, cfg: &Config) -> bool {
-        cfg.profile(self.kind).block || self.autolock.is_some()
+        cfg.blocks_on(self.kind, self.date) || self.autolock.is_some()
     }
 
     /// 0 = Monday, of the study day itself (after midnight it may still be yesterday's day).
@@ -1645,13 +1645,14 @@ impl DayState {
         if locked && kind < self.kind {
             return Err(tr!("day_during_the_study_day_the_day", kind = kind.label()));
         }
-        let profile = cfg.profile(kind);
+        let template = cfg.template_on(kind, self.date);
+        let blocks = cfg.blocks_on(kind, self.date);
         let from = self.kind;
         if self.started_at.is_none() {
-            self.set_plan(now, profile.plan.clone(), false)?;
+            self.set_plan(now, template.clone(), false)?;
         } else {
             let mut plan = self.plan.clone();
-            for b in &profile.plan {
+            for b in template {
                 match plan.iter_mut().find(|p| same_name(&p.name, &b.name) && p.kind == b.kind) {
                     Some(p) => p.minutes = p.minutes.max(b.minutes),
                     None => plan.push(b.clone()),
@@ -1662,7 +1663,7 @@ impl DayState {
             }
         }
         self.kind = kind;
-        self.study_day = if locked { self.study_day || profile.block } else { profile.block };
+        self.study_day = if locked { self.study_day || blocks } else { blocks };
         self.log(now, "kind", tr!("day_day", from = from.label(), kind = kind.label()));
         Ok(())
     }
@@ -2436,6 +2437,60 @@ mod tests {
         assert_eq!((d.kind, d.plan.clone()), (DayKind::Full, vec![PlanBlock::new("Словацкий", 120)]));
         assert!(c.drop_overrides_through(d.date));
         assert!(c.plan_overrides.is_empty());
+    }
+
+    #[test]
+    fn time_off_is_days_off_with_no_plan_and_no_lock() {
+        let mut c = cfg();
+        let day = |d: u32| NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        // Wednesday through the next Monday.
+        c.edit_time_off(false, day(12), day(7));
+        c.plan_overrides.insert(day(8), vec![PlanBlock::new("Словацкий", 120)]);
+        // Even a day-off profile that blocks and has a plan.
+        c.profiles.off = crate::config::DayProfile { plan: vec![PlanBlock::new("Чтение", 30)], block: true, ..Default::default() };
+        c.normalize();
+        for at in ["2026-10-07T06:00:00Z", "2026-10-08T06:00:00Z", "2026-10-11T06:00:00Z", "2026-10-12T06:00:00Z"] {
+            let now = t(at);
+            let d = DayState::new(now, &c);
+            assert!(c.is_time_off(d.date), "{at}");
+            assert_eq!((d.kind, d.plan.len(), d.study_day), (DayKind::Off, 0, false), "{at}");
+            assert_eq!(d.autolock_due(now, &c), None);
+        }
+        // Today taken to Full by hand studies as usual; back to a day off, nothing again.
+        let now = t("2026-10-07T06:00:00Z");
+        let mut d = DayState::new(now, &c);
+        d.set_kind(now, &c, DayKind::Full, false).unwrap();
+        assert_eq!((d.plan.clone(), d.study_day), (c.profiles.full.plan.clone(), true));
+        d.set_kind(now, &c, DayKind::Off, false).unwrap();
+        assert_eq!((d.plan.len(), d.study_day), (0, false));
+        // The days around follow the schedule; the plan set ahead comes back with it.
+        assert_eq!(DayState::new(t("2026-10-06T06:00:00Z"), &c).kind, DayKind::Full);
+        assert_eq!(DayState::new(t("2026-10-13T06:00:00Z"), &c).kind, DayKind::Full);
+        c.edit_time_off(true, day(8), day(8));
+        assert_eq!(DayState::new(t("2026-10-08T06:00:00Z"), &c).plan, vec![PlanBlock::new("Словацкий", 120)]);
+        assert!(c.is_time_off(day(7)) && c.is_time_off(day(9)));
+    }
+
+    #[test]
+    fn time_off_merges_splits_and_keeps_its_limits() {
+        let mut c = cfg();
+        let day = |m: u32, d: u32| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        let off = |a: NaiveDate, b: NaiveDate| crate::config::TimeOff { from: a, to: b };
+        c.edit_time_off(false, day(10, 5), day(10, 9));
+        c.edit_time_off(false, day(10, 10), day(10, 12)); // adjacent: one stretch
+        c.edit_time_off(false, day(11, 1), day(11, 3));
+        assert_eq!(c.time_off, vec![off(day(10, 5), day(10, 12)), off(day(11, 1), day(11, 3))]);
+        c.edit_time_off(true, day(10, 8), day(10, 9)); // cut in the middle: two stretches
+        assert_eq!(c.time_off[..2], [off(day(10, 5), day(10, 7)), off(day(10, 10), day(10, 12))]);
+        c.edit_time_off(true, day(10, 1), day(10, 31));
+        assert_eq!(c.time_off, vec![off(day(11, 1), day(11, 3))]);
+        // A stretch from an edited config.json: turned around and cut to a year.
+        c.time_off = vec![off(day(12, 31), day(12, 1)), off(day(1, 1), day(1, 1) + chrono::Duration::days(500))];
+        c.normalize();
+        assert_eq!(c.time_off[0], off(day(1, 1), day(1, 1) + chrono::Duration::days(crate::config::MAX_TIME_OFF_DAYS - 1)));
+        assert_eq!(c.time_off.len(), 1); // the year covers December too
+        let back: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.time_off, c.time_off);
     }
 
     #[test]

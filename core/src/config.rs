@@ -253,6 +253,25 @@ pub const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"
 /// How many days ahead a plan may be set for one date.
 pub const MAX_PLAN_AHEAD_DAYS: i64 = 60;
 
+/// How many stretches of time off the config keeps (the oldest go first).
+pub const MAX_TIME_OFF: usize = 52;
+/// The longest stretch of time off, days.
+pub const MAX_TIME_OFF_DAYS: i64 = 366;
+
+/// A rest from study, `from` through `to` (both days included): every day of it is a day off
+/// with no plan, no lock and no autolock.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TimeOff {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+}
+
+impl TimeOff {
+    pub fn contains(&self, date: NaiveDate) -> bool {
+        self.from <= date && date <= self.to
+    }
+}
+
 /// A phone paired over the local network.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
@@ -454,6 +473,9 @@ pub struct Config {
     /// Plans set ahead for particular dates (MCP `set_plan` with `date`): that day starts with
     /// it instead of its profile's template. Dropped once that date's day exists.
     pub plan_overrides: BTreeMap<NaiveDate, Vec<PlanBlock>>,
+    /// Time off: every day of it is a day off with no plan, no lock and no autolock, whatever the
+    /// week schedule says. Sorted, never overlapping; past ones stay for the journal.
+    pub time_off: Vec<TimeOff>,
     /// Diet, address, meal times and the paired iPhone web app.
     pub meals: crate::meals::Meals,
     /// Before profiles (0.1.x): study day flags, migrated into `week` by `normalize`.
@@ -502,6 +524,7 @@ impl Default for Config {
             phone: Phone::default(),
             night_start: NightStart::default(),
             plan_overrides: BTreeMap::new(),
+            time_off: vec![],
             meals: crate::meals::Meals::default(),
             study_days: None,
             plan_template: None,
@@ -522,14 +545,90 @@ impl Config {
         self.profiles.get(k)
     }
 
-    /// Kind of a day on `date` by the week schedule.
+    /// The time off `date` falls in.
+    pub fn time_off_on(&self, date: NaiveDate) -> Option<&TimeOff> {
+        self.time_off.iter().find(|t| t.contains(date))
+    }
+
+    pub fn is_time_off(&self, date: NaiveDate) -> bool {
+        self.time_off_on(date).is_some()
+    }
+
+    /// Add `from..=to` to the time off (merged with what it touches), or take it out (a stretch
+    /// it cuts in two stays as two). Normalized like the settings; the lock rules are the caller's.
+    pub fn edit_time_off(&mut self, remove: bool, from: NaiveDate, to: NaiveDate) {
+        let (from, to) = (from.min(to), from.max(to));
+        if remove {
+            let mut left = vec![];
+            for t in &self.time_off {
+                if t.to < from || t.from > to {
+                    left.push(*t);
+                    continue;
+                }
+                if t.from < from {
+                    left.push(TimeOff { from: t.from, to: from.pred_opt().unwrap_or(from) });
+                }
+                if t.to > to {
+                    left.push(TimeOff { from: to.succ_opt().unwrap_or(to), to: t.to });
+                }
+            }
+            self.time_off = left;
+        } else {
+            self.time_off.push(TimeOff { from, to });
+        }
+        self.normalize_time_off();
+    }
+
+    /// Sorted, each at most [`MAX_TIME_OFF_DAYS`] long, overlapping and adjacent ones merged.
+    fn normalize_time_off(&mut self) {
+        let mut v: Vec<TimeOff> = self
+            .time_off
+            .iter()
+            .map(|t| {
+                let (from, to) = (t.from.min(t.to), t.from.max(t.to));
+                TimeOff { from, to: to.min(from + chrono::Duration::days(MAX_TIME_OFF_DAYS - 1)) }
+            })
+            .collect();
+        v.sort();
+        let mut out: Vec<TimeOff> = vec![];
+        for t in v {
+            match out.last_mut() {
+                Some(last) if t.from <= last.to + chrono::Duration::days(1) => last.to = last.to.max(t.to),
+                _ => out.push(t),
+            }
+        }
+        if out.len() > MAX_TIME_OFF {
+            out.drain(..out.len() - MAX_TIME_OFF);
+        }
+        self.time_off = out;
+    }
+
+    /// Kind of a day on `date` by the week schedule; a day off all through time off.
     pub fn kind_on(&self, date: NaiveDate) -> DayKind {
+        if self.is_time_off(date) {
+            return DayKind::Off;
+        }
         self.week[date.weekday().num_days_from_monday() as usize]
     }
 
     /// The plan a day on `date` starts with: the one set ahead for that date, else the template.
     pub fn plan_on(&self, date: NaiveDate) -> &Vec<PlanBlock> {
-        self.plan_overrides.get(&date).unwrap_or(&self.profile(self.kind_on(date)).plan)
+        self.plan_overrides.get(&date).filter(|_| !self.is_time_off(date)).unwrap_or(self.template_on(self.kind_on(date), date))
+    }
+
+    /// The template a day of `kind` on `date` starts with: none for a day off in time off.
+    pub fn template_on(&self, kind: DayKind, date: NaiveDate) -> &Vec<PlanBlock> {
+        static NONE: Vec<PlanBlock> = Vec::new();
+        if kind == DayKind::Off && self.is_time_off(date) {
+            return &NONE;
+        }
+        &self.profile(kind).plan
+    }
+
+    /// "Начать день" turns on the lock for a day of `kind` on `date`: never on a day off in time
+    /// off, whatever its profile says.
+    pub fn blocks_on(&self, kind: DayKind, date: NaiveDate) -> bool {
+        self.profile(kind).block && !(kind == DayKind::Off && self.is_time_off(date))
     }
 
     /// Drop plans set ahead for `date` and earlier: those days have their own plan now.
@@ -606,6 +705,7 @@ impl Config {
             plan.truncate(16);
         }
         self.plan_overrides.retain(|_, p| !p.is_empty());
+        self.normalize_time_off();
         while self.plan_overrides.len() > MAX_PLAN_AHEAD_DAYS as usize {
             self.plan_overrides.pop_last();
         }

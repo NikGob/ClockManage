@@ -16,6 +16,8 @@ let update = q.get('update') || 'latest';
 const cfg = {
   week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
   night_start: { enabled: true, until_min: 300, after_day_end: true, hold_sec: 2 }, lang: q.get('lang') || 'auto',
+  // ?off=1: time off takes in today.
+  time_off: q.get('off') === '1' ? [{ from: '2026-09-26', to: '2026-10-04' }] : [{ from: '2026-10-19', to: '2026-10-25' }],
   profiles: {
     full: { plan: [{ name: L('Математика', 'Math'), minutes: 90 }, { name: L('Словацкий', 'Spanish'), minutes: 90 }, { name: L('Экстернат', 'Thesis'), minutes: 150 }], block: true, autolock: true, autolock_min: 780 },
     light: { plan: [{ name: L('Математика', 'Math'), minutes: 60 }, { name: L('Словацкий', 'Spanish'), minutes: 60 }], block: true, autolock: true, autolock_min: 780 },
@@ -38,7 +40,7 @@ const cfg = {
   },
   appearance: { seed: q.get('seed') || '#2E7D32', mode: q.get('mode') || 'system', variant: q.get('variant') || 'fidelity', mini_contrast: q.get('contrast') === '1' },
 };
-let kind = q.get('kind') || 'full';
+let kind = q.get('kind') || (q.get('off') === '1' ? 'off' : 'full');
 const W = 'https://wolt.com/en/fin/helsinki/restaurant/';
 const mealPicks = {
   at: t0 - 4 * MIN, meal: '13:00', kind: 'lunch', service: 'Wolt',
@@ -142,7 +144,7 @@ function snapshot() {
           : { blocked: true, base: true, reason: 'study', until: null, focus_until };
   return {
     view: {
-      now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, started, completed: STATE === 'done', after_day_end: false, night_hold_sec: cfg.night_start.hold_sec, mode: 'plan',
+      now, date: '2026-09-28', weekday: 0, study_day: kind !== 'off', kind, time_off: cfg.time_off.find((t) => t.from <= '2026-09-28' && '2026-09-28' <= t.to) || null, started, completed: STATE === 'done', after_day_end: false, night_hold_sec: cfg.night_start.hold_sec, mode: 'plan',
       day_end: `${String(Math.floor(dayEnd / 60) % 24).padStart(2, '0')}:${String(dayEnd % 60).padStart(2, '0')}`, day_end_min: dayEnd, now_min: 17 * 60 + 5, day_end_base: '22:00',
       day_end_at: dayEndAt(), day_end_next_day: dayEnd >= 1440, day_end_changed: dayEnd !== 1320, forecast: forecast(now, b),
       phase: p, blocks: b, planned_ms: 330 * MIN, work_ms: b.reduce((a, x) => a + x.work_ms, 0), lock, autolock,
@@ -222,7 +224,7 @@ export async function invoke(cmd, args) {
     case 'week_stats': return {
       week: { week_start: '2026-09-28', days: ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'],
         subjects: [{ name: L('Математика', 'Math'), hours: [1.5, 1.5, 0.75, 1.5, 1.25, 0, 0], total: 6.5 }, { name: L('Словацкий', 'Spanish'), hours: [0.75, 1.5, 1, 0, 1.5, 0, 0], total: 4.75 }, { name: L('Экстернат', 'Thesis'), hours: [0, 2.25, 0, 2.5, 1.75, 0, 0], total: 6.5 }],
-        day_totals: [2.25, 5.25, 1.75, 4, 4.5, 0, 0], total: 17.75, actual_min: 1104.6 },
+        day_totals: [2.25, 5.25, 1.75, 4, 4.5, 0, 0], total: 17.75, actual_min: 1104.6, time_off: ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'].map((d) => cfg.time_off.some((t) => t.from <= d && d <= t.to)) },
       tsv: L('Предмет\t28.09\n', 'Subject\t28.09\n') };
     case 'set_block_note': noteDone = true; return null;
     case 'check_update': update = 'checking'; setTimeout(() => { update = 'latest'; }, 1500); return null;

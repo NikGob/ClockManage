@@ -10,7 +10,7 @@
 [![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20AppImage-FCC624?logo=linux&logoColor=black)](#linux)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-core-B7410E?logo=rust&logoColor=white)](core)
-[![MCP](https://img.shields.io/badge/MCP-23%20tools-6E56CF)](#claude-runs-your-day-mcp)
+[![MCP](https://img.shields.io/badge/MCP-24%20tools-6E56CF)](#claude-runs-your-day-mcp)
 [![Android](https://img.shields.io/badge/Android-companion-3DDC84?logo=android&logoColor=white)](#android-companion)
 [![Languages](https://img.shields.io/badge/UI-English%20%7C%20Russian-555)](#good-to-know)
 
@@ -33,7 +33,7 @@ And because it speaks [MCP](https://modelcontextprotocol.io), Claude can see whe
 
 ### A day, not a stopwatch
 
-Every weekday gets a type — **Full**, **Light** or **Day off** — each with its own plan template and lock setting. A fresh install starts with a week of days off: pick your study days in *Settings → Week*. Today starts from its template; edit it on the **Plan** screen or let Claude do it. A block of 90 minutes runs as 45 + 45 with a 10-minute break, blocks are 20 minutes apart, and breaks never eat into study time. The day end (22:00 by default) is the hard stop: the lock lifts then even if the plan isn't done, and you can move it for today only — every shift goes to the log.
+Every weekday gets a type — **Full**, **Light** or **Day off** — each with its own plan template and lock setting. A fresh install starts with a week of days off: pick your study days in *Settings → Week*. Need a break? Add **time off** there, from one date to another, or ask Claude: every day of it is a day off with no plan, no lock and no autolock, and after it the week schedule goes on untouched. Today starts from its template; edit it on the **Plan** screen or let Claude do it. A block of 90 minutes runs as 45 + 45 with a 10-minute break, blocks are 20 minutes apart, and breaks never eat into study time. The day end (22:00 by default) is the hard stop: the lock lifts then even if the plan isn't done, and you can move it for today only — every shift goes to the log.
 
 <div align="center">
   <img src="docs/media/plan.png" alt="Plan screen" width="49%">
@@ -75,7 +75,7 @@ During a study day the block list **can only grow**, while the time settings sta
 
 ### A journal that writes itself
 
-Every day is logged: actual time per block, pauses, segments, emergency accesses, your end-of-block lines. The **Week** view adds it up into journal hours per subject (each block rounded down to 0.25 h) — one click copies it as a table for a spreadsheet. JSON and CSV export are one click too.
+Every day is logged: actual time per block, pauses, segments, emergency accesses, your end-of-block lines. The **Week** view adds it up into journal hours per subject (each block rounded down to 0.25 h) and marks the days of time off — one click copies it as a table for a spreadsheet. JSON and CSV export are one click too.
 
 <div align="center">
   <img src="docs/media/log.png" alt="Log of a day" width="49%">
@@ -154,6 +154,7 @@ Then just talk:
 > - *"Close the current block, I'm done with math for today."*
 > - *"I get up at 7 — make it night until 7 and hold for 3 seconds."*
 > - *"On Light days lock everything at 11:30 if I haven't started yet."*
+> - *"I'm off from November 2 to 9 — no study and no locks those days."*
 > - *"Make the breaks between parts 15 minutes and turn the sounds off."*
 > - *"Here's my diet from the nutritionist — save it. Then find me lunch on Wolt."*
 
@@ -162,12 +163,13 @@ Then just talk:
 | `get_session_state` | what's running now: block, part, break or segment, time left, whether the lock is on |
 | `get_today_stats` | actual time per block, journal hours, pauses, segments, notes, the autolock and the start delay — today or any `date` |
 | `get_week_stats` | journal hours for a week by subject and day, with a ready TSV |
-| `get_plan` | today's plan, all templates (with their autolock time), the weekday schedule, the next 7 days and today's autolock |
+| `get_plan` | today's plan, all templates (with their autolock time), the weekday schedule, the next 7 days (time off shows as such), today's autolock and the time off ahead |
 | `set_plan` | replace today's plan or set one for a future date; reorder anything, close a started block "as is" |
 | `set_template` · `set_week_schedule` | edit the Full / Light / Day off templates and which weekday gets which |
 | `set_day_end` | move today's day end once, with a reason for the log |
 | `set_night_start` | the night start guard: until when it's night, whether after the day end too, how long to hold — or off |
 | `set_autolock` | the autolock of the Full or Light profile: a time like 13:00, or off |
+| `set_time_off` | time off from study for any dates — days off with no plan and no lock — or take it out again |
 | `set_block_note` | save your line about a block |
 | `finish_block` | close the current block at the time worked — two steps, needs your explicit "yes" |
 | `get_blocklist` · `add_to_blocklist` · `remove_from_blocklist` | read and edit the block list (removing only outside the lock) |
@@ -222,6 +224,7 @@ What works differently from Windows:
 - Firefox only reads policies at start, so ClockManage restarts it when the lock turns on (tabs are restored). You can turn that off.
 - Browsers check the block list when a page loads: a page that was already open when the lock started, or Shorts opened by a click inside YouTube, may show until the next navigation or refresh.
 - **No start by accident at night**: before 05:00, or after the day end, **Start day** works only in the app window and takes a 2-second hold. The tray, the mini timer and the phone don't start a day then. The times and the hold are in *Settings → Study day → Start at night*, or ask Claude (`set_night_start`).
+- **Time off** (*Settings → Week*, or `set_time_off`) runs from one date through another, up to a year at once; stretches that overlap or touch merge into one, and taking out days in the middle leaves two. Time off that takes in today turns today into a day off only while it hasn't started; a running day, or one the autolock holds, stays as it is. A plan set ahead for a date in time off waits until those days are taken out.
 - **Autolock**: on Full and Light days the block list goes on at 13:00 when the day hasn't started — see [Autolock before the day starts](#autolock-before-the-day-starts). Once it is on today, changing the setting only affects the days ahead. A phone that has lost the PC learns about it on the next sync.
 - An administrator can undo anything by hand. The point is to make distraction inconvenient, not impossible.
 - Your data stays on your computer: `%APPDATA%\com.nikgob.clockmanage` on Windows, `~/.local/share/com.nikgob.clockmanage` on Linux (`config.json` and one JSON file per day). The day is saved every few seconds and survives a power cut: after a restart it comes back paused, and the time the PC was off is not counted. The Android phone talks to the PC over your local network only. Requests to the internet: the update check on GitHub and, once you turn on Meals, Wolt's pages (the restaurants near your address), OpenStreetMap's geocoder (when you press **Find** for an address), ntfy.sh (end-to-end encrypted, for the iPhone) and Apple's push service.
@@ -236,7 +239,7 @@ npx @tauri-apps/cli@2 build                  # NSIS installer on Windows; .deb a
 
 On Linux the app needs WebKitGTK: `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf` (Ubuntu 22.04 or newer), then `cargo test --workspace` runs the app's tests too. `src-tauri/tauri.linux.conf.json` is merged over `tauri.conf.json` on Linux: no launch guard; the .deb's polkit rule and remove script and the menu entry (also used by the AppImage) from `src-tauri/linux/`. `scripts/linux-smoke.sh <deb>` installs a built package and drives the running app over MCP — it changes `/etc/hosts`, so CI runs it on a throwaway runner.
 
-UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=meals` for the Meals screen (`&picks=0` without picks, `&paired=0` without an iPhone, `&meals=0` with Meals off), `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage).
+UI preview in a normal browser with a mock backend: `cd ui && python -m http.server`, then `index.html?state=work` (`paused`, `break`, `await`, `idle`, `done`, `segment`; `state=idle&night=1` for a start at night, `state=idle&autolock=1` for the autolock, `state=idle&off=1` for time off, `state=break&ba=1` for access in the break), `overlay.html?demo=await` (`break`, `block`, `wake`, `nope`, …), `mini.html?state=work`; `index.html?route=meals` for the Meals screen (`&picks=0` without picks, `&paired=0` without an iPhone, `&meals=0` with Meals off), `index.html?route=settings&update=ready` for a downloaded update (`available` for one found on Linux, `checking`, `downloading`, `error`); add `&lang=en` or `&lang=ru`, `&os=linux` for the Linux app's texts and `&admin=0` for an app that can't block sites (with `&os=linux`, the AppImage).
 
 | Folder | What's inside |
 |---|---|

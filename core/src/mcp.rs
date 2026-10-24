@@ -2,6 +2,7 @@
 //!
 //! The transport lives in the app; this module only maps requests to [`McpHost`] calls.
 
+use chrono::NaiveDate;
 use serde_json::{json, Value};
 
 use crate::clock;
@@ -41,6 +42,8 @@ pub trait McpHost {
     fn set_night_start(&self, req: NightStartRequest) -> Result<Value, String>;
     /// "Автоблокировка с …" of a study profile: minutes after midnight, `None` = off.
     fn set_autolock(&self, profile: DayKind, min: Option<u32>) -> Result<Value, String>;
+    /// Add time off `from..=to`, or take it out.
+    fn set_time_off(&self, remove: bool, from: NaiveDate, to: NaiveDate) -> Result<Value, String>;
     /// How far the agent may change settings (Settings → MCP for Claude).
     fn agent_settings(&self) -> AgentSettings;
     /// The settings without tokens and keys, the agent's access and whether it may change them now.
@@ -149,7 +152,7 @@ fn tools() -> Value {
         {
             "name": "get_week_stats",
             "title": "Week for the journal",
-            "description": "Journal hours for the week (Mon–Sun) containing date: subjects[] — a subject and its journal_hours per day (blocks with the same name add up; each block is rounded down to 0.25 h), day_totals, total, actual_min (the unrounded fact). tsv — the same table as tab-separated text to paste into a spreadsheet. Segments (lunch, nap) are not included.",
+            "description": "Journal hours for the week (Mon–Sun) containing date: subjects[] — a subject and its journal_hours per day (blocks with the same name add up; each block is rounded down to 0.25 h), day_totals, total, actual_min (the unrounded fact), time_off — which days of the week (Monday first) were time off (see set_time_off). tsv — the same table as tab-separated text to paste into a spreadsheet. Segments (lunch, nap) are not included.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "Any day of the week, YYYY-MM-DD; the current week by default" } },
@@ -160,7 +163,7 @@ fn tools() -> Value {
         {
             "name": "get_plan",
             "title": "Day plan",
-            "description": "Today's plan in order (today: study blocks and non-study segments with type: \"break\"), today's profile (profile) and its template (template), today's day end (day_end) and the one from the settings (day_end_default), segment types (segment_types: name, minutes, alarm), today's autolock (autolock: time — HH:MM, at, on — it holds the lock right now, start_delay_min — whole minutes from it going on to \"Start day\"; null — none today: off for this profile, a day off, or the day started before its time). Also: templates — the templates of all profiles (full/light/off: plan, blocking — whether the lock turns on, autolock — HH:MM or null when off, see set_autolock); week — the profile of each weekday (mon…sun); upcoming — the next 7 days: date, weekday, profile, plan and source (\"date\" — a plan set for that date with set_plan + date, \"template\" — the profile's template). With date — also day: the plan and profile of that day.",
+            "description": "Today's plan in order (today: study blocks and non-study segments with type: \"break\"), today's profile (profile) and its template (template), time_off — the time off from today on ({from, to}, see set_time_off), today's day end (day_end) and the one from the settings (day_end_default), segment types (segment_types: name, minutes, alarm), today's autolock (autolock: time — HH:MM, at, on — it holds the lock right now, start_delay_min — whole minutes from it going on to \"Start day\"; null — none today: off for this profile, a day off, or the day started before its time). Also: templates — the templates of all profiles (full/light/off: plan, blocking — whether the lock turns on, autolock — HH:MM or null when off, see set_autolock); week — the profile of each weekday (mon…sun); upcoming — the next 7 days: date, weekday, profile, plan and source (\"date\" — a plan set for that date with set_plan + date, \"template\" — the profile's template, \"time_off\" — time off: a day off with no plan). With date — also day: the plan and profile of that day.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "description": "YYYY-MM-DD — which day to show in day (today or later)" } },
@@ -171,7 +174,7 @@ fn tools() -> Value {
         {
             "name": "set_plan",
             "title": "Set the day plan",
-            "description": "Without date — replaces today's plan with a list of items in the order of the day. Items are matched with the old ones by name (case-insensitive) and type in any order: everything can be reordered — blocks not started and started, segments; worked time travels with its block. A study block: {name, minutes|hours}. A non-study segment (lunch, nap, walk…): {name, minutes, type: \"break\"} — it stands in its place: when the block before it closes, this segment starts instead of the break between blocks (a nap first waits for \"In bed\" with no countdown, the alarm counts from \"In bed\"). A segment taken by hand ahead of its place cancels the planned one of the same type. Segments don't count towards study hours or journal_hours, but are counted in plan_forecast (with preparation). Rules. Not started — add, lengthen, shorten, remove. Segments, even past ones, can be removed — their record in breaks[] stays. A started block can't be removed or renamed — except a block with less than 1 minute worked (an accidental start): it is removed. While the lock is on, a started block can't be cut below the time worked; the limit is whole minutes rounded down, exactly done_min from get_session_state (10 min 40 s → 10 is fine). To close a started block as is — an item {name, close: true}: the block's plan = time worked, the rest is dropped, the day goes on; do this only when the user asks (for the current block without an explicit request use finish_block, it asks). All or nothing: on an error the plan doesn't change. Worked time is never erased. The reply has changes (added | removed | shortened | lengthened | moved | closed) and plan_forecast. With a date after today — a plan for that day only: it starts with this plan instead of its profile's template; today's plan and the templates don't change (up to 60 days ahead; the day's profile follows the week schedule, see get_plan → week). use_template: true with date — drop the plan set for that date (the day starts with the template).",
+            "description": "Without date — replaces today's plan with a list of items in the order of the day. Items are matched with the old ones by name (case-insensitive) and type in any order: everything can be reordered — blocks not started and started, segments; worked time travels with its block. A study block: {name, minutes|hours}. A non-study segment (lunch, nap, walk…): {name, minutes, type: \"break\"} — it stands in its place: when the block before it closes, this segment starts instead of the break between blocks (a nap first waits for \"In bed\" with no countdown, the alarm counts from \"In bed\"). A segment taken by hand ahead of its place cancels the planned one of the same type. Segments don't count towards study hours or journal_hours, but are counted in plan_forecast (with preparation). Rules. Not started — add, lengthen, shorten, remove. Segments, even past ones, can be removed — their record in breaks[] stays. A started block can't be removed or renamed — except a block with less than 1 minute worked (an accidental start): it is removed. While the lock is on, a started block can't be cut below the time worked; the limit is whole minutes rounded down, exactly done_min from get_session_state (10 min 40 s → 10 is fine). To close a started block as is — an item {name, close: true}: the block's plan = time worked, the rest is dropped, the day goes on; do this only when the user asks (for the current block without an explicit request use finish_block, it asks). All or nothing: on an error the plan doesn't change. Worked time is never erased. The reply has changes (added | removed | shortened | lengthened | moved | closed) and plan_forecast. With a date after today — a plan for that day only: it starts with this plan instead of its profile's template; today's plan and the templates don't change (up to 60 days ahead; the day's profile follows the week schedule, see get_plan → week; a date in time off is refused). use_template: true with date — drop the plan set for that date (the day starts with the template).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -249,6 +252,22 @@ fn tools() -> Value {
                     "time": { "type": "string", "pattern": "^(\\d{1,2}:\\d{2}|off)$", "description": "HH:MM in the app's time zone, e.g. 13:00; \"off\" turns the autolock off for this profile" }
                 },
                 "required": ["profile", "time"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
+        },
+        {
+            "name": "set_time_off",
+            "title": "Time off from study",
+            "description": "Time off: every day from `from` through `to` (both included) is a day off with no plan, no lock and no autolock, whatever the week schedule and the day-off profile say; the week schedule itself stays, and after it everything goes on as before. Use it when the user wants a rest, a holiday or a few free days. Overlapping or adjacent time off is merged; remove: true takes the days out again (a stretch cut in the middle stays as two). If it takes in today and the day hasn't started (and the autolock isn't holding it), today becomes a day off at once; a running day stays as it is. A plan set ahead for a date in time off waits until it is taken out. Dates in the app's time zone; `to` can't be in the past and a stretch is at most 366 days. Allowed at any time. The reply has time_off (every stretch from today on: from, to), today_time_off and upcoming (the next 7 days). get_plan and get_settings show it too.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "First day, YYYY-MM-DD" },
+                    "to": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Last day, YYYY-MM-DD (included); the same as from by default" },
+                    "remove": { "type": "boolean", "description": "true — take these days out of the time off" }
+                },
+                "required": ["from"],
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true }
@@ -336,7 +355,7 @@ fn tools() -> Value {
         {
             "name": "get_settings",
             "title": "All settings",
-            "description": "Every setting of the app as it is stored (config.json, without paired phone tokens, keys and plans set ahead — those are in get_plan): week, profiles (plans, block, autolock, autolock_min — minutes after midnight), day_end_min, tz_offset_min, timing (work_segment_min, short_break_min, between_blocks_min, lunch_min), blocklist, break_access, emergency_phrase, emergency_min, reminder_sec, sound, overlay, restart_firefox, autostart, auto_update, appearance, lang, segments, phone (enabled, port, apps), night_start, meals and others. Times are minutes after midnight. Also agent_access — how far the user lets you change settings: always (even during the lock, its rules don't bind you), outside_study (only while no lock is in force), never (you can't change settings: tell the user what to change in Settings); can_change_now; locked — whether a lock is in force now; fixed — settings you never change.",
+            "description": "Every setting of the app as it is stored (config.json, without paired phone tokens, keys and plans set ahead — those are in get_plan): week, profiles (plans, block, autolock, autolock_min — minutes after midnight), day_end_min, tz_offset_min, timing (work_segment_min, short_break_min, between_blocks_min, lunch_min), blocklist, break_access, emergency_phrase, emergency_min, reminder_sec, sound, overlay, restart_firefox, autostart, auto_update, appearance, lang, segments, phone (enabled, port, apps), night_start, time_off (stretches {from, to}, YYYY-MM-DD, both days included: every day of them is a day off with no plan, no lock and no autolock, whatever week says; set them with set_time_off), meals and others. Times are minutes after midnight. Also agent_access — how far the user lets you change settings: always (even during the lock, its rules don't bind you), outside_study (only while no lock is in force), never (you can't change settings: tell the user what to change in Settings); can_change_now; locked — whether a lock is in force now; fixed — settings you never change.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": { "readOnlyHint": true }
         },
@@ -359,7 +378,7 @@ fn tools() -> Value {
 
 /// Tools that change settings: with the agent's access set to never they all refuse
 /// (`set_night_start` without arguments only reads).
-pub const SETTING_TOOLS: [&str; 7] = ["set_settings", "set_template", "set_week_schedule", "set_night_start", "set_autolock", "add_to_blocklist", "remove_from_blocklist"];
+pub const SETTING_TOOLS: [&str; 8] = ["set_settings", "set_template", "set_week_schedule", "set_night_start", "set_autolock", "set_time_off", "add_to_blocklist", "remove_from_blocklist"];
 
 /// The tools of Meals, an optional feature: listed and callable only while it is on.
 pub const MEAL_TOOLS: [&str; 5] = ["get_diet", "set_diet", "food_search", "food_menu", "set_meal_options"];
@@ -623,6 +642,18 @@ fn parse_autolock(args: &Value) -> Result<(DayKind, Option<u32>), String> {
     Ok((kind, min))
 }
 
+fn parse_time_off(args: &Value) -> Result<(bool, NaiveDate, NaiveDate), String> {
+    let date = |key: &str| -> Result<Option<NaiveDate>, String> {
+        match args.get(key).and_then(Value::as_str) {
+            None => Ok(None),
+            Some(s) => NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map(Some).map_err(|_| tr!("mcp_is_a_date_yyyy_mm_dd", key = key, s = s)),
+        }
+    };
+    let from = date("from")?.ok_or(tr("mcp_from_is_required_a_date_yyyy"))?;
+    let to = date("to")?.unwrap_or(from);
+    Ok((args.get("remove").and_then(Value::as_bool).unwrap_or(false), from.min(to), from.max(to)))
+}
+
 fn parse_meal_options(args: &Value) -> Result<Vec<MealPick>, String> {
     let venues = args.get("venues").and_then(Value::as_array).filter(|v| !v.is_empty()).ok_or(tr("mcp_meals_pick_at_least_one_restaurant"))?;
     venues
@@ -664,7 +695,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
         "initialize" => {
             let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOLS[0]);
             let version = if PROTOCOLS.contains(&asked) { asked } else { PROTOCOLS[0] };
-            const INSTRUCTIONS: &str = "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early. get_settings — every setting and how far the user lets you change them (agent_access); set_settings — change any of them in one step (a merge patch): with agent_access always even during the lock, with outside_study only while no lock is in force, with never not at all — then every setting tool refuses, and you tell the user what to change in Settings.";
+            const INSTRUCTIONS: &str = "A study timer that blocks distractions. Texts in the results (titles, log lines, errors) are in the app's language — answer the user in theirs. get_session_state — what is going on now (block, break, a segment like lunch or a nap). get_week_stats — journal hours for a week by subject and day (with a ready tsv). get_today_stats — the actual hours of a day: blocks[].journal_hours (rounded down to 0.25 h) and journal_total for the journal, blocks[].note — the user's \"what was boring\" lines, breaks[] — lunch, naps, walks. get_plan — today's plan, the templates of all profiles, the week schedule and the plans of the next 7 days. set_plan — the day plan (study blocks and type: \"break\" segments in their places; everything can be reordered, a block with an accidental start under a minute can be removed, a started one closed as is with close: true when the user asks); with date — a plan for a future day, today stays untouched. Worked time is always whole minutes rounded down: done_min = the cutting limit. set_template — the template of any profile (full/light/off). set_week_schedule — which profile each weekday has. set_day_end — move today's day end once. set_block_note — save the user's line about a block. finish_block — close a started block at the time worked: two steps, the second only after the user's explicit \"yes\". get_blocklist — what is in the block list (sites, .exe apps) and whether the lock is on. add_to_blocklist — add sites and apps (always allowed, during the lock they close at once); remove_from_blocklist — remove (outside the lock only and when the user asks). start_focus_lock — block the whole list right now for N minutes on any day; it can't be lifted early (only by the user's emergency access), only extended — turn it on only when the user explicitly asks. set_night_start — the night start guard: at night \"Start day\" takes a hold of the button in the app window (until a time, after the day end, how many seconds); without arguments it shows the current settings. set_autolock — the autolock of the Full or Light profile (13:00 by default, or off): if the day hasn't started by then, the block list goes on until \"Start day\"; only the user's emergency access opens it early. set_time_off — time off from study for any dates (a holiday, a few free days): every day of it is a day off with no plan, no lock and no autolock; remove: true takes it out. get_settings — every setting and how far the user lets you change them (agent_access); set_settings — change any of them in one step (a merge patch): with agent_access always even during the lock, with outside_study only while no lock is in force, with never not at all — then every setting tool refuses, and you tell the user what to change in Settings.";
             const MEALS: &str = " Meals: get_diet — the user's diet, delivery service, address and meal times; set_diet — save the diet the user gives you; food_search and food_menu — dishes and restaurants of the user's delivery service that deliver to them (nearby only); set_meal_options — offer up to 5 restaurants with dishes and up to 5 grocery stores with products that fit the diet (shown in the app and pushed to the iPhone; the user orders on the delivery service themselves).";
             let meals = if host.meals_enabled() { MEALS } else { "" };
             ok(
@@ -717,6 +748,7 @@ fn handle_one(msg: &Value, host: &dyn McpHost) -> Option<Value> {
                 "remove_from_blocklist" => parse_lists(&args).and_then(|(s, a)| host.edit_blocklist(true, s, a)),
                 "set_night_start" => parse_night(&args).and_then(|r| host.set_night_start(r)),
                 "set_autolock" => parse_autolock(&args).and_then(|(k, m)| host.set_autolock(k, m)),
+                "set_time_off" => parse_time_off(&args).and_then(|(r, f, t)| host.set_time_off(r, f, t)),
                 "get_settings" => Ok(host.get_settings()),
                 "set_settings" => match args.get("changes") {
                     Some(c @ Value::Object(m)) if !m.is_empty() => host.set_settings(c.clone()),
@@ -843,6 +875,10 @@ mod tests {
             self.1.borrow_mut().push(json!({ "autolock": k, "min": min }));
             Ok(json!({"ok": true}))
         }
+        fn set_time_off(&self, r: bool, f: NaiveDate, t: NaiveDate) -> Result<Value, String> {
+            self.1.borrow_mut().push(json!({ "time_off": [f, t], "remove": r }));
+            Ok(json!({"ok": true}))
+        }
         fn agent_settings(&self) -> AgentSettings {
             AGENT.get()
         }
@@ -878,6 +914,18 @@ mod tests {
         assert_eq!(call(&h, "set_night_start", json!({}))["isError"], false);
         assert_eq!(call(&h, "set_plan", json!({ "blocks": [{ "name": "A", "minutes": 30 }] }))["isError"], false);
         AGENT.set(AgentSettings::OutsideStudy);
+    }
+
+    #[test]
+    fn time_off_args() {
+        let h = Fake(RefCell::new(vec![]), RefCell::new(vec![]));
+        assert_eq!(call(&h, "set_time_off", json!({ "from": "2026-11-09", "to": "2026-11-02" }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap(), &json!({ "time_off": ["2026-11-02", "2026-11-09"], "remove": false }));
+        assert_eq!(call(&h, "set_time_off", json!({ "from": "2026-11-04", "remove": true }))["isError"], false);
+        assert_eq!(h.1.borrow().last().unwrap(), &json!({ "time_off": ["2026-11-04", "2026-11-04"], "remove": true }));
+        assert_eq!(call(&h, "set_time_off", json!({ "to": "2026-11-04" }))["isError"], true);
+        assert_eq!(call(&h, "set_time_off", json!({ "from": "4.11.2026" }))["isError"], true);
+        assert_eq!(h.1.borrow().len(), 2);
     }
 
     #[test]

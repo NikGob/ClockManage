@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use clockmanage_core::clock::{self, Ts, MIN};
 use clockmanage_core::chrono::{self, Datelike, NaiveDate};
-use clockmanage_core::config::{AgentSettings, DayKind, EditContext, NightStart, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, WEEKDAYS};
+use clockmanage_core::config::{AgentSettings, DayKind, EditContext, NightStart, SchemeVariant, ThemeMode, MAX_PLAN_AHEAD_DAYS, MAX_TIME_OFF_DAYS, WEEKDAYS};
 use clockmanage_core::day::{fmt_change, fmt_day_min, fmt_min, same_name, worked_min, Event, Forecast, LockState, PlanBlock, QueuedSegment, SingleCfg};
 use clockmanage_core::stats::{self, DayStats};
 use clockmanage_core::view::{self, View};
@@ -873,7 +873,8 @@ impl McpHost for McpBridge {
             "date": today.format("%Y-%m-%d").to_string(),
             "today": g.day.plan,
             "profile": g.day.kind,
-            "template": g.cfg.profile(g.day.kind).plan,
+            "template": g.cfg.template_on(g.day.kind, today),
+            "time_off": g.cfg.time_off.iter().filter(|t| t.to >= today).collect::<Vec<_>>(),
             "started": g.day.started_at.is_some(),
             "day_end": fmt_day_min(g.day.day_end(&g.cfg)),
             "day_end_default": clockmanage_core::config::fmt_hm(g.cfg.day_end_min),
@@ -899,7 +900,7 @@ impl McpHost for McpBridge {
     fn set_plan(&self, req: PlanRequest) -> Result<Value, String> {
         let (today, template) = {
             let g = self.0.lock();
-            (g.day.date, g.cfg.profile(g.day.kind).plan.clone())
+            (g.day.date, g.cfg.template_on(g.day.kind, g.day.date).clone())
         };
         match req.date.as_deref().map(parse_plan_date).transpose()? {
             Some(d) if d != today => apply_plan_ahead(&self.0, d, req, "mcp"),
@@ -1080,6 +1081,42 @@ impl McpHost for McpBridge {
         let mut res = json!({ "ok": true, "changed": changed, "profile": profile, "autolock": time, "today": today });
         if changed && held {
             res["note"] = json!(tr("app_todays_autolock_is_already_on"));
+        }
+        Ok(res)
+    }
+
+    fn set_time_off(&self, remove: bool, from: NaiveDate, to: NaiveDate) -> Result<Value, String> {
+        let (mut next, today, kind_before) = {
+            let g = self.0.lock();
+            (g.cfg.clone(), g.day.date, g.day.kind)
+        };
+        if !remove && to < today {
+            return Err(tr!("app_has_passed_time_off_can_only", to = to));
+        }
+        if (to - from).num_days() >= MAX_TIME_OFF_DAYS {
+            return Err(tr!("app_time_off_is_at_most_days", max = MAX_TIME_OFF_DAYS));
+        }
+        next.edit_time_off(remove, from, to);
+        let changed = next.time_off != self.0.lock().cfg.time_off;
+        let saved = if changed { apply_config_as(&self.0, next, true)? } else { self.0.lock().cfg.clone() };
+        let range = format!("{} – {}", from.format("%d.%m"), to.format("%d.%m"));
+        if changed {
+            let title = if remove { tr("app_the_agent_took_out_time_off") } else { tr("app_the_agent_set_time_off") };
+            self.0.notice(title, &range);
+        }
+        let kind_now = self.0.lock().day.kind;
+        let mut res = json!({
+            "ok": true,
+            "changed": changed,
+            "time_off": saved.time_off.iter().filter(|t| t.to >= today).collect::<Vec<_>>(),
+            "today_time_off": saved.is_time_off(today),
+            "today_profile": kind_now,
+            "today_profile_changed": kind_now != kind_before,
+            "upcoming": upcoming_json(&self.0),
+        });
+        // A running day (or one the autolock holds) stays as it is.
+        if !remove && saved.is_time_off(today) && kind_now != DayKind::Off {
+            res["note"] = json!(tr("app_today_stays_as_it_is_time"));
         }
         Ok(res)
     }
@@ -1311,7 +1348,7 @@ fn day_ahead_json(cfg: &Config, d: NaiveDate) -> Value {
         "weekday": WEEKDAYS[d.weekday().num_days_from_monday() as usize],
         "profile": cfg.kind_on(d),
         "plan": cfg.plan_on(d),
-        "source": if cfg.plan_overrides.contains_key(&d) { "date" } else { "template" },
+        "source": if cfg.is_time_off(d) { "time_off" } else if cfg.plan_overrides.contains_key(&d) { "date" } else { "template" },
     })
 }
 
@@ -1345,6 +1382,9 @@ pub fn apply_plan_ahead(shared: &Arc<Shared>, date: NaiveDate, req: PlanRequest,
     }
     if (date - today).num_days() > MAX_PLAN_AHEAD_DAYS {
         return Err(tr!("app_a_plan_can_be_set_at", MAX_PLAN_AHEAD_DAYS = MAX_PLAN_AHEAD_DAYS));
+    }
+    if cfg.is_time_off(date) && !req.use_template {
+        return Err(tr!("app_is_in_time_off", date = date));
     }
     let kind = cfg.kind_on(date);
     let mut plan = req.plan;
@@ -1567,16 +1607,15 @@ pub fn apply_config_as(shared: &Arc<Shared>, mut cfg: Config, by_agent: bool) ->
             g.resync = true;
         }
         if g.day.started_at.is_none() {
-            let wd = g.day.weekday();
-            let kind = g.day.kind;
-            if old.week[wd] != g.cfg.week[wd] {
-                // Today was re-assigned in the week schedule: follow it.
+            let (date, kind) = (g.day.date, g.day.kind);
+            if old.kind_on(date) != g.cfg.kind_on(date) {
+                // Today was re-assigned in the week schedule, or a week off took it: follow it.
                 // (The config is already accepted; syncing today is best effort.)
                 let (cfg, day) = (&g.cfg, &mut g.day);
-                let _ = day.set_kind(now, cfg, cfg.week[wd], false);
-            } else if g.day.plan == old.profile(kind).plan && old.profile(kind).plan != g.cfg.profile(kind).plan {
-                // Today's plan was still the untouched template: take the new one.
-                let plan = g.cfg.profile(kind).plan.clone();
+                let _ = day.set_kind(now, cfg, cfg.kind_on(date), false);
+            } else if g.day.plan == *old.template_on(kind, date) && old.template_on(kind, date) != g.cfg.template_on(kind, date) {
+                // Today's plan was still the untouched template (or a week off's empty one): take the new one.
+                let plan = g.cfg.template_on(kind, date).clone();
                 let _ = g.day.set_plan(now, plan, false);
             }
             g.day.study_day = g.day.blocks_by_profile(&g.cfg);
@@ -1966,9 +2005,9 @@ pub fn day_stats(s: S, date: String) -> Result<DayStats, String> {
 /// The week (Monday..Sunday) containing `date` (default: today) from the saved days.
 pub fn week(shared: &Shared, date: Option<&str>) -> Result<(stats::WeekStats, String), String> {
     let now = clock::now_ts();
-    let (tz, today) = {
+    let (tz, today, cfg) = {
         let g = shared.lock();
-        (g.cfg.tz_offset_min, g.day.clone())
+        (g.cfg.tz_offset_min, g.day.clone(), g.cfg.clone())
     };
     let anchor = match date {
         Some(d) => clockmanage_core::chrono::NaiveDate::parse_from_str(d.trim(), "%Y-%m-%d").map_err(|_| tr("app_the_date_must_be_yyyy_mm"))?,
@@ -1983,7 +2022,8 @@ pub fn week(shared: &Shared, date: Option<&str>) -> Result<(stats::WeekStats, St
             days.push(stats::day_stats(&day, tz, now));
         }
     }
-    let w = stats::week_stats(monday, &days);
+    let mut w = stats::week_stats(monday, &days);
+    w.time_off = std::array::from_fn(|i| cfg.is_time_off(monday + clockmanage_core::chrono::Duration::days(i as i64)));
     let tsv = stats::week_tsv(&w);
     Ok((w, tsv))
 }

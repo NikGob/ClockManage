@@ -214,20 +214,6 @@ export function burst(el, n = 14) {
   }
 }
 
-/** Count a number up to `to` (formatted by `fmt`) — journal totals. */
-export function countUp(el, to, fmt = (v) => String(v), ms = 700) {
-  if (!el) return;
-  if (reduced() || !to) { el.textContent = fmt(to); return; }
-  const t0 = performance.now();
-  const step = (t) => {
-    const k = Math.min(1, (t - t0) / ms);
-    const e = 1 - (1 - k) ** 3;
-    el.textContent = fmt(k < 1 ? Math.round(to * e * 4) / 4 : to);
-    if (k < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
-
 export function hoursLabel(min) {
   const h = min / 60;
   if (min % 60 === 0) return tr('app_h', { h });
@@ -257,6 +243,22 @@ export function dateLabel(iso) {
   const dt = new Date(y, m - 1, d);
   const wd = WEEKDAYS_FULL[(dt.getDay() + 6) % 7];
   return `${dt.toLocaleDateString(LOCALE, { day: 'numeric', month: 'long' })} · ${wd}`;
+}
+
+/** YYYY-MM-DD `days` later (earlier when negative). */
+export function isoShift(iso, days) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const t = new Date(y, m - 1, d + days);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+/** "26 окт – 1 нояб" from `from` through `to` (YYYY-MM-DD); one date when they are the same. */
+export function rangeLabel(from, to) {
+  const short = (x) => {
+    const [y, m, d] = x.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' }).replace('.', '');
+  };
+  return from === to ? short(from) : `${short(from)} – ${short(to)}`;
 }
 
 export { esc };

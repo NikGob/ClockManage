@@ -108,6 +108,9 @@ impl McpHost for NoHost {
     fn set_autolock(&self, _: DayKind, _: Option<u32>) -> Result<Value, String> {
         unreachable!()
     }
+    fn set_time_off(&self, _: bool, _: chrono::NaiveDate, _: chrono::NaiveDate) -> Result<Value, String> {
+        unreachable!()
+    }
     fn agent_settings(&self) -> AgentSettings {
         AgentSettings::Never
     }

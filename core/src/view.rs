@@ -139,6 +139,8 @@ pub struct View {
     pub weekday: usize,
     pub study_day: bool,
     pub kind: DayKind,
+    /// The time off today is in.
+    pub time_off: Option<crate::config::TimeOff>,
     pub started: bool,
     pub completed: bool,
     pub after_day_end: bool,
@@ -383,6 +385,7 @@ pub fn build(d: &DayState, cfg: &Config, now: Ts) -> View {
         weekday: d.weekday(),
         study_day: d.study_day,
         kind: d.kind,
+        time_off: cfg.time_off_on(d.date).copied(),
         started: d.started_at.is_some(),
         completed: d.completed_at.is_some(),
         after_day_end,

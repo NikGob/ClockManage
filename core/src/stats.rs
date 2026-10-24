@@ -277,6 +277,8 @@ pub struct WeekStats {
     pub total: f64,
     /// Actual study minutes of the week (not rounded).
     pub actual_min: f64,
+    /// Days of the week in time off, Monday first (set by the caller, who has the config).
+    pub time_off: [bool; 7],
 }
 
 /// Monday of the week that contains `date`.
@@ -321,6 +323,7 @@ pub fn week_stats(monday: chrono::NaiveDate, days: &[DayStats]) -> WeekStats {
         day_totals,
         subjects,
         actual_min: (actual * 10.0).round() / 10.0,
+        time_off: [false; 7],
     }
 }
 

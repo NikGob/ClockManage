@@ -2,7 +2,7 @@ import { call, mmss, dur, esc, LINUX } from '../api.js';
 import { icon, morphIcon } from '../icons.js';
 import { doodle, play } from '../doodles.js';
 import { WaveRing } from '../wave.js';
-import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm, tsHm } from '../ui.js';
+import { run, snack, menu, burst, KINDS, KIND_RANK, kindLabel, planSummary, hm, tsHm, rangeLabel } from '../ui.js';
 import { tr } from '../i18n.js';
 import { singleDialog, emergencyDialog, dayEndDialog, finishDialog, segmentDialog, nightStartDialog } from './dialogs.js';
 
@@ -104,7 +104,7 @@ export function mountToday(root, ctx) {
     const endBtn = (label) => (v.can.set_day_end
       ? `<button class="when-btn interactive" data-act="dayend" aria-haspopup="menu" data-tip="${tr('today_todays_day_end_later_or_earlier')}">${esc(label)}${icon('expand')}</button>`
       : esc(label));
-    const offText = v.kind === 'off' ? tr('today_day_off_no_lock') : tr('today_day_without_a_lock', { kind: kindLabel(v.kind) });
+    const offText = v.kind === 'off' && v.time_off ? tr('today_time_off_until_no_lock', { to: rangeLabel(v.time_off.to, v.time_off.to) }) : v.kind === 'off' ? tr('today_day_off_no_lock') : tr('today_day_without_a_lock', { kind: kindLabel(v.kind) });
     switch (lk.reason) {
       case 'study': ic = 'lock'; text = tr('app_tray_lock_on'); when = `${endBtn(`${tr('today_until')} ${endLabel(v)}`)} ${tr('today_or_until_the_plan_is_done')}`; break;
       case 'single': ic = 'lock'; text = tr('today_locked_for_the_timer'); break;
@@ -451,7 +451,7 @@ export function mountToday(root, ctx) {
         big = v.planned_ms ? dur(v.planned_ms) : '—';
         small = true;
         state = v.mode === 'single' ? '' : tr('today_planned');
-        title = v.started ? p.title : (v.study_day ? tr('today_ready_to_start') : tr('config_day_off'));
+        title = v.started ? p.title : (v.study_day ? tr('today_ready_to_start') : v.time_off && v.kind === 'off' ? tr('settings_time_off') : tr('config_day_off'));
         sub = v.started ? '' : (v.blocks.length ? `${tr('today_planned_of_study', { planned_ms: dur(v.planned_ms) })} · ${v.blocks.filter((b) => b.kind !== 'break').map((b) => b.name).join(' · ')}` : tr('today_add_blocks_to_the_plan'));
         if (!v.started && v.mode !== 'single') art = v.study_day ? 'idle' : 'rest';
     }
