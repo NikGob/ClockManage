@@ -23,9 +23,12 @@ object I18n {
     fun text(key: String): String = (if (ru) ruTexts[key] else null) ?: en[key] ?: key
 }
 
+/** `{name}`. Both braces escaped: Android's ICU regex rejects a bare `}` (Android 16 crashed on start). */
+private val ARG = Regex("""\{(\w+)\}""")
+
 /** The text of `key` with its `{name}` arguments filled in. */
 fun tr(key: String, vararg args: Pair<String, Any?>): String {
     val text = I18n.text(key)
     if (args.isEmpty()) return text
-    return Regex("""\{(\w+)}""").replace(text) { m -> args.firstOrNull { it.first == m.groupValues[1] }?.second?.toString() ?: m.value }
+    return ARG.replace(text) { m -> args.firstOrNull { it.first == m.groupValues[1] }?.second?.toString() ?: m.value }
 }
