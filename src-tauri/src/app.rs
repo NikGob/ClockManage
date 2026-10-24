@@ -1641,11 +1641,7 @@ pub fn apply_config_as(shared: &Arc<Shared>, mut cfg: Config, by_agent: bool) ->
         system::set_autostart(saved.autostart)?;
     }
     if mcp_changed {
-        let port = shared.mcp.start(shared.clone(), saved.mcp_enabled, saved.mcp_port);
-        if port != saved.mcp_port {
-            shared.lock().cfg.mcp_port = port;
-            shared.store.save_config(&shared.lock().cfg);
-        }
+        shared.mcp.start(shared.clone(), saved.mcp_enabled, saved.mcp_port);
     }
     if phone_changed {
         shared.phone.start(shared.clone(), &saved);
@@ -1683,21 +1679,6 @@ pub fn check_update(s: S) {
 pub async fn install_update(s: State<'_, Arc<Shared>>) -> Result<(), String> {
     let shared = s.inner().clone();
     tauri::async_runtime::spawn_blocking(move || crate::updater::install(&shared, false)).await.map_err(|e| e.to_string())?
-}
-
-#[tauri::command(async)]
-pub fn regenerate_port(s: S) -> Result<u16, String> {
-    let shared = s.inner().clone();
-    let enabled = shared.lock().cfg.mcp_enabled;
-    let port = shared.mcp.start(shared.clone(), enabled, crate::mcp_server::random_port());
-    {
-        let mut g = shared.lock();
-        g.cfg.mcp_port = port;
-        shared.store.save_config(&g.cfg);
-    }
-    let _ = shared.app.emit("config", ());
-    let _ = shared.app.emit("state", shared.snapshot());
-    Ok(port)
 }
 
 #[derive(Serialize)]

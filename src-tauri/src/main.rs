@@ -74,9 +74,6 @@ fn main() {
             system::apply_lang(&cfg);
             let before_lang = cfg.clone();
             cfg.follow_lang();
-            if cfg.mcp_port == 0 {
-                cfg.mcp_port = mcp_server::random_port();
-            }
             store.save_config(&cfg);
             let now = clock::now_ts();
             let mut day = app::load_today(&store, &cfg, now);
@@ -122,12 +119,7 @@ fn main() {
             });
             tauri_app.manage(shared.clone());
 
-            let port = shared.mcp.start(shared.clone(), mcp_enabled, mcp_port);
-            if port != mcp_port {
-                let mut g = shared.lock();
-                g.cfg.mcp_port = port;
-                shared.store.save_config(&g.cfg);
-            }
+            shared.mcp.start(shared.clone(), mcp_enabled, mcp_port);
 
             let cfg = shared.lock().cfg.clone();
             shared.phone.start(shared.clone(), &cfg);
@@ -157,7 +149,6 @@ fn main() {
             app::get_state,
             app::get_config,
             app::save_config,
-            app::regenerate_port,
             app::start_day,
             app::set_day_kind,
             app::extend_day_end,
