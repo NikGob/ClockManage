@@ -98,6 +98,8 @@ pub struct PhoneSnapshot {
     /// Changes only when the day changes (the long poll waits for a new one).
     pub version: String,
     pub server_now: Ts,
+    /// The interface language of the PC ("ru", "en"): the phone app speaks it too.
+    pub lang: &'static str,
     pub date: String,
     pub kind: crate::config::DayKind,
     pub study_day: bool,
@@ -212,6 +214,7 @@ pub fn snapshot(d: &DayState, cfg: &Config, now: Ts) -> PhoneSnapshot {
     let mut s = PhoneSnapshot {
         version: String::new(),
         server_now: now,
+        lang: crate::i18n::get().key(),
         date: v.date,
         kind: v.kind,
         study_day: v.study_day,

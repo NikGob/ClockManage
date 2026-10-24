@@ -23,6 +23,10 @@ class Store(ctx: Context) {
     var notify: Boolean get() = p.getBoolean("notify", true); set(v) = p.edit().putBoolean("notify", v).apply()
     /** The PC's colours (`theme` of the state): the app draws itself like the PC. */
     val theme: String? get() = p.getString("theme", null)
+    /** The PC's interface language (`lang` of the state): the app speaks it too. */
+    val lang: String? get() = p.getString("lang", null)
+    /** The language chosen in the app's settings ("ru", "en"); empty: like the PC. */
+    var langPref: String get() = p.getString("lang_pref", "") ?: ""; set(v) = p.edit().putString("lang_pref", v).apply()
 
     /** PC clock minus phone clock, measured on every sync. */
     var offset: Long get() = p.getLong("offset", 0); private set(v) = p.edit().putLong("offset", v).apply()
@@ -50,12 +54,19 @@ class Store(ctx: Context) {
         val held = if (snap.heldMs >= 0) snap.heldMs.coerceAtMost(total) else total
         val off = snap.serverNow - (gotAt - (total - held) / 2)
         val e = p.edit().putString("snap", raw).putLong("offset", off).putLong("synced", snap.serverNow)
-        JSONObject(raw).optJSONObject("theme")?.let { e.putString("theme", it.toString()) }
+        val o = JSONObject(raw)
+        o.optJSONObject("theme")?.let { e.putString("theme", it.toString()) }
+        o.optString("lang").takeIf { it.isNotEmpty() }?.let {
+            e.putString("lang", it)
+            I18n.pc = it
+        }
         e.apply()
     }
 
     fun forget() {
-        p.edit().remove("token").remove("snap").remove("synced").apply()
+        // Unpaired: the pairing screen speaks the phone's language again.
+        p.edit().remove("token").remove("snap").remove("synced").remove("lang").apply()
+        I18n.pc = null
     }
 }
 

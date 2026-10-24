@@ -43,7 +43,7 @@ Open `index.html?state=work&route=<screen>&lang=en` for every screen you changed
 
 ## Localization: every language, every change
 
-The app is multilingual: Settings → System → Language (Auto follows Windows; on the phone, the phone's language). Any change that adds or changes visible text ships it in **every** supported language in the same commit. Visible text includes:
+The app is multilingual: Settings → System → Language (Auto follows Windows; the phone follows the paired PC, and the phone's own language before pairing, unless its Settings pick one). Any change that adds or changes visible text ships it in **every** supported language in the same commit. Visible text includes:
 
 - labels, buttons, tooltips, `placeholder`/`title`/`aria-label`
 - toasts, notifications, tray items, overlays
