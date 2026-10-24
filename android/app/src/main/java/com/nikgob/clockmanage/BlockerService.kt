@@ -153,6 +153,11 @@ class BlockerService : AccessibilityService() {
     companion object {
         @Volatile private var instance: BlockerService? = null
 
+        /** Android runs the service in this process. Off while it is switched on in the settings
+         *  means Android stopped it (the process was killed, say after "not responding") and won't
+         *  start it again until it is switched off and on. */
+        val running: Boolean get() = instance != null
+
         /** A new snapshot arrived. */
         fun refresh() {
             instance?.let { s -> android.os.Handler(android.os.Looper.getMainLooper()).post { s.reload() } }

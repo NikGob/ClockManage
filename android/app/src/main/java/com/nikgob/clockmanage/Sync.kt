@@ -46,11 +46,14 @@ object Sync {
         return list.split(':').any { it.startsWith(ctx.packageName + "/") }
     }
 
+    /** Switched on and really running: what the PC is told. */
+    fun blockerWorking(ctx: Context): Boolean = blockerEnabled(ctx) && BlockerService.running
+
     /** One request; [wait] > 0 makes it a long poll that returns when [have] is outdated. */
     private fun fetch(ctx: Context, have: String, wait: Int): Snapshot {
         val s = Store(ctx)
         s.triedAt = System.currentTimeMillis()
-        val blocker = if (blockerEnabled(ctx)) 1 else 0
+        val blocker = if (blockerWorking(ctx)) 1 else 0
         val sent = System.currentTimeMillis()
         val raw = Api.of(s).get("/api/state?v=$have&wait=$wait&blocker=$blocker", readTimeoutMs = (wait + 10) * 1000)
         val got = System.currentTimeMillis()

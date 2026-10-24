@@ -44,8 +44,8 @@ class MainActivity : Activity() {
     private var shownKind = ""
     /** The language the screen was built in: the PC switched languages — build it anew. */
     private var shownRu = I18n.ru
-    /** Whether the blocker was on when its card was last built (null: not built yet). */
-    private var shownBlocker: Boolean? = null
+    /** The blocker's state when its card was last built: on, off or stopped (null: not built yet). */
+    private var shownBlocker: String? = null
 
     // timer screen views
     private lateinit var statusDot: View
@@ -640,22 +640,37 @@ class MainActivity : Activity() {
     }
 
     private fun renderBlocker() {
-        val on = Sync.blockerEnabled(this)
+        val enabled = Sync.blockerEnabled(this)
+        // Switched on, but Android stopped it: nothing closes until it is switched off and on.
+        val stopped = enabled && !BlockerService.running
+        val on = enabled && !stopped
         val s = snap
-        blockerChip.text = if (on) tr("android_main_state_on") else tr("settings_off")
+        blockerChip.text = when {
+            stopped -> tr("android_main_state_not_working")
+            on -> tr("android_main_state_on")
+            else -> tr("settings_off")
+        }
         blockerChip.setTextColor(if (on) p.onSecondary else p.error)
         blockerChip.background = if (on) rounded(p.secondary, dp(8).toFloat()) else rounded(Color.TRANSPARENT, dp(8).toFloat(), dp(1), p.error)
         blocker.text = when {
+            stopped -> tr("android_main_android_stopped_the_blocking_the_app")
             !on -> tr("android_main_the_phone_only_shows_the_timer")
             s == null -> tr("android_main_waiting_for_data_from_the_pc")
             s.blockedAt(store.now(), store.syncedAt) -> tr("android_main_blocking_now_sites_apps", "sites" to s.sites.size, "apps" to s.apps.size)
             else -> tr("blocking_no_lock_right_now")
         }
         appsBtn.text = tr("android_main_apps", "count" to (s?.apps?.size ?: 0))
-        if (shownBlocker == on) return
-        shownBlocker = on
+        val state = if (stopped) "stopped" else if (on) "on" else "off"
+        if (shownBlocker == state) return
+        shownBlocker = state
         steps.removeAllViews()
         if (on) return
+        if (stopped) {
+            steps.addWithMargins(pill(tr("android_main_accessibility"), p, "filled", R.drawable.ic_accessibility) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }, top = dp(16), width = ViewGroup.LayoutParams.WRAP_CONTENT)
+            return
+        }
         // Off: how to turn it on, step by step. A sideloaded app on Android 13+ first needs
         // "Allow restricted settings", or its switch in Accessibility stays grey.
         val accessibility = pill(tr("android_main_accessibility"), p, "filled", R.drawable.ic_accessibility) {
