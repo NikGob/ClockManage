@@ -5,93 +5,178 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="theme-color" content="#f3f7ef" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#101410" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fcfdf7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111410" media="(prefers-color-scheme: dark)">
   <title>ClockManage</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <style>
+    /* The roles of the PC's colour scheme, as the Android app has them; the PC's own colours
+       replace these once a day message brings them (app.js, applyTheme). */
     :root {
-      --bg: #f3f7ef; --surface: #fff; --surface-2: #eaf1e5; --text: #161d15; --muted: #5d665a; --line: #e1e8dc;
-      --primary: #2e7d32; --on-primary: #fff; --tint: #dcefd8; --on-tint: #0c3a10; --price: #1f6a24; --error: #b3261e;
-      --shadow: 0 1px 2px rgba(20, 40, 20, .06), 0 4px 14px rgba(20, 40, 20, .06);
+      --surface: #fcfdf7; --on-surface: #1a1c19; --muted: #43483f; --card: #eef2e9; --card-high: #e6e9e0; --card-highest: #e0e4db;
+      --primary: #2e7d32; --on-primary: #fff; --container: #b6f2af; --on-container: #002204; --secondary: #d3e8cf; --on-secondary: #0f1f11;
+      --tertiary: #bcebf1; --on-tertiary: #001f23; --error: #ba1a1a; --outline: #73796e; --outline-variant: #c3c8bb;
+      --nav-h: 80px;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #0f130f; --surface: #1a2019; --surface-2: #222a21; --text: #e2e7dd; --muted: #a2ac9e; --line: #2c342b;
-        --primary: #8fd98b; --on-primary: #00390a; --tint: #24402a; --on-tint: #c8f0c3; --price: #9be196; --error: #ffb4ab;
-        --shadow: none;
+        --surface: #111410; --on-surface: #e1e4dc; --muted: #c3c8bb; --card: #1d211b; --card-high: #272b25; --card-highest: #32362f;
+        --primary: #8bd88a; --on-primary: #00390a; --container: #0f5223; --on-container: #b6f2af; --secondary: #3a4b39; --on-secondary: #d3e8cf;
+        --tertiary: #1f4d53; --on-tertiary: #bcebf1; --error: #ffb4ab; --outline: #8d9387; --outline-variant: #43483f;
       }
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      padding: calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 32px); }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font: 16px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; overflow: hidden; }
     svg { width: 18px; height: 18px; fill: currentColor; flex: none; }
-    .top { display: flex; align-items: center; gap: 12px; margin: 4px 0 18px; }
-    .top img { width: 44px; height: 44px; border-radius: 12px; box-shadow: var(--shadow); }
-    .top h1 { font-size: 24px; line-height: 28px; margin: 0; letter-spacing: -.01em; }
-    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-    .status i { width: 8px; height: 8px; border-radius: 50%; background: #43a047; }
+    button { font-family: inherit; color: inherit; }
+
+    /* Pages side by side; the bar under them picks one, a swipe moves between them. The frame
+       clips them: otherwise a phone zooms out to show the whole row. */
+    #app { position: fixed; inset: 0; overflow: hidden; }
+    #pages { display: flex; height: 100%; transition: transform .32s cubic-bezier(.2, .8, .2, 1); will-change: transform; }
+    #pages.drag { transition: none; }
+    .page { flex: 0 0 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y;
+      padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + var(--nav-h) + 24px); }
+    .page > h1 { font-size: 32px; line-height: 40px; font-weight: 400; margin: 8px 4px 4px; letter-spacing: -.01em; }
+    .single { overflow-y: auto; height: 100%; padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 32px); }
+
+    nav { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--card); padding-bottom: env(safe-area-inset-bottom); z-index: 5; }
+    nav[hidden] { display: none; }
+    nav button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0 14px; border: 0; background: none; color: var(--muted); min-width: 0; }
+    nav .pill { width: 64px; height: 32px; border-radius: 16px; display: grid; place-items: center; transition: background-color .2s; }
+    nav .pill svg { width: 24px; height: 24px; }
+    nav span { font-size: 12px; font-weight: 600; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    nav button.on { color: var(--on-surface); }
+    nav button.on .pill { background: var(--secondary); color: var(--on-secondary); }
+    /* The selected tab's pill grows out of its middle with a little overshoot, as on Android. */
+    nav button.grow .pill { animation: grow .38s cubic-bezier(.3, 1.6, .5, 1); }
+    @keyframes grow { from { transform: scaleX(.5); } }
+
+    .status { display: flex; align-items: center; gap: 8px; margin: 4px 4px 0; font-size: 13px; color: var(--muted); }
+    .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); flex: none; }
+    .status.old i { background: var(--outline); }
+    .muted { color: var(--muted); font-size: 14px; }
+    p { margin: 6px 0; }
+
+    /* Today: the timer card, its colour by the phase. */
+    .hero { --bg: var(--card); --fg: var(--on-surface); background: var(--bg); color: var(--fg); border-radius: 32px; padding: 24px 20px 28px; margin-top: 16px;
+      display: flex; flex-direction: column; align-items: center; min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--nav-h) - 160px);
+      justify-content: center; transition: background-color .4s, color .4s; }
+    .hero.await { --bg: var(--container); --fg: var(--on-container); }
+    .hero.rest { --bg: var(--tertiary); --fg: var(--on-tertiary); }
+    .hero.done { --bg: var(--secondary); --fg: var(--on-secondary); }
+    .dial { position: relative; width: min(100%, 300px); aspect-ratio: 1; }
+    .dial.spring { animation: spring .42s cubic-bezier(.3, 1.6, .5, 1); }
+    @keyframes spring { from { transform: scale(.92); } }
+    .dial canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .dial .face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; }
+    .dial .state { font-size: 12.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+    .dial .time { font-size: 64px; line-height: 1; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+    .dial .time.over { color: var(--error); }
+    .hero .title { font-size: 24px; line-height: 30px; text-align: center; margin-top: 16px; overflow-wrap: anywhere; }
+    .hero .sub { font-size: 14px; text-align: center; opacity: .8; margin-top: 4px; max-width: 32em; }
+    .note { background: var(--card); border-radius: 28px; padding: 20px; margin-top: 16px; color: var(--muted); font-size: 15px; }
+
+    /* Plan */
+    .total { margin: 4px 4px 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+    .bar { height: 4px; border-radius: 2px; background: var(--outline-variant); overflow: hidden; }
+    .bar i { display: block; height: 100%; border-radius: 2px; background: var(--primary); width: 0; transition: width .7s cubic-bezier(.2, .8, .2, 1); }
+    .total + .bar { margin: 10px 4px 0; }
+    .rows { background: var(--card); border-radius: 28px; padding: 8px; margin-top: 16px; }
+    .rowi { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border-radius: 20px; }
+    .rowi + .rowi { margin-top: 4px; }
+    .rowi.now { background: var(--secondary); color: var(--on-secondary); }
+    .rowi .grow { flex: 1; min-width: 0; }
+    .rowi .name { font-weight: 600; overflow-wrap: anywhere; }
+    .rowi.seg .name { font-weight: 400; color: var(--muted); }
+    .rowi .meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .rowi.now .meta, .rowi.now .name { color: inherit; }
+    .rowi .bar { margin-top: 8px; }
+    .rowi.now .bar { background: color-mix(in srgb, var(--on-secondary) 20%, transparent); }
+    .rowi.now .bar i { background: var(--on-secondary); }
+    .mark { width: 20px; display: grid; place-items: center; flex: none; color: var(--muted); }
+    .mark.ok { color: var(--primary); }
+    .mark i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--muted); }
+    .rowi.now .mark i { background: var(--on-secondary); border-color: var(--on-secondary); }
+    .empty { padding: 12px; color: var(--muted); font-size: 14px; }
+
+    /* Cards and controls */
     h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 26px 4px 10px; font-weight: 600; }
     h3 { display: flex; align-items: center; gap: 8px; font-size: 17px; margin: 20px 4px 10px; }
     h3 svg { color: var(--primary); }
-    p { margin: 6px 0; }
-    .muted { color: var(--muted); font-size: 14px; }
-    .card { background: var(--surface); border-radius: 18px; padding: 14px 16px; margin: 10px 0; box-shadow: var(--shadow); }
+    .card { background: var(--card); border-radius: 28px; padding: 16px 20px; margin: 12px 0; }
+    .setting { display: flex; align-items: center; gap: 14px; padding: 6px 0; }
+    .setting + .setting { border-top: 1px solid var(--outline-variant); padding-top: 14px; margin-top: 8px; }
+    .setting .grow { flex: 1; min-width: 0; }
+    .setting .t { font-weight: 600; overflow-wrap: anywhere; }
+    .badge { width: 40px; height: 40px; border-radius: 50%; background: var(--secondary); color: var(--on-secondary); display: grid; place-items: center; flex: none; }
+    .badge svg { width: 22px; height: 22px; }
+    .chipon { display: inline-flex; padding: 4px 12px; border-radius: 8px; background: var(--secondary); color: var(--on-secondary); font-size: 12px; font-weight: 700; }
     .meals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .meal { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 6px; border: 0; border-radius: 16px;
-      background: var(--surface); color: var(--text); font: 600 15px/18px inherit; font-family: inherit; box-shadow: var(--shadow); }
+    .meal { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 6px; border: 0; border-radius: 24px;
+      background: var(--card); color: var(--on-surface); font: 600 15px/18px inherit; font-family: inherit; }
     .meal svg { width: 26px; height: 26px; color: var(--primary); }
     .meal.on { background: var(--primary); color: var(--on-primary); }
     .meal.on svg { color: var(--on-primary); animation: pulse 1.2s ease-in-out infinite; }
     @keyframes pulse { 50% { opacity: .35; } }
-    .note { margin: 10px 4px 0; }
+    .hint { margin: 10px 4px 0; }
     .picks-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 26px 4px 4px; }
     .picks-head h2 { margin: 0; }
-    .venue { background: var(--surface); border-radius: 18px; margin: 10px 0; box-shadow: var(--shadow); overflow: hidden; }
-    .banner { height: 112px; background: var(--surface-2) center / cover no-repeat; }
+    .venue { background: var(--card); border-radius: 28px; margin: 12px 0; overflow: hidden; }
+    .banner { height: 112px; background: var(--card-highest) center / cover no-repeat; }
     .vhead { display: flex; align-items: center; gap: 12px; padding: 14px 16px 10px; }
     .vhead .grow { flex: 1; min-width: 0; }
     .vname { font-weight: 700; font-size: 17px; line-height: 22px; overflow-wrap: anywhere; }
-    .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-    .pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 13px; }
-    .pill svg { width: 14px; height: 14px; }
-    .open { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 999px; background: var(--tint); color: var(--on-tint);
+    .meta-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .pill2 { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--card-highest); color: var(--muted); font-size: 13px; }
+    .pill2 svg { width: 14px; height: 14px; }
+    .open { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 999px; background: var(--secondary); color: var(--on-secondary);
       text-decoration: none; font-weight: 600; font-size: 15px; white-space: nowrap; }
     .open svg { width: 16px; height: 16px; }
-    a.item { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); color: inherit; text-decoration: none; }
-    a.item:active { background: var(--surface-2); }
+    a.item { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--outline-variant); color: inherit; text-decoration: none; }
+    a.item:active { background: var(--card-high); }
     .item .grow { flex: 1; min-width: 0; }
-    .thumb { width: 56px; height: 56px; border-radius: 12px; object-fit: cover; flex: none; background: var(--surface-2); }
+    .thumb { width: 56px; height: 56px; border-radius: 12px; object-fit: cover; flex: none; background: var(--card-highest); }
     .iname { font-weight: 600; }
     .why { display: flex; gap: 5px; align-items: flex-start; color: var(--muted); font-size: 14px; margin-top: 2px; }
     .why svg { width: 14px; height: 14px; margin-top: 3px; color: var(--primary); }
-    .price { color: var(--price); font-weight: 700; white-space: nowrap; }
+    .price { color: var(--primary); font-weight: 700; white-space: nowrap; }
     .chev { color: var(--muted); width: 20px; height: 20px; }
-    .total { display: flex; justify-content: space-between; padding: 10px 16px 14px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
-    .total b { color: var(--text); }
+    .sum { display: flex; justify-content: space-between; padding: 10px 16px 14px; border-top: 1px solid var(--outline-variant); font-size: 14px; color: var(--muted); }
+    .sum b { color: var(--on-surface); }
     details.card summary { list-style: none; display: flex; align-items: center; justify-content: space-between; font-weight: 600; cursor: pointer; }
     details.card summary::-webkit-details-marker { display: none; }
-    details.card summary .muted { font-weight: 400; }
     details[open] summary { margin-bottom: 12px; }
+    details[open] summary .chev { transform: rotate(90deg); }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-    .chip { border: 1px solid var(--line); background: none; color: var(--text); border-radius: 999px; padding: 7px 14px; font: 500 14px/18px inherit; font-family: inherit; }
-    .chip.on { background: var(--tint); color: var(--on-tint); border-color: transparent; }
-    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 999px; padding: 11px 20px;
+    .chip { border: 1px solid var(--outline-variant); background: none; color: var(--on-surface); border-radius: 8px; padding: 7px 14px; font: 500 14px/18px inherit; font-family: inherit; }
+    .chip.on { background: var(--secondary); color: var(--on-secondary); border-color: transparent; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 999px; padding: 12px 22px; min-height: 48px;
       font: 600 15px/20px inherit; font-family: inherit; background: var(--primary); color: var(--on-primary); text-decoration: none; }
-    .btn.text { background: none; color: var(--primary); padding: 10px 4px; }
-    input, textarea { width: 100%; font: inherit; color: inherit; background: var(--surface-2); border: 1px solid transparent; border-radius: 14px; padding: 12px 14px; }
+    .btn.tonal { background: var(--secondary); color: var(--on-secondary); }
+    .btn.text { background: none; color: var(--primary); padding: 10px 8px; min-height: 0; }
+    .btn:active { transform: scale(.97); }
+    input, textarea { width: 100%; font: inherit; color: inherit; background: var(--card-highest); border: 1px solid transparent; border-radius: 16px; padding: 12px 14px; }
     textarea:focus, input:focus { outline: none; border-color: var(--primary); }
     input.code { font-size: 22px; letter-spacing: .12em; text-transform: uppercase; text-align: center; }
     .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
     .error { color: var(--error); }
-    #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); background: var(--text); color: var(--bg);
-      border-radius: 14px; padding: 12px 16px; display: none; box-shadow: var(--shadow); }
+    .brand { display: flex; align-items: center; gap: 12px; margin: 8px 4px 18px; }
+    .brand img { width: 48px; height: 48px; border-radius: 12px; }
+    .brand h1 { font-size: 28px; line-height: 34px; font-weight: 400; margin: 0; }
+    #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + var(--nav-h) + 12px); background: var(--on-surface); color: var(--surface);
+      border-radius: 14px; padding: 12px 16px; display: none; z-index: 6; }
+    @media (prefers-reduced-motion: reduce) {
+      #pages, .hero, nav .pill { transition: none; }
+      nav button.grow .pill, .dial.spring { animation: none; }
+    }
   </style>
 </head>
 <body>
-  <header class="top"><img src="apple-touch-icon.png" alt=""><div><h1>ClockManage</h1><span class="status" id="status" hidden><i></i><span></span></span></div></header>
   <main id="app"></main>
+  <nav id="nav" hidden></nav>
   <div id="toast" role="status"></div>
   <script type="module" src="app.js"></script>
 </body>

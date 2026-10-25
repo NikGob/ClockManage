@@ -5,6 +5,7 @@ pub mod clock;
 pub mod config;
 pub mod day;
 pub mod i18n;
+pub mod iphone;
 pub mod mcp;
 pub mod meals;
 pub mod phone;

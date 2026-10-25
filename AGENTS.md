@@ -114,7 +114,7 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 - `core/src/i18n.rs`: `Lang`, `LangPref`, `from_locale` and `FILES`.
 - `src-tauri/src/system.rs`: map the Windows UI language id to the new `Lang`.
 - `ui/js/i18n.js`: the accepted codes, the `navigator.language` check, `LOCALE`, `dec()` and `followLang`.
-- `pwa/app.js`: the `navigator.language` check and `LOCALE` of the iPhone web app.
+- `pwa/app.js`: the `navigator.language` check, `LOCALE` and `setLang` of the iPhone web app (it follows the PC's language once a day message brings it).
 - `android/.../I18n.kt`, plus `res/values-<lang>/strings.xml`.
 - `src-tauri/linux/`: the polkit action's description and message, and the `.desktop` comment.
 - `core/tests/locales.rs`: compare every locale file, not only `ru` and `en`.
@@ -127,6 +127,8 @@ Copying a locale file is not enough: the list of languages is wired into the cod
 ## Meals: an optional feature
 
 Meals is off by default (`Config::meals.enabled`, *Settings → Meals*). While it is off nothing of it may run: its thread isn't started (`meals::wake` starts it when it is turned on), it makes no requests, the menu has no Meals screen and MCP neither lists nor runs its tools (`MEAL_TOOLS` in `core/src/mcp.rs`). Keep it that way for anything you add to Meals, and gate new Meals commands with `check_on`.
+
+The paired iPhone is not part of Meals: its relay thread (`src-tauri/src/iphone.rs`) runs while an iPhone is linked and sends it the day. What the web app sends for Meals goes to `meals::from_phone`, which ignores it while Meals is off; Meals sends its picks and the diet through `iphone::send` and `iphone::push`, only while it is on.
 
 ### Adding a delivery service
 
@@ -158,7 +160,8 @@ Texts never name a service: they take the brand name as `{service}`.
 | build, CI, installer (`.github/workflows/`, `Cargo.toml`, `src-tauri/tauri.conf.json`, `src-tauri/tauri.linux.conf.json`, `scripts/linux-smoke.sh`) | Install, Development |
 | the i18n machinery or a language | the Languages badge, Good to know, the localization paragraph in Development |
 | the phone app (`android/`, `core/src/phone.rs`, `src-tauri/src/phone_server.rs`) | Android companion |
-| meals, delivery services, the iPhone web app (`core/src/meals.rs`, `core/src/wolt.rs`, `src-tauri/src/meals.rs`, `pwa/`) | Food that fits your diet, the MCP tool table, Good to know (internet requests) |
+| meals, delivery services (`core/src/meals.rs`, `core/src/wolt.rs`, `src-tauri/src/meals.rs`) | Food that fits your diet, the MCP tool table, Good to know (internet requests) |
+| the iPhone web app and its relay (`pwa/`, `core/src/iphone.rs`, `core/src/relay.rs`, `src-tauri/src/iphone.rs`, `scripts/media/iphone-day.mjs`) | iPhone companion, Good to know (internet requests), Development (the preview) |
 | top-level folders | the folder table in Development |
 
 ### Pictures
@@ -173,7 +176,7 @@ python scripts/media/build.py <stills> <frames> docs/media
 
 - Run the server in a second terminal, and the scripts from the repo root.
 - Recording needs Chrome at its default Windows path, Node 22+, Python with Pillow, and ffmpeg.
-- Use empty scratch folders, and create `<stills>` first. `capture.mjs` wipes the Chrome profile and each frames subfolder it records.
+- Use empty scratch folders, and create `<stills>` first. Keep `<chrome-profile>` on a short path (`C:\cmp`): past Windows' 260-character paths Chrome's cache storage fails and the iPhone pictures lose their picks. `capture.mjs` wipes the Chrome profile and each frames subfolder it records.
 - `build.py` rebuilds every picture from a full capture, so run `capture.mjs` without names.
 - If you can't record, say so in the PR description.
 

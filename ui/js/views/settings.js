@@ -4,6 +4,7 @@ import { applyTheme } from '../theme.js';
 import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm, isoShift, rangeLabel } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
 import { NIKGOB } from '../logo.js';
+import { utcLabel, tzOptions } from './dialogs.js';
 
 const SWATCHES = [
   ['#2E7D32', tr('settings_green')], ['#00796B', tr('settings_teal')], ['#1565C0', tr('settings_blue')], ['#5E35B1', tr('settings_purple')],
@@ -52,13 +53,6 @@ const VARIANT_TIP = {
   vibrant: tr('settings_maximum_colour_everywhere'),
 };
 
-/** "UTC+03:00" for an offset in minutes. */
-function utcLabel(min) {
-  const a = Math.abs(min);
-  return `UTC${min < 0 ? '−' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
-}
-const TZ_OFFSETS = Array.from({ length: (840 + 720) / 30 + 1 }, (_, i) => -720 + i * 30);
-
 function snap(v, dir, step) {
   if (dir > 0) return v < step ? v + 1 : (Math.floor(v / step) + 1) * step;
   return v <= step ? v - 1 : (Math.ceil(v / step) - 1) * step;
@@ -74,6 +68,7 @@ function onColor(hex) {
 export function mountSettings(root, ctx) {
   let cfg = null;
   let last = null;
+  let iphone = null;
   let pulse = null; // selector of the control the user just changed
 
   root.innerHTML = `<div class="readable" id="settings"></div>`;
@@ -206,8 +201,31 @@ export function mountSettings(root, ctx) {
           ${on && ph.apk?.available ? `<div class="setting"><div class="grow"><div class="t">${tr('settings_phone_app')}</div><div class="d">${tr('settings_this_build_includes_version')} ${esc(ph.apk.name)} (${dec((ph.apk.size / 1048576).toFixed(1))} ${tr('settings_mb_a_paired_phone_offers_the')}</div></div></div>` : ''}
           ${on ? `<div class="setting"><div class="grow"><div class="d">${tr('settings_the_phone_and_the_pc_must')}</div></div>
             <button class="btn tonal interactive" id="phone-pin">${icon('add')}${tr('settings_pair_a_phone')}</button></div>` : ''}
+          ${iphoneRows()}
         </div>
       </section>`;
+  }
+
+  // The iPhone web app: the day and, while Meals is on, the picks, through ntfy.sh. It works
+  // with Meals off too.
+  function iphoneRows() {
+    if (!iphone) return '';
+    const pr = iphone.pairing;
+    const pair = pr ? `<div class="setting col pair-box">
+        <div class="t">${tr('meals_scan_with_the_iphone_camera')}</div>
+        <div class="qr">${pr.qr}</div>
+        <div class="d">${tr('meals_then_share_add_to_home_screen')}</div>
+        <div class="hstack"><span class="d">${tr('meals_or_type_the_code_in_the')}</span><span class="pin tnum">${esc(pr.code)}</span></div>
+        <div class="d">${tr('meals_the_code_works_until', { time: new Date(pr.until).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) })}</div>
+        <div class="hstack"><code class="code">${esc(pr.url)}</code><button class="icon-btn interactive" data-copy="${esc(pr.url)}" aria-label="${tr('settings_copied')}">${icon('copy')}</button></div>
+      </div>` : '';
+    return `<div class="setting"><span class="badge">${icon('phone')}</span>
+        <div class="grow"><div class="t">${iphone.paired ? tr('meals_iphone_connected') : tr('meals_no_iphone_yet')}</div><div class="d">${tr('settings_the_day_and_meal_picks_come')}${iphone.error ? ` · ${esc(iphone.error)}` : ''}</div></div>
+        ${iphone.linked ? `<button class="btn text interactive" id="iphone-unpair">${tr('settings_unpair')}</button>` : ''}
+        <button class="btn tonal interactive" id="iphone-pair">${icon('add')}${iphone.paired ? tr('meals_pair_again') : tr('meals_pair_an_iphone')}</button></div>
+      ${pair}
+      <details class="setting col more"><summary class="t interactive">${tr('meals_web_app_address')}</summary>
+        <div class="field"><input id="pwa" value="${esc(cfg.iphone.pwa_url)}" spellcheck="false" aria-label="${tr('meals_web_app_address')}"></div></details>`;
   }
 
   // Meals is optional: off, none of it runs, and its screen and MCP tools are hidden.
@@ -260,6 +278,12 @@ export function mountSettings(root, ctx) {
     const ns = cfg.night_start;
     box.innerHTML = `
       ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_time')}</div></div>` : ''}
+      <section class="section">
+        <div class="surface">
+          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
+            <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${tzOptions(cfg.tz_offset_min)}</select></div></div>
+        </div>
+      </section>
       ${weekSection(locked, v.weekday)}
 
       <section class="section">
@@ -381,8 +405,6 @@ export function mountSettings(root, ctx) {
         <h2>${tr('settings_theme_system')}</h2>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_language')}${info('lang')}</div></div>${seg('lang', cfg.lang || 'auto', [['auto', tr('settings_auto')], ['ru', 'Русский'], ['en', 'English']])}</div>
-          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
-            <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${[...new Set([...TZ_OFFSETS, cfg.tz_offset_min])].sort((x, y) => x - y).map((o) => `<option value="${o}" ${o === cfg.tz_offset_min ? 'selected' : ''}>${utcLabel(o)}</option>`).join('')}</select></div></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${LINUX ? tr('settings_starts_when_you_sign_in_comes_back') : tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
           <div class="setting"><div class="grow"><div class="t">${LINUX ? tr('settings_site_blocking') : tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : LINUX ? tr('settings_no_hosts_and_browser_policies_need') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
         </div>
@@ -507,6 +529,8 @@ export function mountSettings(root, ctx) {
     } else if (t.type === 'time') {
       // Typing saves on leaving the field; a value picked without focus saves at once.
       if (document.activeElement !== t) commitTime(t);
+    } else if (t.id === 'pwa') {
+      save((c) => { c.iphone.pwa_url = t.value.trim(); });
     } else if (t.id === 'seed-in') {
       save((c) => { c.appearance.seed = t.value; });
     } else if (t.id === 'tz') {
@@ -581,6 +605,8 @@ export function mountSettings(root, ctx) {
     else if (t.id === 'checkupdate') call('check_update');
     else if (t.id === 'installupdate') await run(() => call('install_update'), t);
     else if (t.id === 'phone-pin') await run(() => call('phone_pin'), t);
+    else if (t.id === 'iphone-pair') { if (await run(() => call('iphone_pair'), t)) await refreshIphone(); }
+    else if (t.id === 'iphone-unpair') { await run(() => call('iphone_unpair'), t); await refreshIphone(); }
     else if (t.id === 'meals-open') ctx.navigate('meals');
     else if (t.dataset.segdel !== undefined) {
       const i = Number(t.dataset.segdel);
@@ -601,6 +627,12 @@ export function mountSettings(root, ctx) {
 
   async function reload() {
     cfg = await call('get_config');
+    iphone = await call('iphone_state');
+    render();
+  }
+
+  async function refreshIphone() {
+    iphone = await call('iphone_state');
     render();
   }
 
@@ -616,5 +648,6 @@ export function mountSettings(root, ctx) {
     },
     show() { reload(); },
     config() { reload(); },
+    iphone: refreshIphone,
   };
 }

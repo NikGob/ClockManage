@@ -3,6 +3,36 @@ import { icon } from '../icons.js';
 import { dialog, run, snack, holdButton } from '../ui.js';
 import { tr, dec } from '../i18n.js';
 
+/** "UTC+03:00" for an offset in minutes. */
+export function utcLabel(min) {
+  const a = Math.abs(min);
+  return `UTC${min < 0 ? '−' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+}
+const TZ_OFFSETS = Array.from({ length: (840 + 720) / 30 + 1 }, (_, i) => -720 + i * 30);
+
+/** The `<option>`s of a time zone picker: every half hour from UTC−12 to UTC+14, and `cur`. */
+export function tzOptions(cur) {
+  return [...new Set([...TZ_OFFSETS, cur])].sort((x, y) => x - y)
+    .map((o) => `<option value="${o}" ${o === cur ? 'selected' : ''}>${utcLabel(o)}</option>`).join('');
+}
+
+/** The first start: which clock the day goes by. The system's zone is picked already. */
+export function timeZoneDialog(cfg) {
+  return dialog(`
+    <h2>${tr('dialog_your_time_zone')}</h2>
+    <p class="body-m muted">${tr('dialog_the_day_end_the_autolock_and')}</p>
+    <div class="field"><label for="tz-in">${tr('settings_time_zone')}</label><select id="tz-in" autofocus>${tzOptions(cfg.tz_offset_min)}</select></div>
+    <div class="actions">
+      <button class="btn filled interactive" data-ok>${icon('check')}${tr('overlay_save')}</button>
+    </div>`, (d, close) => {
+    d.querySelector('[data-ok]').addEventListener('click', async (e) => {
+      const next = { ...cfg, tz_offset_min: Number(d.querySelector('#tz-in').value), ask_time_zone: false };
+      const saved = await run(() => call('save_config', { cfg: next }), e.currentTarget);
+      if (saved) close(saved);
+    });
+  });
+}
+
 export function singleDialog() {
   return dialog(`
     <h2>${tr('dialog_single_timer')}</h2>

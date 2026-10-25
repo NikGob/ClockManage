@@ -9,6 +9,7 @@ import { mountBlock } from './views/block.js';
 import { mountLog } from './views/log.js';
 import { mountSettings } from './views/settings.js';
 import { mountMeals } from './views/meals.js';
+import { timeZoneDialog } from './views/dialogs.js';
 import { tr, followLang } from './i18n.js';
 
 const ROUTES = [
@@ -142,6 +143,7 @@ function render(s) {
 on('state', render);
 on('config', () => screen?.config?.());
 on('meals', () => screen?.meals?.());
+on('iphone', () => screen?.iphone?.());
 on('navigate', (id) => go(id));
 // Changes made by the agent through MCP, so it is clear they were not mine.
 on('agent', (p) => snack(`${p.title}: ${p.text}`, 7000));
@@ -153,4 +155,7 @@ on('agent', (p) => snack(`${p.title}: ${p.text}`, 7000));
   const first = start === 'meals' ? await call('get_state') : null;
   go(first && !first.meta.meals ? 'today' : start);
   render(first || await call('get_state'));
+  // A new install asks which clock the day goes by.
+  const cfg = await call('get_config');
+  if (cfg.ask_time_zone && await timeZoneDialog(cfg)) screen?.config?.();
 })();

@@ -74,6 +74,7 @@ pub struct Shared {
     /// Bundled Android APK + apk.json (version), served to paired phones for self-update.
     pub apk_dir: Option<std::path::PathBuf>,
     pub meals: Mutex<crate::meals::MealsRt>,
+    pub iphone: Mutex<crate::iphone::IphoneRt>,
     /// The PC's colours for the phone app (`set_phone_theme`), kept in `phone-theme.json`.
     pub phone_theme: Mutex<Option<Value>>,
 }
@@ -1207,7 +1208,10 @@ impl McpHost for McpBridge {
     }
 
     fn get_diet(&self) -> Value {
-        let m = self.0.lock().cfg.meals.clone();
+        let (m, iphone_paired) = {
+            let g = self.0.lock();
+            (g.cfg.meals.clone(), g.cfg.iphone.subscription.is_some())
+        };
         json!({
             "diet": m.diet,
             "service": clockmanage_core::meals::service_name(&m.service),
@@ -1216,7 +1220,7 @@ impl McpHost for McpBridge {
             "max_km": m.max_km,
             "meal_times": m.times.iter().map(|t| clockmanage_core::config::fmt_hm(*t)).collect::<Vec<_>>(),
             "lead_min": m.lead_min,
-            "iphone_paired": m.subscription.is_some(),
+            "iphone_paired": iphone_paired,
         })
     }
 
@@ -1585,8 +1589,8 @@ pub fn apply_config_as(shared: &Arc<Shared>, mut cfg: Config, by_agent: bool) ->
         cfg.phone.devices = g.cfg.phone.devices.clone();
         cfg.plan_overrides = g.cfg.plan_overrides.clone();
         // The iPhone link and the push keys change only through pairing.
-        let m = &g.cfg.meals;
-        (cfg.meals.link, cfg.meals.subscription, cfg.meals.vapid_key, cfg.meals.relay_seen) = (m.link.clone(), m.subscription.clone(), m.vapid_key.clone(), m.relay_seen);
+        let i = &g.cfg.iphone;
+        (cfg.iphone.link, cfg.iphone.subscription, cfg.iphone.vapid_key, cfg.iphone.relay_seen) = (i.link.clone(), i.subscription.clone(), i.vapid_key.clone(), i.relay_seen);
         let free = by_agent && g.cfg.agent_settings == AgentSettings::Always;
         let ctx = EditContext { locked: g.day.base_lock(now, &g.cfg) && !free };
         g.cfg.check_update(&cfg, ctx)?;

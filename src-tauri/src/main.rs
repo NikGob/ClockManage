@@ -4,6 +4,7 @@ mod app;
 mod blocker;
 #[cfg(target_os = "linux")]
 mod idle;
+mod iphone;
 mod mcp_server;
 mod meals;
 mod phone_server;
@@ -70,6 +71,7 @@ fn main() {
             let (mut cfg, first_run) = store.load_config_or_new();
             if first_run {
                 cfg.tz_offset_min = system::utc_offset_min();
+                cfg.ask_time_zone = true;
             }
             system::apply_lang(&cfg);
             let before_lang = cfg.clone();
@@ -118,6 +120,7 @@ fn main() {
                 finish_token: Mutex::new(None),
                 apk_dir: handle.path().resource_dir().ok().map(|d| d.join("resources").join("android")),
                 meals: Mutex::new(Default::default()),
+                iphone: Mutex::new(Default::default()),
                 phone_theme: Mutex::new(phone_theme),
             });
             tauri_app.manage(shared.clone());
@@ -145,6 +148,7 @@ fn main() {
             });
             app::spawn_ticker(shared.clone());
             meals::wake(&shared);
+            iphone::wake(&shared);
             updater::spawn(shared.clone());
 
             if !background {
@@ -197,10 +201,11 @@ fn main() {
             app::week_stats,
             meals::meals_state,
             meals::meals_pick_now,
-            meals::meals_pair,
-            meals::meals_unpair,
             meals::meals_geocode,
             meals::open_url,
+            iphone::iphone_state,
+            iphone::iphone_pair,
+            iphone::iphone_unpair,
             app::set_phone_theme,
             app::check_update,
             app::install_update,

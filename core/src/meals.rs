@@ -1,6 +1,6 @@
 //! Meals, an optional feature (off until turned on in Settings): a diet, the delivery address and
 //! meal times; before each meal an agent picks restaurants and dishes of a delivery service that
-//! fit, and the picks go to the Meals screen and the iPhone.
+//! fit, and the picks go to the Meals screen and the paired iPhone (`crate::iphone`).
 //!
 //! The delivery services are listed in `SERVICES`; each one parses its own data (`crate::wolt`)
 //! and is wired in by the app (`Service` in `src-tauri/src/meals.rs`).
@@ -17,10 +17,6 @@ use crate::webpush::{Subscription, MAX_PLAINTEXT};
 pub const AGENT_TOOLS: &str = "mcp__clockmanage__get_diet mcp__clockmanage__food_search mcp__clockmanage__food_menu mcp__clockmanage__set_meal_options";
 /// The command of 0.5 builds, before the agent picker: a config holding it means Claude Code.
 const OLD_DEFAULT_AGENT: &str = "claude -p --mcp-config \"{mcp_config}\" --strict-mcp-config --allowedTools \"mcp__clockmanage__get_diet mcp__clockmanage__wolt_search mcp__clockmanage__wolt_menu mcp__clockmanage__set_meal_options\"";
-pub const DEFAULT_PWA: &str = "https://nikgob.github.io/ClockManage/";
-/// The web app's address in builds of the Meals PR, before it moved to the owner's Pages: it
-/// always turns into `DEFAULT_PWA`, so this exact address can't be chosen by hand.
-const OLD_DEFAULT_PWA: &str = "https://danilt2000.github.io/ClockManage/";
 pub const MAX_KM: f64 = 15.0;
 
 /// Delivery services food can come from: (id in the config, the brand name shown). A new one
@@ -55,14 +51,17 @@ pub struct Meals {
     /// The custom agent's shell command: the prompt comes on stdin, `{mcp_url}` is the MCP
     /// address and `{mcp_config}` a Claude-style config file.
     pub agent_cmd: String,
-    /// Where the iPhone web app is hosted (the QR code opens it).
-    pub pwa_url: String,
-    /// VAPID private key of this PC, made on first use.
-    pub vapid_key: String,
-    pub link: Option<Link>,
-    pub subscription: Option<Subscription>,
-    /// ntfy time of the last phone message applied.
-    pub relay_seen: i64,
+    /// Before 0.7 the iPhone lived here: read only, `Config::normalize` moves it to `iphone`.
+    #[serde(rename = "pwa_url", skip_serializing)]
+    pub old_pwa_url: Option<String>,
+    #[serde(rename = "vapid_key", skip_serializing)]
+    pub old_vapid_key: Option<String>,
+    #[serde(rename = "link", skip_serializing)]
+    pub old_link: Option<Link>,
+    #[serde(rename = "subscription", skip_serializing)]
+    pub old_subscription: Option<Subscription>,
+    #[serde(rename = "relay_seen", skip_serializing)]
+    pub old_relay_seen: Option<i64>,
 }
 
 /// A diet for a clear head on study days; the user's own replaces it.
@@ -84,11 +83,11 @@ impl Default for Meals {
             lead_min: 30,
             agent: "claude".into(),
             agent_cmd: String::new(),
-            pwa_url: DEFAULT_PWA.into(),
-            vapid_key: String::new(),
-            link: None,
-            subscription: None,
-            relay_seen: 0,
+            old_pwa_url: None,
+            old_vapid_key: None,
+            old_link: None,
+            old_subscription: None,
+            old_relay_seen: None,
         }
     }
 }
@@ -111,9 +110,6 @@ impl Meals {
         }
         if !SERVICES.iter().any(|s| s.0 == self.service) {
             self.service = SERVICES[0].0.into();
-        }
-        if self.pwa_url.trim().is_empty() || self.pwa_url == OLD_DEFAULT_PWA {
-            self.pwa_url = DEFAULT_PWA.into();
         }
     }
 
@@ -317,16 +313,6 @@ mod tests {
         let mut m = Meals { agent: "custom".into(), agent_cmd: "codex exec -".into(), ..Meals::default() };
         m.normalize();
         assert_eq!((m.agent.as_str(), m.agent_cmd.as_str()), ("custom", "codex exec -"));
-    }
-
-    #[test]
-    fn the_old_web_app_address_moves_to_the_owners_pages() {
-        let mut m = Meals { pwa_url: OLD_DEFAULT_PWA.into(), ..Meals::default() };
-        m.normalize();
-        assert_eq!(m.pwa_url, DEFAULT_PWA);
-        let mut m = Meals { pwa_url: "https://example.org/cm/".into(), ..Meals::default() };
-        m.normalize();
-        assert_eq!(m.pwa_url, "https://example.org/cm/");
     }
 
     #[test]
