@@ -15,6 +15,8 @@ let update = q.get('update') || 'latest';
 
 const cfg = {
   week: ['full', 'full', 'light', 'full', 'full', 'off', 'off'], day_end_min: 1320, tz_offset_min: 180,
+  // ?tz=ask: a first start, which asks for the time zone.
+  ask_time_zone: q.get('tz') === 'ask',
   night_start: { enabled: true, until_min: 300, after_day_end: true, hold_sec: 2 }, lang: q.get('lang') || 'auto',
   // ?off=1: time off takes in today.
   time_off: q.get('off') === '1' ? [{ from: '2026-09-26', to: '2026-10-04' }] : [{ from: '2026-10-19', to: '2026-10-25' }],

@@ -71,6 +71,7 @@ fn main() {
             let (mut cfg, first_run) = store.load_config_or_new();
             if first_run {
                 cfg.tz_offset_min = system::utc_offset_min();
+                cfg.ask_time_zone = true;
             }
             system::apply_lang(&cfg);
             let before_lang = cfg.clone();

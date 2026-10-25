@@ -430,6 +430,9 @@ pub struct Config {
     pub day_end_min: u32,
     /// Offset of the "study clock" from UTC. Moscow = +180, no DST.
     pub tz_offset_min: i32,
+    /// The first start asks for the time zone (the system's is set meanwhile); off once answered.
+    /// Missing in an old config.json -> false: it has its zone already.
+    pub ask_time_zone: bool,
     pub timing: Timing,
     pub blocklist: BlockList,
     /// Open blocked things during the break between blocks (until the break timer runs out;
@@ -496,6 +499,7 @@ impl Default for Config {
             profiles: Profiles::default(),
             day_end_min: 22 * 60,
             tz_offset_min: 180,
+            ask_time_zone: false,
             timing: Timing::default(),
             blocklist: BlockList::default(),
             break_access: false,

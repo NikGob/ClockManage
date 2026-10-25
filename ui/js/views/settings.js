@@ -4,6 +4,7 @@ import { applyTheme } from '../theme.js';
 import { run, snack, menu, WEEKDAYS, WEEKDAYS_FULL, KINDS, kindLabel, planSummary, hm, isoShift, rangeLabel } from '../ui.js';
 import { tr, LOCALE, dec } from '../i18n.js';
 import { NIKGOB } from '../logo.js';
+import { utcLabel, tzOptions } from './dialogs.js';
 
 const SWATCHES = [
   ['#2E7D32', tr('settings_green')], ['#00796B', tr('settings_teal')], ['#1565C0', tr('settings_blue')], ['#5E35B1', tr('settings_purple')],
@@ -51,13 +52,6 @@ const VARIANT_TIP = {
   tonal_spot: tr('settings_muted_tones_like_androids_default'),
   vibrant: tr('settings_maximum_colour_everywhere'),
 };
-
-/** "UTC+03:00" for an offset in minutes. */
-function utcLabel(min) {
-  const a = Math.abs(min);
-  return `UTC${min < 0 ? '−' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
-}
-const TZ_OFFSETS = Array.from({ length: (840 + 720) / 30 + 1 }, (_, i) => -720 + i * 30);
 
 function snap(v, dir, step) {
   if (dir > 0) return v < step ? v + 1 : (Math.floor(v / step) + 1) * step;
@@ -284,6 +278,12 @@ export function mountSettings(root, ctx) {
     const ns = cfg.night_start;
     box.innerHTML = `
       ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_time')}</div></div>` : ''}
+      <section class="section">
+        <div class="surface">
+          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
+            <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${tzOptions(cfg.tz_offset_min)}</select></div></div>
+        </div>
+      </section>
       ${weekSection(locked, v.weekday)}
 
       <section class="section">
@@ -405,8 +405,6 @@ export function mountSettings(root, ctx) {
         <h2>${tr('settings_theme_system')}</h2>
         <div class="surface">
           <div class="setting"><div class="grow"><div class="t">${tr('settings_language')}${info('lang')}</div></div>${seg('lang', cfg.lang || 'auto', [['auto', tr('settings_auto')], ['ru', 'Русский'], ['en', 'English']])}</div>
-          <div class="setting${locked ? ' off' : ''}"><div class="grow"><div class="t">${tr('settings_time_zone')}${info('tz')}</div></div>
-            <div class="field"><select id="tz" aria-label="${tr('settings_time_zone')}" ${locked ? 'disabled' : ''}>${[...new Set([...TZ_OFFSETS, cfg.tz_offset_min])].sort((x, y) => x - y).map((o) => `<option value="${o}" ${o === cfg.tz_offset_min ? 'selected' : ''}>${utcLabel(o)}</option>`).join('')}</select></div></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_autostart_and_self_healing')}</div><div class="d">${LINUX ? tr('settings_starts_when_you_sign_in_comes_back') : tr('settings_starts_with_windows_comes_back_after')}</div></div>${sw('autostart', cfg.autostart, tr('settings_autostart'), 'autostart', locked && cfg.autostart)}</div>
           <div class="setting"><div class="grow"><div class="t">${LINUX ? tr('settings_site_blocking') : tr('settings_administrator_rights')}</div><div class="d">${m.admin ? tr('settings_yes_the_lock_works_fully') : LINUX ? tr('settings_no_hosts_and_browser_policies_need') : tr('settings_no_hosts_browser_policies_and_closing')}</div></div>${icon(m.admin ? 'shield' : 'warning')}</div>
         </div>
