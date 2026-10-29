@@ -298,6 +298,12 @@ pub struct Phone {
 pub const PHONE_PORT: u16 = 47811;
 /// UDP port the PC answers discovery broadcasts on.
 pub const PHONE_DISCOVERY_PORT: u16 = 47810;
+/// Port of the local MCP server until the user picks another. It never changes by itself: MCP
+/// clients keep the address.
+pub const MCP_PORT: u16 = 47812;
+/// MCP ports the user can pick. From 49152 on Windows hands out ports to outgoing connections,
+/// and Hyper-V / WSL / Docker reserve blocks there at every boot: a reserved port never frees up.
+pub const MCP_PORTS: std::ops::RangeInclusive<u16> = 1024..=49_151;
 
 impl Default for Phone {
     fn default() -> Self {
@@ -512,7 +518,7 @@ impl Default for Config {
             autostart: true,
             auto_update: true,
             mcp_enabled: true,
-            mcp_port: 0,
+            mcp_port: MCP_PORT,
             agent_settings: AgentSettings::default(),
             appearance: Appearance::default(),
             lang: LangPref::Auto,
@@ -708,6 +714,10 @@ impl Config {
         self.segments = segs;
         if self.phone.port < 1024 {
             self.phone.port = PHONE_PORT;
+        }
+        // 0 was the old default, and installs before 0.4.8 drew ports up to 64999: those move once.
+        if !MCP_PORTS.contains(&self.mcp_port) {
+            self.mcp_port = MCP_PORT;
         }
         self.phone.apps = normalize_list(&self.phone.apps, normalize_package);
         self.phone.devices.retain(|d| d.token.len() >= 16);
@@ -994,6 +1004,21 @@ pub fn fmt_hm(min: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_port_stays_put() {
+        let mut c: Config = serde_json::from_str(r#"{"mcp_port": 0}"#).unwrap();
+        c.normalize();
+        assert_eq!(c.mcp_port, MCP_PORT);
+        c.mcp_port = 22126;
+        c.normalize();
+        assert_eq!(c.mcp_port, 22126);
+        for moved in [80, 52154] {
+            c.mcp_port = moved;
+            c.normalize();
+            assert_eq!(c.mcp_port, MCP_PORT);
+        }
+    }
 
     #[test]
     fn site_normalization() {

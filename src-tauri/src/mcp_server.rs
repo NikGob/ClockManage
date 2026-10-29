@@ -6,6 +6,7 @@
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use clockmanage_core::mcp;
 use serde::Serialize;
@@ -25,17 +26,14 @@ pub struct McpStatus {
 
 #[derive(Default)]
 pub struct McpServer {
-    server: Mutex<Option<Arc<Server>>>,
+    /// The running server, and a count of stops: a thread still waiting for its port gives up
+    /// once the count moves on.
+    server: Mutex<(u64, Option<Arc<Server>>)>,
     pub status: Mutex<McpStatus>,
 }
 
-/// Below 49152: Windows uses 49152–65535 as its dynamic range, and Hyper-V / WSL / Docker
-/// reserve blocks of it at every boot, so a port there can become unbindable after a restart
-/// and the server would move to a new port behind the client's back.
-pub fn random_port() -> u16 {
-    use rand::Rng;
-    rand::thread_rng().gen_range(20_000..=49_151)
-}
+/// How often a busy port is tried again.
+const RETRY: Duration = Duration::from_secs(2);
 
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid header")
@@ -48,48 +46,30 @@ fn allowed_origin(origin: &str, port: u16) -> bool {
 
 impl McpServer {
     pub fn stop(&self) {
-        if let Some(s) = self.server.lock().unwrap().take() {
+        let mut slot = self.server.lock().unwrap();
+        slot.0 += 1;
+        if let Some(s) = slot.1.take() {
             s.unblock();
         }
-        let mut st = self.status.lock().unwrap();
-        st.running = false;
+        drop(slot);
+        self.status.lock().unwrap().running = false;
     }
 
-    /// (Re)start on `port`. Returns the port actually used (a busy port is replaced).
-    pub fn start(&self, shared: Arc<Shared>, enabled: bool, mut port: u16) -> u16 {
+    /// (Re)start on `port`. The port never moves by itself, or MCP clients would keep knocking
+    /// on the old address: while another program (or the copy of the app that is closing) holds
+    /// it, the status says so and the port is tried again until it is free.
+    pub fn start(&self, shared: Arc<Shared>, enabled: bool, port: u16) {
         self.stop();
-        let mut st = McpStatus { enabled, port, ..Default::default() };
+        let url = format!("http://127.0.0.1:{port}/mcp");
+        *self.status.lock().unwrap() = McpStatus { enabled, port, url, ..Default::default() };
         if !enabled {
-            *self.status.lock().unwrap() = st;
-            return port;
+            return;
         }
-        let mut server = None;
-        for attempt in 0..8 {
-            if port == 0 || attempt > 0 {
-                port = random_port();
-            }
-            match Server::http(("127.0.0.1", port)) {
-                Ok(s) => {
-                    server = Some(Arc::new(s));
-                    break;
-                }
-                Err(e) => st.error = Some(tr!("mcp_port_is_busy", port = port, e = e)),
-            }
-        }
-        st.port = port;
-        st.url = format!("http://127.0.0.1:{port}/mcp");
-        let Some(server) = server else {
-            *self.status.lock().unwrap() = st;
-            return port;
-        };
-        st.running = true;
-        st.error = None;
-        *self.status.lock().unwrap() = st;
-        *self.server.lock().unwrap() = Some(server.clone());
-
+        let run = self.server.lock().unwrap().0;
         thread::Builder::new()
             .name("mcp".into())
             .spawn(move || {
+                let Some(server) = shared.mcp.bind(port, run) else { return };
                 let host = crate::app::McpBridge(shared);
                 for mut req in server.incoming_requests() {
                     let origin_ok = req
@@ -149,6 +129,67 @@ impl McpServer {
                 }
             })
             .expect("spawn mcp thread");
-        port
+    }
+
+    /// `port` bound, waiting while it is busy. None once a stop came after start number `run`.
+    fn bind(&self, port: u16, run: u64) -> Option<Arc<Server>> {
+        loop {
+            let bound = Server::http(("127.0.0.1", port));
+            {
+                let mut slot = self.server.lock().unwrap();
+                if slot.0 != run {
+                    return None;
+                }
+                let mut st = self.status.lock().unwrap();
+                match bound {
+                    Ok(s) => {
+                        let s = Arc::new(s);
+                        slot.1 = Some(s.clone());
+                        st.running = true;
+                        st.error = None;
+                        return Some(s);
+                    }
+                    Err(e) => st.error = Some(tr!("mcp_port_is_busy", port = port, e = e)),
+                }
+            }
+            thread::sleep(RETRY);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_busy_port_is_waited_for_not_replaced() {
+        let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = other.local_addr().unwrap().port();
+        let mcp = Arc::new(McpServer::default());
+        let run = mcp.server.lock().unwrap().0;
+        let waiting = thread::spawn({
+            let mcp = mcp.clone();
+            move || mcp.bind(port, run).is_some()
+        });
+        thread::sleep(Duration::from_millis(300));
+        assert!(mcp.status.lock().unwrap().error.is_some());
+        drop(other);
+        assert!(waiting.join().unwrap());
+        let st = mcp.status.lock().unwrap().clone();
+        assert!(st.running && st.error.is_none());
+
+        // A stop ends the wait: the old port is given up, not taken later.
+        let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = other.local_addr().unwrap().port();
+        mcp.stop();
+        let run = mcp.server.lock().unwrap().0;
+        let waiting = thread::spawn({
+            let mcp = mcp.clone();
+            move || mcp.bind(port, run).is_some()
+        });
+        thread::sleep(Duration::from_millis(300));
+        mcp.stop();
+        assert!(!waiting.join().unwrap());
+        drop(other);
     }
 }

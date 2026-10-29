@@ -29,7 +29,7 @@ const cfg = {
   blocklist: { sites: ['web.telegram.org', 'x.com', 'twitter.com', 'twitch.tv', 'discord.com', 'youtube.com/shorts'], apps: ['Telegram.exe', 'Discord.exe'] },
   break_access: q.get('ba') === '1',
   emergency_phrase: L('Я осознанно прерываю учебный день, понимаю что это попадёт в лог, и через десять минут вернусь к работе', 'I am consciously interrupting my study day, I understand this goes to the log, and I will be back to work in ten minutes'),
-  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47213, agent_settings: 'outside_study',
+  emergency_min: 10, reminder_sec: 60, sound: true, overlay: true, restart_firefox: true, autostart: true, auto_update: true, mcp_enabled: true, mcp_port: 47812, agent_settings: 'outside_study',
   segments: [{ name: L('Обед', 'Lunch'), minutes: 45, alarm: false, open_access: false, prep_min: 0 }, { name: L('Сон', 'Nap'), minutes: 20, alarm: true, open_access: false, prep_min: 10 }, { name: L('Прогулка', 'Walk'), minutes: 15, alarm: false, open_access: false, prep_min: 0 }],
   phone: { enabled: q.get('phone') !== '0', port: 47811, apps: ['org.telegram.messenger', 'com.discord'], devices: [] },
   meals: {
@@ -166,7 +166,7 @@ function snapshot() {
       },
     },
     meta: {
-      admin: q.get('admin') !== '0', version: '0.5.0', mcp: { enabled: true, port: 47213, running: true, url: 'http://127.0.0.1:47213/mcp', error: null },
+      admin: q.get('admin') !== '0', version: '0.5.0', mcp: { enabled: cfg.mcp_enabled, port: cfg.mcp_port, running: cfg.mcp_enabled, url: `http://127.0.0.1:${cfg.mcp_port}/mcp`, error: null },
       phone: { enabled: cfg.phone.enabled, running: cfg.phone.enabled, port: 47811, address: '192.168.1.42', pc_name: 'DESKTOP-PC', error: null, pin: phonePin, pin_until: phonePin ? t0 + 2 * MIN : null,
         apk: { available: true, code: 42, name: '0.5.0 (58)', size: 812345 },
         devices: [{ id: 'a1b2c3', name: 'Pixel 8', paired_at: t0 - 86400000, last_seen: Date.now() - 2 * MIN, blocker: true }] },

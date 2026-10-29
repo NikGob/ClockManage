@@ -70,6 +70,7 @@ export function mountSettings(root, ctx) {
   let last = null;
   let iphone = null;
   let pulse = null; // selector of the control the user just changed
+  let rendering = false;
 
   root.innerHTML = `<div class="readable" id="settings"></div>`;
   const box = root.querySelector('#settings');
@@ -272,11 +273,11 @@ export function mountSettings(root, ctx) {
     const cmd = `claude mcp add --transport http clockmanage ${mcpUrl}`;
     const custom = !SWATCHES.some(([c]) => c.toLowerCase() === cfg.appearance.seed.toLowerCase());
     const focusKey = keyOf(document.activeElement);
-    // A time being typed survives a re-render that the state brings meanwhile.
+    // A time or a port being typed survives a re-render that the state brings meanwhile.
     const a = document.activeElement;
-    const typing = a?.type === 'time' && box.contains(a) && a.value !== a.defaultValue ? a.value : null;
+    const typing = (a?.type === 'time' || a?.id === 'mcpport') && box.contains(a) && a.value !== a.defaultValue ? a.value : null;
     const ns = cfg.night_start;
-    box.innerHTML = `
+    const html = `
       ${locked ? `<div class="lock-note">${icon('lock')}<div class="body-m">${v.autolock?.on ? tr('settings_the_autolock_is_on_until') : tr('settings_a_study_day_is_running_time')}</div></div>` : ''}
       <section class="section">
         <div class="surface">
@@ -394,8 +395,9 @@ export function mountSettings(root, ctx) {
             <div class="hstack"><code class="code">${esc(mcpUrl)}</code><button class="icon-btn interactive" data-copy="${esc(mcpUrl)}" aria-label="${tr('settings_copy_the_address')}">${icon('copy')}</button></div>
             <div class="t" style="margin-top:8px">${tr('settings_command_for_claude_code')}</div>
             <div class="hstack"><code class="code">${esc(cmd)}</code><button class="icon-btn interactive" data-copy="${esc(cmd)}" aria-label="${tr('settings_copy_the_command')}">${icon('copy')}</button></div>
-            <div><button class="btn text interactive" id="newport" data-tip="${tr('settings_if_another_program_uses_the_port')}">${icon('refresh')}${tr('settings_new_random_port')}</button></div>
           </div>
+          <div class="setting"><div class="grow"><div class="t">${tr('settings_port')}</div><div class="d">${tr('settings_stays_the_same_after_restarts')}</div></div>
+            <div class="field"><input id="mcpport" inputmode="numeric" maxlength="5" size="6" value="${cfg.mcp_port}" aria-label="${tr('settings_port')}"></div></div>
           <div class="setting"><div class="grow"><div class="t">${tr('settings_the_agent_changes_settings')}${info('agent')}</div><div class="d">${AGENT_DESC[cfg.agent_settings]}</div></div>
             ${seg('agent', cfg.agent_settings, AGENT_OPTS, {}, locked ? AGENT_OPTS.map(([v]) => v).filter((v) => AGENT_RANK.indexOf(v) > AGENT_RANK.indexOf(cfg.agent_settings)) : [])}</div>
         </div>
@@ -420,6 +422,9 @@ export function mountSettings(root, ctx) {
       </section>
 
       <footer class="made-by">${NIKGOB}<span>Made by NikGob</span></footer>`;
+    rendering = true;
+    box.innerHTML = html;
+    rendering = false;
     if (pulse) {
       const el = box.querySelector(pulse);
       el?.classList.add('just');
@@ -559,12 +564,29 @@ export function mountSettings(root, ctx) {
     if (v !== cur) save((c) => set(c, v));
     else if (hm(cur) !== t.value) render();
   }
+  // The port saves the same way: every saved port restarts the MCP server.
+  function commitPort(t) {
+    if (t.value === t.defaultValue) return;
+    const port = Number(t.value);
+    if (!Number.isInteger(port) || port < 1024 || port > 49151) {
+      t.value = t.defaultValue;
+      snack(tr('settings_the_port_is_a_number_from'));
+      return;
+    }
+    t.defaultValue = t.value;
+    save((c) => { c.mcp_port = port; }, tr('settings_new_port_update_the_address_in', { port }));
+  }
   box.addEventListener('focusout', (e) => {
-    // A field a re-render removed loses focus too: that is not the user leaving it.
-    if (e.target.type === 'time' && e.target.isConnected) commitTime(e.target);
+    // A field a re-render removes loses focus too, and Chromium says so while the field is still
+    // connected: that is not the user leaving it.
+    if (rendering || !e.target.isConnected) return;
+    if (e.target.type === 'time') commitTime(e.target);
+    else if (e.target.id === 'mcpport') commitPort(e.target);
   });
   box.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.type === 'time') commitTime(e.target);
+    if (e.key !== 'Enter') return;
+    if (e.target.type === 'time') commitTime(e.target);
+    else if (e.target.id === 'mcpport') commitPort(e.target);
   });
   box.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
@@ -598,9 +620,6 @@ export function mountSettings(root, ctx) {
     else if (t.dataset.ov) call('preview_overlay', { kind: t.dataset.ov });
     else if (t.dataset.copy) {
       try { await navigator.clipboard.writeText(t.dataset.copy); snack(tr('settings_copied')); } catch { snack(tr('log_couldnt_copy')); }
-    } else if (t.id === 'newport') {
-      const port = await run(() => call('regenerate_port'), t);
-      if (port) { cfg = await call('get_config'); snack(tr('settings_new_port_update_the_address_in', { port })); }
     } else if (t.id === 'opendir') call('open_data_dir');
     else if (t.id === 'checkupdate') call('check_update');
     else if (t.id === 'installupdate') await run(() => call('install_update'), t);

@@ -428,7 +428,9 @@ pub fn run_agent(shared: Arc<Shared>, meal: Option<u32>, kind: &str, from_phone:
     }
     let mcp = shared.mcp.status.lock().unwrap().clone();
     if !mcp.running {
-        return fail(&shared, tr("meals_turn_on_the_mcp_server").to_string());
+        // On, but its port is taken: say that, not "turn it on".
+        let e = mcp.error.filter(|_| mcp.enabled).unwrap_or_else(|| tr("meals_turn_on_the_mcp_server").to_string());
+        return fail(&shared, e);
     }
     {
         let mut r = rt(&shared);
