@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "clockmanage"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "clockmanage-core",
  "dirs",
@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "clockmanage-core"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
