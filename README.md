@@ -127,7 +127,7 @@ Wolt has no public API for customers: ClockManage reads the same pages wolt.com 
 
 ## Claude runs your day (MCP)
 
-ClockManage runs a local MCP server (`127.0.0.1` only) on port 47812. The port never changes by itself, so Claude keeps the address: if another program holds it, *Settings → MCP for Claude* says so, and the server takes the port as soon as it's free. To use another one (1024–49151), type it in **Settings → MCP for Claude → Port**. An older install keeps the port it already has, unless that port is 49152 or above: Windows reserves ports in that range at boot, so the server moves to 47812 once. The exact address and a ready-to-paste command are in the same place:
+ClockManage runs a local MCP server (`127.0.0.1` only) on port 47812. If another program already holds 47812 at the first start (ClockManage of another Windows account, say), it takes the next free one. After that the port never changes by itself, so Claude keeps the address: if another program holds it, *Settings → MCP for Claude* says so, and the server takes the port as soon as it's free. To use another one (1024–49151), type it in **Settings → MCP for Claude → Port**. An older install keeps the port it already has, unless that port is 49152 or above: Windows reserves ports in that range at boot, so the server picks a new one once, the same way. The exact address and a ready-to-paste command are in the same place:
 
 ```sh
 claude mcp add --transport http clockmanage http://127.0.0.1:47812/mcp
