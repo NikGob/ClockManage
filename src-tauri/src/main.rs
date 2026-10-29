@@ -76,6 +76,9 @@ fn main() {
             system::apply_lang(&cfg);
             let before_lang = cfg.clone();
             cfg.follow_lang();
+            if cfg.mcp_port == 0 {
+                cfg.mcp_port = mcp_server::free_port(cfg.phone.port);
+            }
             store.save_config(&cfg);
             let now = clock::now_ts();
             let mut day = app::load_today(&store, &cfg, now);

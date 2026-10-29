@@ -298,8 +298,9 @@ pub struct Phone {
 pub const PHONE_PORT: u16 = 47811;
 /// UDP port the PC answers discovery broadcasts on.
 pub const PHONE_DISCOVERY_PORT: u16 = 47810;
-/// Port of the local MCP server until the user picks another. It never changes by itself: MCP
-/// clients keep the address.
+/// Port of the local MCP server until the user picks another: the first start takes it, or the
+/// next free one when it is held (ClockManage of another Windows account). It never changes by
+/// itself after that: MCP clients keep the address.
 pub const MCP_PORT: u16 = 47812;
 /// MCP ports the user can pick. From 49152 on Windows hands out ports to outgoing connections,
 /// and Hyper-V / WSL / Docker reserve blocks there at every boot: a reserved port never frees up.
@@ -458,6 +459,7 @@ pub struct Config {
     /// Check GitHub Releases for a new version, download it and install it while no day runs.
     pub auto_update: bool,
     pub mcp_enabled: bool,
+    /// 0 until the app's start picks a free port from `MCP_PORT` on.
     pub mcp_port: u16,
     pub agent_settings: AgentSettings,
     pub appearance: Appearance,
@@ -518,7 +520,7 @@ impl Default for Config {
             autostart: true,
             auto_update: true,
             mcp_enabled: true,
-            mcp_port: MCP_PORT,
+            mcp_port: 0,
             agent_settings: AgentSettings::default(),
             appearance: Appearance::default(),
             lang: LangPref::Auto,
@@ -715,9 +717,9 @@ impl Config {
         if self.phone.port < 1024 {
             self.phone.port = PHONE_PORT;
         }
-        // 0 was the old default, and installs before 0.4.8 drew ports up to 64999: those move once.
+        // Installs before 0.4.8 drew ports up to 64999: those get a free one once, like a new install.
         if !MCP_PORTS.contains(&self.mcp_port) {
-            self.mcp_port = MCP_PORT;
+            self.mcp_port = 0;
         }
         self.phone.apps = normalize_list(&self.phone.apps, normalize_package);
         self.phone.devices.retain(|d| d.token.len() >= 16);
@@ -1009,14 +1011,15 @@ mod tests {
     fn mcp_port_stays_put() {
         let mut c: Config = serde_json::from_str(r#"{"mcp_port": 0}"#).unwrap();
         c.normalize();
-        assert_eq!(c.mcp_port, MCP_PORT);
+        assert_eq!(c.mcp_port, 0);
         c.mcp_port = 22126;
         c.normalize();
         assert_eq!(c.mcp_port, 22126);
+        // A port that can't be kept goes back to 0: the start picks a free one.
         for moved in [80, 52154] {
             c.mcp_port = moved;
             c.normalize();
-            assert_eq!(c.mcp_port, MCP_PORT);
+            assert_eq!(c.mcp_port, 0);
         }
     }
 

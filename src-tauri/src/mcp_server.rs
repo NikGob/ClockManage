@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use clockmanage_core::config::MCP_PORT;
 use clockmanage_core::mcp;
 use serde::Serialize;
 use tiny_http::{Header, Method, Response, Server};
@@ -34,6 +35,16 @@ pub struct McpServer {
 
 /// How often a busy port is tried again.
 const RETRY: Duration = Duration::from_secs(2);
+
+/// The port a new install keeps: `MCP_PORT`, or the next free one when another program holds it
+/// (ClockManage of another Windows account wants the same default). `avoid` is the phone's port,
+/// which isn't bound yet at the start.
+pub fn free_port(avoid: u16) -> u16 {
+    (MCP_PORT..MCP_PORT + 100)
+        .filter(|&p| p != avoid)
+        .find(|&p| std::net::TcpListener::bind(("127.0.0.1", p)).is_ok())
+        .unwrap_or(MCP_PORT)
+}
 
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("valid header")
@@ -191,5 +202,14 @@ mod tests {
         mcp.stop();
         assert!(!waiting.join().unwrap());
         drop(other);
+    }
+
+    #[test]
+    fn a_new_install_skips_a_held_port() {
+        let first = free_port(0);
+        let _held = std::net::TcpListener::bind(("127.0.0.1", first)).unwrap();
+        let next = free_port(0);
+        assert!(next > first);
+        assert!(free_port(next) > next);
     }
 }
