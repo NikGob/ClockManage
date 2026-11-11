@@ -44,8 +44,8 @@ class MainActivity : Activity() {
     private var shownKind = ""
     /** The language the screen was built in: the PC switched languages — build it anew. */
     private var shownRu = I18n.ru
-    /** Whether the blocker was on when its card was last built (null: not built yet). */
-    private var shownBlocker: Boolean? = null
+    /** The blocker's state when its card was last built: on, stopped, off (null: not built yet). */
+    private var shownBlocker: String? = null
 
     // timer screen views
     private lateinit var statusDot: View
@@ -173,6 +173,8 @@ class MainActivity : Activity() {
         super.onResume()
         // Back from the Accessibility settings: show at once whether the blocker is on now.
         if (store.paired && ::blocker.isInitialized) renderBlocker()
+        // Clears the "stopped" notice once it runs again (or revives it, if allowed).
+        if (store.paired) Watchdog.check(this)
     }
 
     private fun page(): LinearLayout {
@@ -640,35 +642,57 @@ class MainActivity : Activity() {
     }
 
     private fun renderBlocker() {
-        val on = Sync.blockerEnabled(this)
+        // Switched on is not enough: a crashed service keeps its switch on and blocks nothing.
+        val running = Watchdog.running(this)
+        val state = when {
+            running -> "on"
+            Watchdog.switchedOn(this) -> "stopped"
+            else -> "off"
+        }
+        val on = state == "on"
         val s = snap
-        blockerChip.text = if (on) tr("android_main_state_on") else tr("settings_off")
+        blockerChip.text = when (state) {
+            "on" -> tr("android_main_state_on")
+            "stopped" -> tr("android_main_state_stopped")
+            else -> tr("settings_off")
+        }
         blockerChip.setTextColor(if (on) p.onSecondary else p.error)
         blockerChip.background = if (on) rounded(p.secondary, dp(8).toFloat()) else rounded(Color.TRANSPARENT, dp(8).toFloat(), dp(1), p.error)
         blocker.text = when {
+            state == "stopped" -> tr("android_main_android_stopped_the_blocking_the_switch")
             !on -> tr("android_main_the_phone_only_shows_the_timer")
             s == null -> tr("android_main_waiting_for_data_from_the_pc")
             s.blockedAt(store.now(), store.syncedAt) -> tr("android_main_blocking_now_sites_apps", "sites" to s.sites.size, "apps" to s.apps.size)
             else -> tr("blocking_no_lock_right_now")
         }
         appsBtn.text = tr("android_main_apps", "count" to (s?.apps?.size ?: 0))
-        if (shownBlocker == on) return
-        shownBlocker = on
+        if (shownBlocker == state) return
+        shownBlocker = state
         steps.removeAllViews()
-        if (on) return
-        // Off: how to turn it on, step by step. A sideloaded app on Android 13+ first needs
-        // "Allow restricted settings", or its switch in Accessibility stays grey.
-        val accessibility = pill(tr("android_main_accessibility"), p, "filled", R.drawable.ic_accessibility) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, tr("android_main_find_clockmanage_blocking_and_turn_it"), Toast.LENGTH_LONG).show()
-        }
-        steps.addWithMargins(step(1, tr("android_main_open_accessibility_downloaded_apps"), accessibility), top = dp(16))
-        if (Build.VERSION.SDK_INT >= 33) {
-            val info = pill(tr("android_main_app_info"), p, "tonal", R.drawable.ic_info) {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", packageName, null)))
+        if (!on) {
+            // How to turn it on, step by step. A sideloaded app on Android 13+ first needs
+            // "Allow restricted settings", or its switch in Accessibility stays grey. Stopped:
+            // off and on again in the same place.
+            val accessibility = pill(tr("android_main_accessibility"), p, "filled", R.drawable.ic_accessibility) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                Toast.makeText(this, tr("android_main_find_clockmanage_blocking_and_turn_it"), Toast.LENGTH_LONG).show()
             }
-            steps.addWithMargins(step(2, tr("android_main_if_the_switch_is_grey_restricted"), info), top = dp(16))
-            steps.addWithMargins(step(3, tr("android_main_come_back_to_accessibility"), null), top = dp(16))
+            steps.addWithMargins(step(1, tr("android_main_open_accessibility_downloaded_apps"), accessibility), top = dp(16))
+            if (state == "off" && Build.VERSION.SDK_INT >= 33) {
+                val info = pill(tr("android_main_app_info"), p, "tonal", R.drawable.ic_info) { Watchdog.openAppInfo(this) }
+                steps.addWithMargins(step(2, tr("android_main_if_the_switch_is_grey_restricted"), info), top = dp(16))
+                steps.addWithMargins(step(3, tr("android_main_come_back_to_accessibility"), null), top = dp(16))
+            }
+        }
+        // HyperOS / MIUI kill the app and the blocker with it, and without autostart Android never
+        // brings it back. Shown while it works too: that is when it gets killed.
+        if (Watchdog.xiaomi) {
+            steps.addWithMargins(label(tr("android_main_on_xiaomi_hyperos_stops_the_blocking"), 14f, p.muted), top = dp(20))
+            val auto = pill(tr("android_main_autostart"), p, "tonal") { Watchdog.openAutostart(this) }
+            steps.addWithMargins(step(1, tr("android_main_autostart_turn_it_on_for_clockmanage"), auto), top = dp(12))
+            val info = pill(tr("android_main_app_info"), p, "tonal", R.drawable.ic_info) { Watchdog.openAppInfo(this) }
+            steps.addWithMargins(step(2, tr("android_main_battery_saver_no_restrictions"), info), top = dp(16))
+            steps.addWithMargins(step(3, tr("android_main_recent_apps_hold_clockmanage_and_tap"), null), top = dp(16))
         }
     }
 

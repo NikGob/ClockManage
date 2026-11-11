@@ -9,5 +9,7 @@ class App : Application() {
         val store = Store(this)
         I18n.pc = store.lang
         I18n.fixed = store.langPref.ifEmpty { null }
+        // Whatever started the process, look whether the blocker really runs (and keep looking).
+        if (store.paired) Watchdog.check(this)
     }
 }

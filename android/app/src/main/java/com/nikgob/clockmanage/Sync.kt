@@ -3,7 +3,6 @@ package com.nikgob.clockmanage
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
@@ -41,16 +40,12 @@ object Sync {
         }
     }
 
-    fun blockerEnabled(ctx: Context): Boolean {
-        val list = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        return list.split(':').any { it.startsWith(ctx.packageName + "/") }
-    }
-
     /** One request; [wait] > 0 makes it a long poll that returns when [have] is outdated. */
     private fun fetch(ctx: Context, have: String, wait: Int): Snapshot {
         val s = Store(ctx)
         s.triedAt = System.currentTimeMillis()
-        val blocker = if (blockerEnabled(ctx)) 1 else 0
+        // Really running, not only switched on: a crashed service keeps its switch on.
+        val blocker = if (Watchdog.running(ctx)) 1 else 0
         val sent = System.currentTimeMillis()
         val raw = Api.of(s).get("/api/state?v=$have&wait=$wait&blocker=$blocker", readTimeoutMs = (wait + 10) * 1000)
         val got = System.currentTimeMillis()

@@ -40,6 +40,7 @@ class BlockerService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         store = Store(this)
+        Watchdog.clear(this)
         reload()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
@@ -152,6 +153,9 @@ class BlockerService : AccessibilityService() {
 
     companion object {
         @Volatile private var instance: BlockerService? = null
+
+        /** Bound and running in this process. */
+        val alive get() = instance != null
 
         /** A new snapshot arrived. */
         fun refresh() {
