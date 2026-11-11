@@ -18,6 +18,10 @@ import android.widget.Toast
  *
  * While the screen is on the service keeps a long poll to the PC open, so a lock started there
  * reaches the phone within a second; with the screen off nothing runs.
+ *
+ * During the lock it also guards itself: a Settings (or HyperOS Security) screen about
+ * ClockManage — its Accessibility page, App info with force stop and uninstall, autostart,
+ * battery — and the uninstall prompt go home at once. An update from the PC passes.
  */
 class BlockerService : AccessibilityService() {
 
@@ -78,6 +82,8 @@ class BlockerService : AccessibilityService() {
         if (pkg == packageName) return
         if (pkg in s.apps) {
             block(appLabel(pkg), home = true)
+        } else if (pkg in GUARDED) {
+            if (aboutMe(pkg)) guard()
         } else if (pkg in BROWSERS) {
             val url = urlOf(pkg) ?: return
             Sites.match(url, s.sites)?.let { block(it, home = false) }
@@ -108,7 +114,9 @@ class BlockerService : AccessibilityService() {
         // Content changes come in bursts (scrolling, typing): look at most a few times a second.
         if (ev.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastCheck < 700) return
         lastCheck = now
-        if (pkg in BROWSERS) {
+        if (pkg in GUARDED) {
+            if (aboutMe(pkg)) guard()
+        } else if (pkg in BROWSERS) {
             val url = urlOf(pkg) ?: return
             val hit = Sites.match(url, s.sites) ?: return
             // Back closes the page; if the same page shows again right away (new tab), go home.
@@ -119,14 +127,33 @@ class BlockerService : AccessibilityService() {
         }
     }
 
-    private fun block(what: String, home: Boolean) {
+    private fun block(what: String, home: Boolean) = leave(home, tr("android_blocker_nope_after_studying", "what" to what))
+
+    /** A screen that could turn the blocker off: home (back would only show the list it came from). */
+    private fun guard() = leave(true, tr("android_blocker_clockmanage_stays_on_while_you"))
+
+    private fun leave(home: Boolean, toast: String) {
         val now = System.currentTimeMillis()
         lastBlock = now
         performGlobalAction(if (home) GLOBAL_ACTION_HOME else GLOBAL_ACTION_BACK)
         if (now - lastToast > 2500) {
             lastToast = now
-            Toast.makeText(this, tr("android_blocker_nope_after_studying", "what" to what), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, toast, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * A window of [pkg] (Settings, Security, the package installer) that shows ClockManage: its
+     * Accessibility page or list entry, App info, autostart, battery, the uninstall prompt. The
+     * installer passes for a few minutes after our own update asked for confirmation.
+     */
+    private fun aboutMe(pkg: String): Boolean {
+        if (pkg in INSTALLERS && android.os.SystemClock.elapsedRealtime() < updatingUntil) return false
+        val root = rootInActiveWindow?.takeIf { it.packageName == pkg }
+            ?: windows.mapNotNull { it.root }.firstOrNull { it.packageName == pkg }
+            ?: return false
+        val name = applicationInfo.loadLabel(packageManager).toString()
+        return root.findAccessibilityNodeInfosByText(name).any(AccessibilityNodeInfo::isVisibleToUser)
     }
 
     private fun appLabel(pkg: String): String = try {
@@ -156,6 +183,21 @@ class BlockerService : AccessibilityService() {
 
         /** Bound and running in this process. */
         val alive get() = instance != null
+
+        /** Our own update waits for the installer's confirmation until then (elapsed realtime). */
+        @Volatile var updatingUntil = 0L
+
+        /** Where the blocker could be switched off, force-stopped or uninstalled. */
+        private val INSTALLERS = setOf(
+            "com.android.packageinstaller",
+            "com.google.android.packageinstaller",
+            "com.miui.packageinstaller",
+        )
+        private val GUARDED = setOf(
+            "com.android.settings",
+            "com.miui.securitycenter",
+            "com.miui.powerkeeper",
+        ) + INSTALLERS
 
         /** A new snapshot arrived. */
         fun refresh() {

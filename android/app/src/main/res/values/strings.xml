@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="blocker_description">During a study day ClockManage closes blocked apps and sites (the list comes from the PC). It only reads the browser address bar and the name of the open app, and sends nothing anywhere.</string>
+    <string name="blocker_description">During a study day ClockManage closes blocked apps and sites (the list comes from the PC). It only reads the browser address bar, the name of the open app and, during the lock, whether a Settings screen is about ClockManage (those it closes, so it can\'t be switched off), and sends nothing anywhere.</string>
     <string name="widget_description">ClockManage timer: what is running and how much is left</string>
     <string name="apps_title">Apps</string>
     <string name="blocker_label">ClockManage — blocking</string>

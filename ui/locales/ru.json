@@ -10,6 +10,7 @@
   "android_alarm_wake_up_is_over": "Вставай! {title} окончен{over}",
   "android_alarm_what_is_running_and_how_much": "Что идёт сейчас и сколько осталось",
   "android_apps_during_study_the_checked_apps_close": "Во время учёбы отмеченные закрываются сразу при открытии. Пока идёт учебный день, список можно только расширять. Сайты берутся с ПК.",
+  "android_blocker_clockmanage_stays_on_while_you": "ClockManage не выключается, пока идёт учёба",
   "android_blocker_nope_after_studying": "Не-не-не: {what} — после учёбы",
   "android_h": "{v} ч",
   "android_h_min": "{v} ч {v2} мин",

@@ -10,6 +10,7 @@
   "android_alarm_wake_up_is_over": "Wake up! {title} is over{over}",
   "android_alarm_what_is_running_and_how_much": "What is running and how much is left",
   "android_apps_during_study_the_checked_apps_close": "During study the checked apps close as soon as they open. While a study day runs, the list can only grow. Sites come from the PC.",
+  "android_blocker_clockmanage_stays_on_while_you": "ClockManage stays on while you study",
   "android_blocker_nope_after_studying": "Nope: {what} — after studying",
   "android_h": "{v} h",
   "android_h_min": "{v} h {v2} min",
